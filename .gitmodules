@@ -1,0 +1,9 @@
+[submodule "test/senoval"]
+	path = test/senoval
+	url = https://github.com/Zubax/senoval
+[submodule "test/popcop"]
+	path = test/popcop
+	url = https://github.com/Zubax/popcop
+[submodule "test/libcanard"]
+	path = test/libcanard
+	url = https://github.com/UAVCAN/libcanard
