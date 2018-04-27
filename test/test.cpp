@@ -28,6 +28,7 @@
 # undef NDEBUG
 #endif
 
+#include "catch.hpp"
 #include <kocherga/kocherga.hpp>
 
 

@@ -24,3 +24,9 @@
  */
 
 #pragma once
+
+
+namespace kocherga
+{
+
+}
