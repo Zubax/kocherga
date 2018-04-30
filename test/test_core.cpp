@@ -32,6 +32,6 @@
 #include <kocherga/kocherga.hpp>
 
 
-TEST_CASE("A")
+TEST_CASE("Core")
 {
 }
