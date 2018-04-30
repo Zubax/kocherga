@@ -48,5 +48,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Woverloaded-virtual -Wsign-promo -Wold-
 # recognize it as part of the project rather than some run-off-the-mill weird include.
 add_executable(kocherga_test
                test_core.cpp
+               test_mocks.cpp
                test_main.cpp
+               mocks.hpp
                ../kocherga/kocherga.hpp)

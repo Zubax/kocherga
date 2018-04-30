@@ -31,12 +31,12 @@
 #include <cstdint>
 #include <cassert>
 #include <cstring>
-#include <utility>
 #include <optional>
 #include <type_traits>
 
 /**
  * This macro can be defined by the application to provide debug output.
+ * By default, all trace outputs are removed by the preprocessor.
  */
 #ifndef KOCHERGA_TRACE
 # define KOCHERGA_TRACE(...)        (void)0
@@ -247,7 +247,7 @@ public:
  * Main bootloader controller.
  * Beware that this class has a large buffer field used to cache ROM reads. Do not allocate it on the stack.
  */
-class Bootloader
+class Bootloader final
 {
     /**
      * RAII mutex manager.
