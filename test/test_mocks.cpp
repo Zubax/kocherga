@@ -76,7 +76,7 @@ TEST_CASE("Mocks-ROM")
 {
     using namespace mocks;
 
-    FileMappedROMBackend back("rom.tmp", 1024);
+    FileMappedROMBackend back("mock-test-rom.tmp", 1024);
 
     {
         const std::vector<std::uint8_t> ref(1024, 0xFF);
