@@ -44,12 +44,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsign-conversion -Wcast-align -Wmissing
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wtype-limits -Wzero-as-null-pointer-constant -Wnon-virtual-dtor")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Woverloaded-virtual -Wsign-promo -Wold-style-cast")
 
-# We add the library header explicitly here in order to let the IDE (JetBrains CLion in my case)
-# recognize it as part of the project rather than some run-off-the-mill weird include.
+# Adding library headers explicitly to the project in order to let the IDE handle things properly.
+file(GLOB_RECURSE KOCHERGA_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "../kocherga/*.hpp")
+
 add_executable(kocherga_test
                test_core.cpp
                test_mocks.cpp
                test_main.cpp
                mocks.hpp
                images.hpp
-               ../kocherga/kocherga.hpp)
+               ${KOCHERGA_HEADERS})
