@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <kocherga/kocherga.hpp>
+#include <kocherga.hpp>
 #include <mutex>
 #include <vector>
 #include <utility>
