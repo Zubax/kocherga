@@ -51,4 +51,5 @@ add_executable(kocherga_test
                test_mocks.cpp
                test_main.cpp
                mocks.hpp
+               images.hpp
                ../kocherga/kocherga.hpp)

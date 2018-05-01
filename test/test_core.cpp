@@ -28,10 +28,225 @@
 # undef NDEBUG
 #endif
 
-#include "catch.hpp"
+#define KOCHERGA_TRACE std::printf
+
+// The library headers must be included first to make sure that they don't have any hidden include dependencies.
 #include <kocherga/kocherga.hpp>
 
+#include "catch.hpp"
+#include "mocks.hpp"
+#include "images.hpp"
 
-TEST_CASE("Core")
+#include <thread>
+#include <functional>
+
+
+namespace
 {
+/**
+ * A simple mock protocol that just downloads the specified image from memory.
+ */
+class MockProtocol : public kocherga::IProtocol
+{
+    static constexpr std::uint16_t BlockSize = 103;     ///< Using a weird prime block size intentionally
+
+    const std::uint8_t* ptr_;
+    std::size_t remaining_size_;
+    const std::function<void ()> chunk_callback_;
+
+    std::int16_t downloadImage(kocherga::IDownloadSink& sink) final
+    {
+        while (remaining_size_ > 0)
+        {
+            if (chunk_callback_)
+            {
+                chunk_callback_();
+            }
+
+            const std::uint16_t bs = std::uint16_t(std::min<std::size_t>(remaining_size_, BlockSize));
+
+            const auto result = sink.handleNextDataChunk(ptr_, bs);
+            if (result != bs)
+            {
+                if (result < 0)
+                {
+                    return result;
+                }
+                else
+                {
+                    return kocherga::ErrROMWriteFailure;
+                }
+            }
+
+            ptr_ += bs;
+            remaining_size_ -= bs;
+        }
+
+        return 0;
+    }
+
+public:
+    MockProtocol(const void* data,
+                 std::size_t size,
+                 std::function<void ()> callback_per_chunk = {}) :
+        ptr_(static_cast<const std::uint8_t*>(data)),
+        remaining_size_(size),
+        chunk_callback_(std::move(callback_per_chunk))
+    { }
+};
+
+}
+
+
+TEST_CASE("Core-Basic")
+{
+    static constexpr std::uint32_t ROMSize = 1024 * 1024;
+
+    mocks::Platform platform;
+    mocks::FileMappedROMBackend rom_backend("core-test-rom.tmp", ROMSize);
+
+    kocherga::BootloaderController blc(platform, rom_backend, ROMSize, std::chrono::seconds(1));
+
+    REQUIRE(1 == platform.getMutexLockCount());
+    REQUIRE(!platform.isMutexLocked());
+
+    // When verifying the image, we're reading it in 8-byte increments until the end.
+    // The controller observes the last read request to fail, which indicates that the end of the ROM is reached.
+    REQUIRE((ROMSize / 8) + 1 == rom_backend.getReadCount());
+    REQUIRE(0 == rom_backend.getWriteCount());
+
+    REQUIRE(1 == platform.getMutexLockCount());
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+    REQUIRE(2 == platform.getMutexLockCount());
+    REQUIRE(!blc.getAppInfo());
+    REQUIRE(3 == platform.getMutexLockCount());
+
+    // Boot request ignored - nothing to boot
+    REQUIRE(3 == platform.getMutexLockCount());
+    blc.requestBoot();
+    REQUIRE(4 == platform.getMutexLockCount());
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+    REQUIRE(5 == platform.getMutexLockCount());
+    REQUIRE(!blc.getAppInfo());
+    REQUIRE(6 == platform.getMutexLockCount());
+
+    // Boot cancellation ignored - nothing to cancel
+    REQUIRE(6 == platform.getMutexLockCount());
+    blc.cancelBoot();
+    REQUIRE(7 == platform.getMutexLockCount());
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+    REQUIRE(8 == platform.getMutexLockCount());
+    REQUIRE(!blc.getAppInfo());
+    REQUIRE(9 == platform.getMutexLockCount());
+
+    // Up to this point we did not write the ROM, making sure it's true
+    REQUIRE(0 == rom_backend.getWriteCount());
+
+    // Uploading a valid image now
+    const auto upload_valid_image = [&]()
+    {
+        REQUIRE(!platform.isMutexLocked());
+
+        MockProtocol proto(images::AppValid.data(),
+                           images::AppValid.size(),
+                           [&]() { REQUIRE(blc.getState() == kocherga::State::AppUpgradeInProgress); });
+        REQUIRE(0 == blc.upgradeApp(proto));
+
+        REQUIRE(11 < platform.getMutexLockCount());
+        REQUIRE(!platform.isMutexLocked());
+
+        REQUIRE(kocherga::State::BootDelay == blc.getState());
+
+        const auto maybe_app_info = blc.getAppInfo();
+        REQUIRE(maybe_app_info);
+        const kocherga::AppInfo app_info = *maybe_app_info;
+        REQUIRE(app_info.image_size    == images::AppValid.size());
+        REQUIRE(app_info.major_version == images::AppValidMajorVersion);
+        REQUIRE(app_info.minor_version == images::AppValidMinorVersion);
+        REQUIRE(app_info.vcs_commit    == images::AppValidVCSCommit);
+    };
+    upload_valid_image();
+
+    // Boot cancellation
+    blc.cancelBoot();
+    REQUIRE(kocherga::State::BootCancelled == blc.getState());
+    REQUIRE(blc.getAppInfo());      // Still valid!
+
+    // Uploading a valid image but making it fail; the previously written image is VALID
+    {
+        REQUIRE(!platform.isMutexLocked());
+        MockProtocol proto(images::AppValid.data(),
+                           images::AppValid.size(),
+                           [&]() { REQUIRE(blc.getState() == kocherga::State::AppUpgradeInProgress); });
+
+        bool once = true;
+        rom_backend.setFailureInjector([&](std::int16_t regular) -> std::int16_t {
+            if (once)
+            {
+                once = false;
+                return -123;
+            }
+            return regular;
+        });
+
+        REQUIRE(-123 == blc.upgradeApp(proto));
+        REQUIRE(!platform.isMutexLocked());
+        REQUIRE(kocherga::State::BootCancelled == blc.getState());      // The old one is still valid!
+        rom_backend.setFailureInjector({});
+    }
+
+    // Uploading an invalid image now
+    {
+        REQUIRE(!platform.isMutexLocked());
+
+        MockProtocol proto(images::AppWithInvalidDescriptor.data(),
+                           images::AppWithInvalidDescriptor.size(),
+                           [&]() { REQUIRE(blc.getState() == kocherga::State::AppUpgradeInProgress); });
+        REQUIRE(0 == blc.upgradeApp(proto));
+
+        REQUIRE(20 < platform.getMutexLockCount());
+        REQUIRE(!platform.isMutexLocked());
+
+        REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+        REQUIRE(!blc.getAppInfo());
+    }
+
+    // Uploading a valid image but making it fail; the previously written image is INVALID
+    // The failure is generated by returning larger size than requested
+    {
+        REQUIRE(!platform.isMutexLocked());
+        MockProtocol proto(images::AppValid.data(),
+                           images::AppValid.size(),
+                           [&]() { REQUIRE(blc.getState() == kocherga::State::AppUpgradeInProgress); });
+
+        rom_backend.setFailureInjector([&](std::int16_t regular) {
+            if (regular > 0)
+            {
+                return std::int16_t(regular + 1);
+            }
+            return regular;
+        });
+
+        REQUIRE(-kocherga::ErrROMWriteFailure == blc.upgradeApp(proto));
+        REQUIRE(!platform.isMutexLocked());
+        REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+        rom_backend.setFailureInjector({});
+    }
+
+    // Again uploading the valid image
+    upload_valid_image();
+    REQUIRE(kocherga::State::BootDelay == blc.getState());
+    REQUIRE(blc.getAppInfo());
+
+    // Waiting for more than 1 second to trigger boot timeout
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+
+    // Great, now cancel it again, and re-trigger manually.
+    blc.cancelBoot();
+    REQUIRE(kocherga::State::BootCancelled == blc.getState());
+    REQUIRE(blc.getAppInfo());      // Still valid!
+
+    blc.requestBoot();
+    REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
 }

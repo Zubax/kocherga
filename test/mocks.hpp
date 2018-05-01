@@ -30,6 +30,7 @@
 #include <vector>
 #include <utility>
 #include <fstream>
+#include <functional>
 
 
 namespace mocks
@@ -49,15 +50,17 @@ public:
  */
 class Platform : public kocherga::IPlatform
 {
-    std::int64_t mutex_lock_counter_ = 0;
+    std::uint64_t mutex_lock_count_ = 0;
+    std::int64_t mutex_lock_nesting_ = 0;
     std::recursive_mutex mutex_;
 
     void lockMutex() final
     {
         mutex_.lock();
-        mutex_lock_counter_++;
+        mutex_lock_nesting_++;
+        mutex_lock_count_++;
 
-        if (mutex_lock_counter_ > 10)
+        if (mutex_lock_nesting_ > 10)
         {
             throw BadUsageException("Mutex usage bug: unhealthy locking habits");
         }
@@ -65,17 +68,19 @@ class Platform : public kocherga::IPlatform
 
     void unlockMutex() final
     {
-        if (mutex_lock_counter_ <= 0)
+        if (mutex_lock_nesting_ <= 0)
         {
             throw BadUsageException("Mutex usage bug: cannot unlock mutex that is not locked");
         }
 
-        mutex_lock_counter_--;
+        mutex_lock_nesting_--;
         mutex_.unlock();
     }
 
 public:
-    bool isMutexLocked() const { return mutex_lock_counter_ > 0; }
+    bool isMutexLocked() const { return mutex_lock_nesting_ > 0; }
+
+    std::uint64_t getMutexLockCount() const { return mutex_lock_count_; }
 
     std::chrono::microseconds getMonotonicUptime() const final
     {
@@ -93,9 +98,24 @@ class FileMappedROMBackend : public kocherga::IROMBackend
     const std::string file_name_;
     const std::uint32_t rom_size_;
 
-    bool upgrade_in_progress_ = false;
-    bool inject_failure_ = false;
+    mutable std::uint64_t read_count_ = 0;
+    std::uint64_t write_count_ = 0;
 
+    bool upgrade_in_progress_ = false;
+    mutable std::function<std::int16_t (std::int16_t)> failure_injector_;
+
+
+    std::int16_t callFailureInjector(std::int16_t regular_error_code) const
+    {
+        if (failure_injector_)
+        {
+            return failure_injector_(regular_error_code);
+        }
+        else
+        {
+            return regular_error_code;
+        }
+    }
 
     void checkFileHealth() const
     {
@@ -120,18 +140,19 @@ class FileMappedROMBackend : public kocherga::IROMBackend
             throw BadUsageException("beginUpgrade() called twice");
         }
 
+        if (const auto res = callFailureInjector(0); res < 0)
+        {
+            return res;
+        }
+
         upgrade_in_progress_ = true;
-        return std::int16_t(inject_failure_ ? -1 : 0);
+        return 0;
     }
 
     std::int16_t endUpgrade(bool success) override
     {
+        (void) success;
         checkFileHealth();
-
-        if (success == inject_failure_)
-        {
-            throw BadUsageException("Unexpected success or failure");
-        }
 
         if (!upgrade_in_progress_)
         {
@@ -139,12 +160,14 @@ class FileMappedROMBackend : public kocherga::IROMBackend
         }
 
         upgrade_in_progress_ = false;
-        return std::int16_t(inject_failure_ ? -1 : 0);
+        return callFailureInjector(0);
     }
 
     std::int16_t write(std::size_t offset, const void* data, std::uint16_t size) override
     {
-        if (size > 32767)
+        write_count_++;
+
+        if (size > kocherga::MaxDataBlockSize)
         {
             throw BadUsageException("Size is too big");
         }
@@ -161,6 +184,12 @@ class FileMappedROMBackend : public kocherga::IROMBackend
 
         checkFileHealth();
 
+        // Checking the failure generator before we modify the storage!
+        if (const std::int16_t res = callFailureInjector(std::int16_t(size)); res != size)
+        {
+            return res;
+        }
+
         // We need the in flag to prevent truncation
         std::ofstream f(file_name_, std::ios::binary | std::ios::out | std::ios::in);
         if (f)
@@ -168,7 +197,7 @@ class FileMappedROMBackend : public kocherga::IROMBackend
             f.seekp(std::streamoff(offset));
             f.write(static_cast<const char*>(data), size);
             f.flush();
-            return inject_failure_ ? std::int16_t(-1) : std::int16_t(size);
+            return std::int16_t(size);
         }
         else
         {
@@ -195,14 +224,9 @@ public:
         }
     }
 
-    void injectFailure()
+    void setFailureInjector(std::function<std::int16_t (std::int16_t)> injector)
     {
-        inject_failure_ = true;
-    }
-
-    void removeFailure()
-    {
-        inject_failure_ = false;
+        failure_injector_ = injector;
     }
 
     bool isSameImage(const void* reference, std::size_t reference_size) const
@@ -224,7 +248,9 @@ public:
 
     std::int16_t read(std::size_t offset, void* data, std::uint16_t size) const override
     {
-        if (size > 32767)
+        read_count_++;
+
+        if (size > kocherga::MaxDataBlockSize)
         {
             throw BadUsageException("Size is too big");
         }
@@ -241,13 +267,19 @@ public:
         {
             f.seekg(std::streamoff(offset));
             f.read(static_cast<char*>(data), size);
-            return inject_failure_ ? std::int16_t(-1) : std::int16_t(size);
+            return callFailureInjector(std::int16_t(size));
         }
         else
         {
             throw std::runtime_error("Could not open the ROM mapping file for reading");
         }
     }
+
+    std::uint64_t getReadCount()  const { return read_count_; }
+    std::uint64_t getWriteCount() const { return write_count_; }
 };
+
+
+static_assert(32767 == kocherga::MaxDataBlockSize);
 
 }

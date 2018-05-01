@@ -53,6 +53,14 @@ static constexpr std::int16_t ErrOK                     = 0;
 static constexpr std::int16_t ErrInvalidState           = 1001;
 static constexpr std::int16_t ErrAppImageTooLarge       = 1002;
 static constexpr std::int16_t ErrROMWriteFailure        = 1003;
+static constexpr std::int16_t ErrInvalidParams          = 1004;
+
+/**
+ * The library performs operations on data blocks not larger than this.
+ * It is a hard guarantee that the library will NEVER deliver to the application a larger data block than this.
+ * If the application attempts to pass a larger block to the library, the library will return an error.
+ */
+static constexpr std::uint16_t MaxDataBlockSize = 32767;
 
 /**
  * This is used to verify integrity of the application and other data.
@@ -113,23 +121,6 @@ enum class State
 };
 
 /**
- * Returns human-readable name of the state.
- */
-inline const char* convertStateToString(const State state)
-{
-    switch (state)
-    {
-    case State::NoAppToBoot:            return "NoAppToBoot";
-    case State::BootDelay:              return "BootDelay";
-    case State::BootCancelled:          return "BootCancelled";
-    case State::AppUpgradeInProgress:   return "AppUpgradeInProgress";
-    case State::ReadyToBoot:            return "ReadyToBoot";
-    }
-
-    return "INVALID_STATE";
-}
-
-/**
  * These fields are defined by the Brickproof Bootloader specification.
  * Observe that the fields are ordered from largest to smallest in order to avoid padding.
  */
@@ -140,11 +131,9 @@ struct AppInfo
     std::uint32_t vcs_commit    = 0;
     std::uint8_t  major_version = 0;
     std::uint8_t  minor_version = 0;
-
-    std::array<std::uint8_t, 6> _reserved{};    // Explicit padding to avoid compiler-specific padding/alignment
+    // Several bytes of padding at the end are reserved for future use.
 };
 
-static_assert(sizeof(AppInfo) == 24, "AppInfo must be 24 bytes large, not including the signature");
 static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler");
 
 /**
@@ -212,12 +201,12 @@ public:
 };
 
 /**
- * This interface proxies data received by the downloader into the bootloader.
+ * This interface proxies data received by the protocol into the bootloader.
  */
-class IDownloadStreamSink
+class IDownloadSink
 {
 public:
-    virtual ~IDownloadStreamSink() = default;
+    virtual ~IDownloadSink() = default;
 
     /**
      * The data chunk length cannot exceed 32767 bytes.
@@ -229,10 +218,10 @@ public:
 /**
  * Inherit this class to implement firmware loading protocol, from remote to the local storage.
  */
-class IDownloader
+class IProtocol
 {
 public:
-    virtual ~IDownloader() = default;
+    virtual ~IProtocol() = default;
 
     /**
      * Performs the download operation synchronously.
@@ -240,14 +229,14 @@ public:
      * definition). If the sink returns error, downloading will be aborted.
      * @return Negative on error, 0 on success.
      */
-    virtual std::int16_t download(IDownloadStreamSink& sink) = 0;
+    virtual std::int16_t downloadImage(IDownloadSink& sink) = 0;
 };
 
 /**
  * Main bootloader controller.
  * Beware that this class has a large buffer field used to cache ROM reads. Do not allocate it on the stack.
  */
-class Bootloader final
+class BootloaderController final
 {
     /**
      * RAII mutex manager.
@@ -261,18 +250,23 @@ class Bootloader final
     };
 
     /**
-     * A proxy that streams the data from the downloader into the application storage.
+     * A proxy that streams the data from the protocol into the application storage.
      * Note that every access to the storage backend is protected with the mutex!
      */
-    class Sink : public IDownloadStreamSink
+    class ProxySink : public IDownloadSink
     {
         IPlatform& platform_;
         IROMBackend& backend_;
         const std::size_t max_image_size_;
         std::size_t offset_ = 0;
 
-        std::int16_t handleNextDataChunk(const void* data, std::uint16_t size) override
+        std::int16_t handleNextDataChunk(const void* data, std::uint16_t size) final
         {
+            if (size > MaxDataBlockSize)
+            {
+                return -ErrInvalidParams;
+            }
+
             MutexLocker mlock(platform_);
 
             if ((offset_ + size) <= max_image_size_)
@@ -293,9 +287,9 @@ class Bootloader final
         }
 
     public:
-        Sink(IPlatform& pl,
-             IROMBackend& back,
-             std::size_t max_image_size) :
+        ProxySink(IPlatform& pl,
+                  IROMBackend& back,
+                  std::size_t max_image_size) :
             platform_(pl),
             backend_(back),
             max_image_size_(max_image_size)
@@ -310,7 +304,8 @@ class Bootloader final
     const std::chrono::microseconds boot_delay_;
     std::chrono::microseconds boot_delay_started_at_{};
 
-    std::uint8_t rom_buffer_[1024]{};          ///< Larger buffer enables faster CRC verification, which is important
+    /// Larger buffer enables faster CRC verification, which is important, especially with large firmwares!
+    std::array<std::uint8_t, 1024> rom_buffer_{};
 
     /// Caching is needed because app check can sometimes take a very long time (several seconds)
     std::optional<AppInfo> cached_app_info_;
@@ -323,8 +318,8 @@ class Bootloader final
     {
         static constexpr std::size_t ImagePaddingBytes = 8;
 
-        std::array<std::uint8_t, 8> signature{};
-        AppInfo app_info;
+        alignas(8) std::array<std::uint8_t, 8> signature{};
+        alignas(8) AppInfo app_info;                            // Being explicit about expected memory layout
 
         static constexpr std::array<std::uint8_t, 8> getSignatureValue()
         {
@@ -388,12 +383,12 @@ class Bootloader final
                 for (std::size_t i = 0; i < crc_offset;)
                 {
                     const auto res =
-                        backend_.read(i, rom_buffer_,
-                                      std::uint16_t(std::min<std::size_t>(sizeof(rom_buffer_), crc_offset - i)));
+                        backend_.read(i, rom_buffer_.data(),
+                                      std::uint16_t(std::min<std::size_t>(rom_buffer_.size(), crc_offset - i)));
                     if (res > 0)
                     {
                         i += std::size_t(res);
-                        crc.add(rom_buffer_, std::size_t(res));
+                        crc.add(rom_buffer_.data(), std::size_t(res));
                     }
                     else
                     {
@@ -410,13 +405,13 @@ class Bootloader final
                 // Read the rest of the image in large chunks
                 for (std::size_t i = crc_offset + 8; i < desc.app_info.image_size;)
                 {
-                    const auto res = backend_.read(i, rom_buffer_,
-                                                   std::uint16_t(std::min<std::size_t>(sizeof(rom_buffer_),
+                    const auto res = backend_.read(i, rom_buffer_.data(),
+                                                   std::uint16_t(std::min<std::size_t>(rom_buffer_.size(),
                                                                                        desc.app_info.image_size - i)));
                     if (res > 0)
                     {
                         i += std::size_t(res);
-                        crc.add(rom_buffer_, std::size_t(res));
+                        crc.add(rom_buffer_.data(), std::size_t(res));
                     }
                     else
                     {
@@ -448,8 +443,8 @@ class Bootloader final
             boot_delay_started_at_ =
                 platform_.getMonotonicUptime();     // This only makes sense if the new state is BootDelay
             KOCHERGA_TRACE("App found; version %d.%d.%x, %d bytes\n",
-                           appdesc_result.first.app_info.major_version,
-                           appdesc_result.first.app_info.minor_version,
+                           appdesc->app_info.major_version,
+                           appdesc->app_info.minor_version,
                            unsigned(appdesc->app_info.vcs_commit),
                            unsigned(appdesc->app_info.image_size));
         }
@@ -474,10 +469,10 @@ public:
      *
      * By default, the boot delay is set to zero; i.e. if the application is valid it will be launched immediately.
      */
-    Bootloader(IPlatform& platform,
-               IROMBackend& rom_backend,
-               std::uint32_t max_application_image_size = 0xFFFFFFFFUL,
-               std::chrono::microseconds boot_delay = std::chrono::microseconds(0)) :
+    BootloaderController(IPlatform& platform,
+                         IROMBackend& rom_backend,
+                         std::uint32_t max_application_image_size = 0xFFFFFFFFUL,
+                         std::chrono::microseconds boot_delay = std::chrono::microseconds(0)) :
         platform_(platform),
         backend_(rom_backend),
         max_application_image_size_(max_application_image_size),
@@ -572,7 +567,7 @@ public:
     /**
      * Template method that implements all of the high-level steps of the application update procedure.
      */
-    std::int16_t upgradeApp(IDownloader& downloader)
+    std::int16_t upgradeApp(IProtocol& proto)
     {
         /*
          * Preparation stage.
@@ -611,17 +606,17 @@ public:
 
         /*
          * Downloading stage.
-         * New application is downloaded into the storage backend via the Sink proxy class.
-         * Every write() via the Sink is mutex-protected.
+         * New application is downloaded into the storage backend via the ProxySink proxy class.
+         * Every write() via the ProxySink is mutex-protected.
          */
-        Sink sink(platform_, backend_, max_application_image_size_);
+        ProxySink sink(platform_, backend_, max_application_image_size_);
 
-        auto res = downloader.download(sink);
+        auto res = proto.downloadImage(sink);
         KOCHERGA_TRACE("App download finished with status %d\n", res);
 
         /*
          * Finalization stage.
-         * Checking if the downloader has succeeded, checking if the backend is able to finalize successfully.
+         * Checking if the protocol has succeeded, checking if the backend is able to finalize successfully.
          * Notice the mutex.
          */
         MutexLocker mlock(platform_);

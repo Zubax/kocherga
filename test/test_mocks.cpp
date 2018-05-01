@@ -28,8 +28,10 @@
 # undef NDEBUG
 #endif
 
-#include "catch.hpp"
+// The tested header must be included first to make sure that it doesn't have any hidden include dependencies.
 #include "mocks.hpp"
+
+#include "catch.hpp"
 #include <thread>
 #include <algorithm>
 
@@ -49,13 +51,17 @@ TEST_CASE("Mocks-Platform")
     };
 
     REQUIRE(!pl.isMutexLocked());
+    REQUIRE(0 == pl.getMutexLockCount());
     static_cast<kocherga::IPlatform&>(pl).lockMutex();
     REQUIRE(pl.isMutexLocked());
+    REQUIRE(1 == pl.getMutexLockCount());
     static_cast<kocherga::IPlatform&>(pl).unlockMutex();
     REQUIRE(!pl.isMutexLocked());
+    REQUIRE(1 == pl.getMutexLockCount());
 
     REQUIRE_THROWS_AS(do_lock_frenzy(pl), BadUsageException);
     REQUIRE(pl.isMutexLocked());
+    REQUIRE(10 <= pl.getMutexLockCount());
     while (pl.isMutexLocked())
     {
         static_cast<kocherga::IPlatform&>(pl).unlockMutex();
@@ -93,6 +99,9 @@ TEST_CASE("Mocks-ROM")
 
     std::array<std::uint8_t, 32768> buf1{};
 
+    REQUIRE(0 == back.getReadCount());
+    REQUIRE(0 == back.getWriteCount());
+
     // Reading
     REQUIRE(32 == interface.read(0, buf1.data(), 32));
     REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 32, [](auto x) { return x == 0xFF; }));
@@ -108,9 +117,9 @@ TEST_CASE("Mocks-ROM")
 
     REQUIRE(0 == interface.read(1024, buf1.data(), 1));
 
-    back.injectFailure();
+    back.setFailureInjector([](std::int16_t) { return -1; });
     REQUIRE(-1 == interface.read(0, buf1.data(), 1024));
-    back.removeFailure();
+    back.setFailureInjector({});
 
     REQUIRE(1024 == interface.read(0, buf1.data(), 2000));
     std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == 0xFF; });
@@ -119,6 +128,9 @@ TEST_CASE("Mocks-ROM")
     REQUIRE(buf1[1026] == 0);
 
     REQUIRE_THROWS_AS(interface.read(0, buf1.data(), 32768), BadUsageException);
+
+    REQUIRE(8 == back.getReadCount());
+    REQUIRE(0 == back.getWriteCount());
 
     // Writing
     REQUIRE_THROWS_AS(interface.write(0, buf1.data(), 123), BadUsageException);
@@ -135,4 +147,7 @@ TEST_CASE("Mocks-ROM")
     REQUIRE(std::all_of(buf1.begin() + 0,   buf1.begin() + 128, [](auto x) { return x == 0xAA; }));
     REQUIRE(std::all_of(buf1.begin() + 128, buf1.begin() + 512, [](auto x) { return x == 0xFF; }));
     REQUIRE(std::all_of(buf1.begin() + 512, buf1.begin() + 640, [](auto x) { return x == 0xAA; }));
+
+    REQUIRE(9 == back.getReadCount());
+    REQUIRE(4 == back.getWriteCount());
 }
