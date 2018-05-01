@@ -43,6 +43,8 @@ CAN bus             | UAVCAN
 
 *Come back later.*
 
+![Kocherga State Machine Diagram](state_machine.svg "Kocherga State Machine Diagram")
+
 ## License
 
 Kochergá is available under the terms of the MIT License.
