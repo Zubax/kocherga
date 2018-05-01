@@ -76,7 +76,7 @@ static constexpr std::uint16_t MaxDataBlockSize = 32767;
  * Output xor: 0xFFFFFFFFFFFFFFFF
  * Check: 0x62EC59E3F1A4F00A
  */
-class CRC64WE
+class CRC64
 {
     static constexpr std::uint64_t Poly = std::uint64_t(0x42F0E1EBA9EA3693ULL);
     static constexpr std::uint64_t Mask = std::uint64_t(1) << 63U;
@@ -377,7 +377,7 @@ class BootloaderController final
             // This block is very computationally intensive, so it has been carefully optimized for speed.
             {
                 const auto crc_offset = offset + offsetof(AppDescriptor, app_info.image_crc);
-                CRC64WE crc;
+                CRC64 crc;
 
                 // Read large chunks until the CRC field is reached (in most cases it will fit in just one chunk)
                 for (std::size_t i = 0; i < crc_offset;)
@@ -651,46 +651,46 @@ public:
 };
 
 /**
- * This option allows to erase the structure automatically once it's read
+ * This class allows the user to exchange arbitrary data between the bootloader and the application.
+ * The data is CRC-64 protected to ensure its validity.
+ * Two usage scenarios are supported:
+ *
+ *  1. Simple - the data is simply stored at a dedicated location in RAM. Normally this approach is recommended.
+ *     Normally the reserved RAM area would be situated at the very end of the RAM.
+ *
+ *  2. Memory-efficient - the data is scattered across a set of special-function registers specified by the user.
+ *     This approach permits the user to avoid reserving any memory regions for data exchange, which is
+ *     useful in RAM-constrained systems.
+ *
+ * For more information, refer to the factory function @ref makeAppDataExchangeMarshaller().
  */
-enum class AutoErase
-{
-    EraseAfterRead,
-    DoNotErase
-};
-
-/**
- * Implementation details, do not use directly
- */
-namespace impl_
-{
-
 template <typename Container, typename Pointers>
-class AppSharedMarshaller
+class AppDataExchangeMarshaller
 {
+    static_assert(std::is_standard_layout_v<Container>, "Container must be a standard layout type.");
+
     Pointers pointers_;
 
-    struct ContainerWrapper
+    class ContainerWrapper
     {
-        Container container;
-
-    private:
         std::uint64_t crc_ = 0;
 
     public:
+        Container container;
+
         ContainerWrapper() : container()  { }
 
         explicit ContainerWrapper(const Container& c) :
             container(c)
         {
-            CRC64WE crc_computer;
+            CRC64 crc_computer;
             crc_computer.add(&container, sizeof(container));
             crc_ = crc_computer.get();
         }
 
         bool isValid() const
         {
-            CRC64WE crc_computer;
+            CRC64 crc_computer;
             crc_computer.add(&container, sizeof(container));
             return crc_ == crc_computer.get();
         }
@@ -702,7 +702,7 @@ class AppSharedMarshaller
         static constexpr decltype(N) Value = N;
     };
 
-    template <std::size_t MaxSize, typename T>                     // Holy pants why auto doesn't work here
+    template <std::size_t MaxSize, typename T>                  // Holy pants why auto doesn't work here
     ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)> readOne(void* destination, const volatile T* ptr)
     {
         const T x = *ptr;                                       // Guaranteeing proper pointer access
@@ -755,24 +755,25 @@ class AppSharedMarshaller
     }
 
 public:
-    explicit AppSharedMarshaller(const Pointers& ptrs) : pointers_(ptrs) { }
+    /**
+     * Do not instantiate this class manually, it's difficult.
+     * Use the factory method instead, @ref makeAppDataExchangeMarshaller().
+     */
+    explicit AppDataExchangeMarshaller(const Pointers& ptrs) : pointers_(ptrs) { }
 
     /**
-     * Checks if the data is available and reads it.
-     * Returns an empty option if no data is available.
+     * Checks if the data is available and reads it; then erases the storage to prevent deja-vu.
+     * Returns an empty option if no data is available (in that case the storage is not erased).
      */
-    std::optional<Container> read(AutoErase auto_erase = AutoErase::DoNotErase)
+    std::optional<Container> readAndErase()
     {
         ContainerWrapper wrapper;
         unwindReadWrite<false, 0, sizeof(wrapper)>(&wrapper);
-
         if (wrapper.isValid())
         {
-            if (auto_erase == AutoErase::EraseAfterRead)
-            {
-                erase();
-            }
-
+            ContainerWrapper empty;
+            std::memset(&empty, 0, sizeof(empty));
+            unwindReadWrite<true, 0, sizeof(empty)>(&empty);
             return wrapper.container;
         }
         else
@@ -789,28 +790,15 @@ public:
         ContainerWrapper wrapper(cont);
         unwindReadWrite<true, 0, sizeof(wrapper)>(&wrapper);
     }
-
-    /**
-     * Invalidates the stored data.
-     */
-    void erase()
-    {
-        ContainerWrapper wrapper;
-        std::memset(&wrapper, 0, sizeof(wrapper));
-        unwindReadWrite<true, 0, sizeof(wrapper)>(&wrapper);
-    }
 };
-
-} // namespace impl_
 
 /**
  * Constructs an object that can be used to store and retrieve data for exchange with the application.
  * Usage example:
  *
- *     auto marshaller = makeAppSharedMarshaller<DataType>(&REG_A, &REG_B, &REG_C, &REG_D, &REG_E, &REG_F);
- *     // Reading data:
- *     auto result = marshaller.read();
- *     if (result.second)
+ *     auto marshaller = makeAppDataExchangeMarshaller<DataType>(&REG_A, &REG_B, &REG_C, &REG_D, &REG_E, &REG_F);
+ *     // Reading data (always destructively):
+ *     if (auto data = marshaller.readAndErase())
  *     {
  *         // Process the data...
  *     }
@@ -820,8 +808,12 @@ public:
  *     }
  *     // Writing data:
  *     marshaller.write(the_data);
- *     // Erasing data:
- *     marshaller.erase();
+ *
+ * The application should use the following memory layout for writing and reading the shared struct:
+ *
+ *      Offset  Length  Purpose
+ *      0       8       CRC64 of the following payload. Must be 8-byte aligned (or more if required by the platform).
+ *      8       >0      Payload written by the application or by the bootloader
  *
  * @tparam Container                    Payload data type, i.e. a structure that should be stored or read.
  *
@@ -829,16 +821,15 @@ public:
  *                                      retrieved from. Pointer type defines access mode and size, e.g. a uint32
  *                                      pointer will be accessed in 32-bit mode, and its memory block will be used to
  *                                      store exactly 4 bytes, etc. Supported pointer sizes are 8, 16, 32, and 64 bit.
+ *                                      A single void pointer can be passed as well, in that case all of the data
+ *                                      will be simply stored at that pointer using conventional std::memmove().
  *
- * @return                              An instance of @ref impl_::AppSharedMarshaller<>.
- *                                      The returned instance supports methods read(), write(), and erase(), that can
- *                                      be used to read, write, and erase the storage, respectively.
+ * @return                              An instance of @ref AppDataExchangeMarshaller<>.
  */
 template <typename Container, typename... RegisterPointers>
-inline auto makeAppSharedMarshaller(RegisterPointers... pointers)
+inline auto makeAppDataExchangeMarshaller(RegisterPointers... pointers)
 {
-    typedef impl_::AppSharedMarshaller<Container, decltype(std::make_tuple(pointers...))> Type;
-    return Type(std::make_tuple(pointers...));
+    return AppDataExchangeMarshaller<Container, std::tuple<RegisterPointers...>>(std::make_tuple(pointers...));
 }
 
 }
