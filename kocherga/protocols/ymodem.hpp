@@ -24,3 +24,16 @@
  */
 
 #pragma once
+
+#include "../kocherga.hpp"
+
+
+namespace kocherga
+{
+namespace kocherga_ymodem
+{
+
+
+
+}
+}

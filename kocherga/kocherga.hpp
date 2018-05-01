@@ -108,10 +108,36 @@ public:
 };
 
 /**
- * Bootloader states. Some of the states are designed as commands to the outer logic, e.g. @ref ReadyToBoot
- * means that the application should be started.
+ * Bootloader controller states.
+ * Some of the states are designed as commands to the outer logic, e.g:
+ *      @ref ReadyToBoot means that the application should be started.
+ *
+ * The following state transition diagram illustrates the operating principles of the bootloader controller class:
+ *
+ *     No valid application found ###################### Valid application found
+ *               /----------------# Bootloader started #----------\ /-------------------------------------------\
+ *               |                ######################          | |                                           |
+ *               v                                                v v  Boot delay expired                       |
+ *         +-------------+                               +-----------+  (typically zero)  +-------------+       |
+ *     /-->| NoAppToBoot |        /----------------------| BootDelay |------------------->| ReadyToBoot |       |
+ *     |   +-------------+       /                       +-----------+                    +-------------+       |
+ *     |          |             /                          |Boot cancelled                   |ReadyToBoot is    |
+ *     |Upgrade   |<-----------/                           |e.g. received a state transition |an auxiliary      /
+ *     |failed,   |Upgrade requested,                      |request to BootCancelled.        |state, it is     /
+ *     |no valid  |e.g. received a state transition        v                                 |left automati-  /
+ *     |image is  |request to AppUpgradeInProgress. +---------------+                        |cally ASAP.    /
+ *     |now ava-  |<--------------------------------| BootCancelled |                        v              /
+ *     |ilable    |                                 +---------------+                ###############       /
+ *     |          v                                        ^                         # Booting the #      /
+ *     | +----------------------+ Upgrade failed, but the  |                         # application #     /
+ *     \-| AppUpgradeInProgress |--------------------------/                         ###############    /
+ *       +----------------------+ existing valid image was not                                         /
+ *                |               altered and remains valid.                                          /
+ *                |                                                                                  /
+ *                | Upgrade successful, received image is valid.                                    /
+ *                \--------------------------------------------------------------------------------/
  */
-enum class State
+enum class State : std::uint8_t
 {
     NoAppToBoot,
     BootDelay,
@@ -235,6 +261,7 @@ public:
 /**
  * Main bootloader controller.
  * Beware that this class has a large buffer field used to cache ROM reads. Do not allocate it on the stack.
+ * See the @ref State enum definition for state transition logic.
  */
 class BootloaderController final
 {
@@ -443,8 +470,8 @@ class BootloaderController final
             boot_delay_started_at_ =
                 platform_.getMonotonicUptime();     // This only makes sense if the new state is BootDelay
             KOCHERGA_TRACE("App found; version %d.%d.%x, %d bytes\n",
-                           appdesc->app_info.major_version,
-                           appdesc->app_info.minor_version,
+                           unsigned(appdesc->app_info.major_version),
+                           unsigned(appdesc->app_info.minor_version),
                            unsigned(appdesc->app_info.vcs_commit),
                            unsigned(appdesc->app_info.image_size));
         }
@@ -734,7 +761,7 @@ class AppDataExchangeMarshaller
     }
 
     template <bool WriteNotRead, std::size_t PtrIndex, std::size_t RemainingSize>
-    typename std::enable_if<(RemainingSize > 0)>::type unwindReadWrite(void* structure)
+    std::enable_if_t<(RemainingSize > 0)> unwindReadWrite(void* structure)
     {
         static_assert(PtrIndex < std::tuple_size<Pointers>::value, "Storage is not large enough for the structure");
         const auto ret = WriteNotRead ?
@@ -749,7 +776,7 @@ class AppDataExchangeMarshaller
     }
 
     template <bool, std::size_t PtrIndex, std::size_t RemainingSize>
-    typename std::enable_if<(RemainingSize == 0)>::type unwindReadWrite(void*)
+    std::enable_if_t<(RemainingSize == 0)> unwindReadWrite(void*)
     {
         // Here we could implement a check whether all storage has been utilized.
     }
