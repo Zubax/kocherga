@@ -279,3 +279,30 @@ TEST_CASE("YModem-Basic")
         REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     }
 }
+
+
+TEST_CASE("YModem-Timeout")
+{
+    initImageFiles();
+    mocks::Platform platform;
+
+    static constexpr std::uint32_t ROMSize = 1024 * 1024;
+    mocks::FileMappedROMBackend rom_backend("ymodem-rom.tmp", ROMSize);
+    kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+
+    PipedSerialPort port(piped_process::launch("sleep 3600"));
+    kocherga_ymodem::YModemProtocol ym(platform, port);
+    const auto began_at = std::chrono::steady_clock::now();
+    REQUIRE(kocherga_ymodem::ErrRetriesExhausted == -blc.upgradeApp(ym));
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+    const auto duration = std::chrono::steady_clock::now().time_since_epoch() - began_at.time_since_epoch();
+
+    // Ensure that the timeouts are correct; 1 minute expected
+    {
+        const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
+        std::cout << "Timed out in " << seconds << " seconds" << std::endl;
+        REQUIRE(seconds > 50);
+        REQUIRE(seconds < 70);
+    }
+}
