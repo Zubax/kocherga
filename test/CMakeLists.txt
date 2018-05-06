@@ -49,6 +49,7 @@ file(GLOB_RECURSE KOCHERGA_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "../koch
 
 add_executable(kocherga_test
                test_core.cpp
+               test_ymodem.cpp
                test_mocks.cpp
                test_main.cpp
                mocks.hpp

@@ -45,6 +45,30 @@ CAN bus             | UAVCAN
 
 ![Kocherga State Machine Diagram](state_machine.svg "Kocherga State Machine Diagram")
 
+## Protocols
+
+As has been stated earlier, Kocherga itself is dependency-free.
+However, protocol implementations may require additional dependencies themselves.
+They are documented here.
+
+### XMODEM/YMODEM/XMODEM-1K
+
+No additional dependencies are needed.
+
+### UAVCAN
+
+The UAVCAN protocol support requires the following libraries:
+
+* [Libcanard](http://uavcan.org/Implementations/Libcanard) - lightweight UAVCAN stack in C.
+* [Senoval](https://github.com/Zubax/senoval) - utility library for deeply embedded systems.
+
+### Popcop
+
+The Popcop protocol support requires the following libraries:
+
+* [Libpopcop](https://github.com/Zubax/popcop) - implementation of the Popcop protocol in C++.
+* [Senoval](https://github.com/Zubax/senoval) - utility library for deeply embedded systems.
+
 ## License
 
 Kochergá is available under the terms of the MIT License.

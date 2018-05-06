@@ -41,11 +41,49 @@ namespace kocherga_ymodem
  * Error codes specific to this module.
  */
 static constexpr std::int16_t ErrOK                             = 0;
-static constexpr std::int16_t ErrChannelWriteTimedOut           = 2001;
+static constexpr std::int16_t ErrPortWriteTimedOut              = 2001;
 static constexpr std::int16_t ErrRetriesExhausted               = 2002;
 static constexpr std::int16_t ErrProtocolError                  = 2003;
 static constexpr std::int16_t ErrTransferCancelledByRemote      = 2004;
 static constexpr std::int16_t ErrRemoteRefusedToProvideFile     = 2005;
+static constexpr std::int16_t ErrPortError                      = 2006;
+
+/**
+ * Abstracts a platform-specific serial port for the YMODEM protocol.
+ * The application can use these functions to reset its watchdog also, provided that the watchdog timeout
+ * is not less than one second (otherwise, false-positive timeouts are possible).
+ */
+class IYModemSerialPort
+{
+public:
+    virtual ~IYModemSerialPort() = default;
+
+    /**
+     * Result of the IO operations.
+     */
+    enum class Result : std::uint8_t
+    {
+        Success,        ///< Operation was completed successfully.
+        Timeout,        ///< Operation has timed out.
+        Error           ///< Operation has failed.
+    };
+
+    /**
+     * Emits one byte into the port.
+     * @param byte      The byte to emit.
+     * @param timeout   The operation will be aborted if the byte could not be emitted in this amount of time.
+     * @return          @ref Result.
+     */
+    virtual Result emit(std::uint8_t byte, std::chrono::microseconds timeout) = 0;
+
+    /**
+     * Receives one byte from the port.
+     * @param out_byte  A reference where to store the received byte.
+     * @param timeout   The operation will be aborted if the byte could not be received in this amount of time.
+     * @return          @ref Result.
+     */
+    virtual Result receive(std::uint8_t& out_byte, std::chrono::microseconds timeout) = 0;
+};
 
 /**
  * Downloads data using YMODEM or XMODEM protocol over the specified ChibiOS channel
@@ -61,16 +99,18 @@ static constexpr std::int16_t ErrRemoteRefusedToProvideFile     = 2005;
  *
  * Reference: http://pauillac.inria.fr/~doligez/zmodem/ymodem.txt
  */
-class YModemReceiver : public kocherga::IProtocol
+class YModemProtocol final : public kocherga::IProtocol
 {
     static constexpr std::uint16_t BlockSizeXModem = 128;
     static constexpr std::uint16_t BlockSize1K     = 1024;
     static constexpr std::uint16_t WorstCaseBlockSizeWithCRC = BlockSize1K + 2;
 
-    static constexpr std::uint32_t SendTimeoutMSec         = 1000;
-    static constexpr std::uint32_t InitialTimeoutMSec      = 60000;
-    static constexpr std::uint32_t NextBlockTimeoutMSec    = 5000;
-    static constexpr std::uint32_t BlockPayloadTimeoutMSec = 1000;
+    /// The timeouts are according to the YMODEM specification
+    static constexpr std::chrono::microseconds SendTimeout          {1'000'000};
+    static constexpr std::chrono::microseconds CharReceiveTimeout   {1'000'000};
+    static constexpr std::chrono::microseconds InitialTimeout      {60'000'000};
+    static constexpr std::chrono::microseconds NextBlockTimeout     {5'000'000};
+    static constexpr std::chrono::microseconds BlockPayloadTimeout  {1'000'000};
 
     static constexpr std::uint8_t MaxRetries = 3;
 
@@ -82,118 +122,85 @@ class YModemReceiver : public kocherga::IProtocol
         static constexpr std::uint8_t ACK = 0x06;
         static constexpr std::uint8_t NAK = 0x15;
         static constexpr std::uint8_t CAN = 0x18;
-        static constexpr std::uint8_t C   = 0x43;
     };
 
-    ::BaseChannel* const channel_;
-    watchdog::Timer* const watchdog_reference_;
+    kocherga::IPlatform& platform_;
+    IYModemSerialPort& port_;
+    std::uint8_t buffer_[WorstCaseBlockSizeWithCRC]{};
 
-    std::uint8_t buffer_[WorstCaseBlockSizeWithCRC];
 
-
-    static int sendResultToErrorCode(int res)
-    {
-        if (res >= 0)
-        {
-            return -ErrChannelWriteTimedOut;
-        }
-        return res;
-    }
-
-    static std::uint8_t computeChecksum(const void* data, unsigned size)
+    static std::uint8_t computeChecksum(const void* data, std::uint16_t size)
     {
         auto p = static_cast<const std::uint8_t*>(data);
         return std::uint8_t(std::accumulate(p, p + size, 0));
     }
 
-    void kickTheDog()
-    {
-        if (watchdog_reference_ != nullptr)
-        {
-            watchdog_reference_->reset();
-        }
-    }
-
-    int send(std::uint8_t byte)
+    std::int16_t send(std::uint8_t byte)
     {
         KOCHERGA_TRACE("YMODEM TX 0x%x\n", byte);
-        kickTheDog();
-        int res = chnPutTimeout(channel_, byte, TIME_MS2I(SendTimeoutMSec));
-        kickTheDog();
-        if (res != STM_OK)
+        switch (port_.emit(byte, SendTimeout))
         {
-            if (res > 0)    // Making sure the error code is inverted
-            {
-                res = -res;
-            }
-            return res;
+        case IYModemSerialPort::Result::Success:
+        {
+            return 0;
         }
-        return 1;           // Number of bytes transferred, always 1
+        case IYModemSerialPort::Result::Timeout:
+        {
+            return -ErrPortWriteTimedOut;
+        }
+        case IYModemSerialPort::Result::Error:
+        {
+            return -ErrPortError;
+        }
+        }
+
+        return -ErrPortError;
     }
 
-    int receive(void* data, unsigned size, unsigned timeout_msec)
+    std::int16_t receive(void* data, const std::uint16_t size, std::chrono::microseconds timeout)
     {
-        /*
-         * The spec says:
-         *          Once into a receiving a block, the receiver goes into a one-second timeout
-         *          for each character and the checksum.
-         */
-        constexpr unsigned CharTimeoutMSec = 1000;
-
-        std::uint8_t* ui8 = static_cast<std::uint8_t*>(data);
-
-        for (unsigned i = 0; i < size; i++)
+        assert(size <= kocherga::MaxDataBlockSize);
+        auto* ui8 = static_cast<std::uint8_t*>(data);
+        for (std::uint16_t i = 0; i < size; i++)
         {
-            kickTheDog();
-            const int res = chnGetTimeout(channel_, TIME_MS2I(CharTimeoutMSec));
-            kickTheDog();
-
-            if (res == STM_TIMEOUT)
+            std::uint8_t byte = 0;
+            switch (port_.receive(byte, CharReceiveTimeout))
+            {
+            case IYModemSerialPort::Result::Success:
+            {
+                *ui8++ = std::uint8_t(byte);
+                break;
+            }
+            case IYModemSerialPort::Result::Timeout:
             {
                 /*
                  * Note that we may greatly overstay the timeout here, but this is by design,
                  * since the spec requires that each character must be received with 1 second timeout.
                  */
-                if (timeout_msec <= CharTimeoutMSec)
+                if (timeout <= CharReceiveTimeout)
                 {
-                    return i;
+                    return std::int16_t(i);
                 }
                 else
                 {
-                    timeout_msec -= CharTimeoutMSec;
+                    timeout -= CharReceiveTimeout;
                 }
-            }
-            else if (res < 0)
-            {
-                return res;
-            }
-            else
-            {
-                *ui8++ = std::uint8_t(res);
-            }
-        }
-
-        return size;
-    }
-
-    void flushReadQueue()
-    {
-        for (;;)
-        {
-            kickTheDog();
-            const auto x = chnGetTimeout(channel_, TIME_MS2I(1));
-            if (x < 0)
-            {
                 break;
             }
-            KOCHERGA_TRACE("YMODEM FLUSH RX 0x%x\n", unsigned(x));
+            case IYModemSerialPort::Result::Error:
+            {
+                return -ErrPortError;
+            }
+            }
         }
+
+        return std::int16_t(size);
     }
 
     void abort()
     {
-        constexpr auto Times = 5;           // Multiple CAN are required!
-        for (int i = 0; i < Times; i++)
+        constexpr std::uint8_t Times = 5;           // Multiple CAN are required!
+        for (std::uint8_t i = 0; i < Times; i++)
         {
             if (send(ControlCharacters::CAN) != 1)
             {
@@ -202,7 +209,7 @@ class YModemReceiver : public kocherga::IProtocol
         }
     }
 
-    enum class BlockReceptionResult
+    enum class BlockReceptionResult : std::uint8_t
     {
         Success,
         Timeout,
@@ -217,12 +224,12 @@ class YModemReceiver : public kocherga::IProtocol
      * @return First component: @ref BlockReceptionResult
      *         Second component: system error code, if applicable
      */
-    std::pair<BlockReceptionResult, int> receiveBlock(unsigned& out_size,
-                                                      std::uint8_t& out_sequence)
+    std::pair<BlockReceptionResult, std::int16_t> receiveBlock(std::uint16_t& out_size,
+                                                               std::uint8_t& out_sequence)
     {
         // Header byte
         std::uint8_t header_byte = 0;
-        int res = receive(&header_byte, 1, NextBlockTimeoutMSec);
+        std::int16_t res = receive(&header_byte, 1, NextBlockTimeout);
         if (res < 0)
         {
             return { BlockReceptionResult::SystemError, res };
@@ -263,7 +270,7 @@ class YModemReceiver : public kocherga::IProtocol
 
         // Sequence ID
         std::uint8_t sequence_id_bytes[2] = {};
-        res = receive(sequence_id_bytes, 2, BlockPayloadTimeoutMSec);
+        res = receive(sequence_id_bytes, 2, BlockPayloadTimeout);
         if (res < 0)
         {
             return { BlockReceptionResult::SystemError, res };
@@ -281,13 +288,13 @@ class YModemReceiver : public kocherga::IProtocol
 
         // Payload
         constexpr auto ChecksumSize = 1;
-        const auto block_size_with_checksum = out_size + ChecksumSize;
-        res = receive(buffer_, block_size_with_checksum, BlockPayloadTimeoutMSec);
+        const auto block_size_with_checksum = std::uint16_t(out_size + ChecksumSize);
+        res = receive(buffer_, block_size_with_checksum, BlockPayloadTimeout);
         if (res < 0)
         {
             return { BlockReceptionResult::SystemError, res };
         }
-        if (unsigned(res) != block_size_with_checksum)
+        if (std::uint16_t(res) != block_size_with_checksum)
         {
             return { BlockReceptionResult::Timeout, 0 };
         }
@@ -303,7 +310,7 @@ class YModemReceiver : public kocherga::IProtocol
     }
 
     static bool tryParseZeroBlock(const std::uint8_t* const data,
-                                  const unsigned size,
+                                  const std::uint16_t size,
                                   bool& out_is_null_block,
                                   std::uint32_t& out_file_size)
     {
@@ -313,7 +320,7 @@ class YModemReceiver : public kocherga::IProtocol
         out_is_null_block = true;   // Paranoia
         out_file_size = 0;          // I.e. unknown
 
-        unsigned offset = 0;
+        std::uint16_t offset = 0;
 
         // Skipping the file name
         while ((offset < size) && (data[offset] != 0))
@@ -353,7 +360,7 @@ class YModemReceiver : public kocherga::IProtocol
         return true;
     }
 
-    static int processDownloadedBlock(kocherga::IDownloadSink& sink, void* data, unsigned size)
+    static std::int16_t processDownloadedBlock(kocherga::IDownloadSink& sink, void* data, std::uint16_t size)
     {
         KOCHERGA_TRACE("YMODEM received block of %d bytes\n", size);
         return sink.handleNextDataChunk(data, size);
@@ -362,65 +369,65 @@ class YModemReceiver : public kocherga::IProtocol
 public:
     /**
      * @param channel                   the serial port channel that will be used for downloading
-     * @param watchdog_reference        optional reference to a watchdog timer that will be reset periodically.
-     *                                  The watchdog timeout must be greater than 1 second.
      */
-    YModemReceiver(::BaseChannel* channel,
-                   watchdog::Timer* watchdog_reference = nullptr) :
-        channel_(channel),
-        watchdog_reference_(watchdog_reference)
+    YModemProtocol(kocherga::IPlatform& platform,
+                   IYModemSerialPort& serial_port) :
+        platform_(platform),
+        port_(serial_port)
     { }
 
     std::int16_t downloadImage(kocherga::IDownloadSink& sink) override
     {
-        kickTheDog();
-
         // This thing will make sure there's no residual garbage in the RX buffer afterwards
         struct Flusher
         {
-            YModemReceiver& parent;
-            Flusher(YModemReceiver& x) : parent(x) { }
-            ~Flusher() { parent.flushReadQueue(); }
-        } flusher_(*this);
+            IYModemSerialPort& port;
+            ~Flusher()
+            {
+                std::uint8_t dummy = 0;
+                while (port.receive(dummy, std::chrono::microseconds(1'000)) == IYModemSerialPort::Result::Success)
+                {
+                    KOCHERGA_TRACE("YMODEM FLUSH RX 0x%x\n", unsigned(dummy));
+                }
+            }
+        } flusher_{port_};
 
         // State variables
         std::uint32_t remaining_file_size = 0;
-        bool file_size_known = false;
+        bool file_size_known{};
         std::uint8_t expected_sequence_id = 123;             // Arbitrary invalid value
 
         enum class Mode
         {
             XModem,
             YModem
-        } mode = Mode::XModem;
+        } mode{};
 
         /*
          * Initiating the transfer, receiving the first block.
          * The sequence ID will be 0 in case of YMODEM, and 1 in case of XMODEM.
          */
-        const auto started_at_st = chVTGetSystemTime();
+        const auto started_at = platform_.getMonotonicUptime();
         for (;;)
         {
-            kickTheDog();
             KOCHERGA_TRACE("Trying to initiate X/YMODEM transfer...\n");
 
-            // Abort if we couldn't get it going in InitialTimeoutMSec
-            if (chVTTimeElapsedSinceX(started_at_st) > TIME_MS2I(InitialTimeoutMSec))
+            // Abort if we couldn't get it going in InitialTimeout
+            if ((platform_.getMonotonicUptime() - started_at) > InitialTimeout)
             {
                 abort();
                 return -ErrRetriesExhausted;
             }
 
             // Requesting transmission in checksum mode
-            int res = send(ControlCharacters::NAK);
-            if (res != 1)
+            if (const auto res = send(ControlCharacters::NAK); res < 0)
             {
                 abort();
-                return sendResultToErrorCode(res);
+                return res;
             }
 
             // Receiving the block
-            unsigned size = 0;
+            std::uint16_t size = 0;
             const auto block_rx_res = receiveBlock(size, expected_sequence_id);
             if (block_rx_res.first == BlockReceptionResult::Success)
             {
@@ -453,7 +460,7 @@ public:
                 const bool zero_block_valid = tryParseZeroBlock(buffer_, size, is_null_block, remaining_file_size);
 
                 KOCHERGA_TRACE("YMODEM zero block: valid=%d null=%d size=%u\n",
-                          zero_block_valid, is_null_block, unsigned(remaining_file_size));
+                               zero_block_valid, is_null_block, unsigned(remaining_file_size));
 
                 if (!zero_block_valid)
                 {
@@ -472,11 +479,10 @@ public:
                 file_size_known = remaining_file_size > 0;
 
                 // The zero block requires a dedicated ACK, sending it now
-                res = send(ControlCharacters::ACK);
-                if (res != 1)
+                if (const auto res = send(ControlCharacters::ACK); res < 0)
                 {
                     abort();
-                    return sendResultToErrorCode(res);
+                    return res;
                 }
             }
             else if (expected_sequence_id == 1)
@@ -484,8 +490,7 @@ public:
                 mode = Mode::XModem;
                 KOCHERGA_TRACE("YMODEM zero block skipped (XMODEM mode)\n");
 
-                res = processDownloadedBlock(sink, buffer_, size);
-                if (res < 0)
+                if (const auto res = processDownloadedBlock(sink, buffer_, size); res < 0)
                 {
                     abort();
                     return res;
@@ -509,11 +514,9 @@ public:
          * Receiving the file
          */
         bool ack = mode == Mode::XModem;    // YMODEM requires another NAK after the zero block
-        unsigned remaining_retries = MaxRetries;
+        auto remaining_retries = MaxRetries;
         for (;;)
         {
-            kickTheDog();
-
             // Limiting retries
             if (remaining_retries <= 0)
             {
@@ -523,16 +526,15 @@ public:
             remaining_retries--;
 
             // Confirming or re-requesting
-            int res = send(ack ? ControlCharacters::ACK : ControlCharacters::NAK);
-            if (res != 1)
+            if (const auto res = send(ack ? ControlCharacters::ACK : ControlCharacters::NAK); res < 0)
             {
                 abort();
-                return sendResultToErrorCode(res);
+                return res;
             }
             ack = false;
 
             // Receiving the block
-            unsigned size = 0;
+            std::uint16_t size = 0;
             std::uint8_t sequence_id = 0;
             const auto block_rx_res = receiveBlock(size, sequence_id);
             if (block_rx_res.first == BlockReceptionResult::Success)
@@ -597,14 +599,13 @@ public:
                 }
                 if (size > remaining_file_size)
                 {
-                    size = remaining_file_size;
+                    size = std::uint16_t(remaining_file_size);
                 }
                 remaining_file_size -= size;
             }
 
             // Sending the block over
-            res = processDownloadedBlock(sink, buffer_, size);
-            if (res < 0)
+            if (const auto res = processDownloadedBlock(sink, buffer_, size); res < 0)
             {
                 abort();
                 return res;
@@ -628,7 +629,6 @@ public:
             abort();
         }
 
-        kickTheDog();
         return ErrOK;
     }
 };

@@ -183,6 +183,7 @@ public:
 
     /**
      * Returns the time since boot as a monotonic (i.e. steady) clock.
+     * The clock must never overflow.
      */
     virtual std::chrono::microseconds getMonotonicUptime() const = 0;
 };
