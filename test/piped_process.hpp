@@ -30,6 +30,7 @@
 #include <csignal>
 #include <unistd.h>
 #include <sys/prctl.h>
+#include <fcntl.h>
 
 
 namespace piped_process
@@ -57,20 +58,10 @@ public:
 
     ~PipedProcess()
     {
-        if (child_pid_ >= 0)
-        {
-            (void) ::kill(child_pid_, SIGTERM);
-        }
-
-        if (input_fd_ >= 0)
-        {
-            (void) ::close(input_fd_);
-        }
-
-        if (output_fd_ >= 0)
-        {
-            (void) ::close(output_fd_);
-        }
+        (void) ::kill(child_pid_, SIGTERM);
+        (void) ::close(input_fd_);
+        (void) ::close(output_fd_);
+        (void) ::kill(child_pid_, SIGKILL);
     }
 
     ::pid_t getPID() const { return child_pid_; }
@@ -95,13 +86,30 @@ public:
         const auto res = ::write(input_fd_, buffer, size);
         return (res < 0) ? std::optional<std::size_t>{} : std::optional<std::size_t>(std::size_t(res));
     }
+
+    /**
+     * Makes the pipes non-blocking for use with IO multiplexing API and timeouts.
+     */
+    void makeIONonBlocking()
+    {
+        {
+            const int flags = ::fcntl(input_fd_, F_GETFL, 0);
+            (void) ::fcntl(input_fd_, F_SETFL, unsigned(flags) | unsigned(O_NONBLOCK));
+        }
+        {
+            const int flags = ::fcntl(output_fd_, F_GETFL, 0);
+            (void) ::fcntl(output_fd_, F_SETFL, unsigned(flags) | unsigned(O_NONBLOCK));
+        }
+    }
 };
+
+using PipedProcessPtr = std::shared_ptr<PipedProcess>;
 
 /**
  * Instantiates PipedProcess by creating a new process.
  * Returns a null pointer in case of failure.
  */
-inline std::shared_ptr<PipedProcess> launch(const std::string& command)
+inline PipedProcessPtr launch(const std::string& command)
 {
     int in_fd[2]{};
     int out_fd[2]{};
@@ -148,7 +156,7 @@ inline std::shared_ptr<PipedProcess> launch(const std::string& command)
     (void) ::close(out_fd[1]);
     (void) ::close(in_fd[0]);
 
-    return std::shared_ptr<PipedProcess>(new PipedProcess(pid, in_fd[1], out_fd[0]));
+    return PipedProcessPtr(new PipedProcess(pid, in_fd[1], out_fd[0]));
 }
 
 }
