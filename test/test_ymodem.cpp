@@ -82,12 +82,12 @@ void initImageFiles()
  * A serial port implementation that connects to the sender process via pipes.
  * Pipes are used in place of a proper serial port here.
  */
-class QuasiSerialPort final : public kocherga_ymodem::IYModemSerialPort
+class PipedSerialPort final : public kocherga_ymodem::IYModemSerialPort
 {
     piped_process::PipedProcessPtr proc_;
 
 public:
-    explicit QuasiSerialPort(piped_process::PipedProcessPtr process) :
+    explicit PipedSerialPort(piped_process::PipedProcessPtr process) :
         proc_(std::move(process))
     {
         proc_->makeIONonBlocking();
@@ -177,22 +177,22 @@ struct ControlCharacters
 
 TEST_CASE("YModem-PortTest")
 {
-    QuasiSerialPort port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
+    PipedSerialPort port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
 
     {
         std::uint8_t b{};
         const auto res = port.receive(b, std::chrono::microseconds(1000));
         std::cout << "Port read result: " << int(res) << std::endl;
-        REQUIRE(QuasiSerialPort::Result::Timeout == res);
+        REQUIRE(PipedSerialPort::Result::Timeout == res);
     }
 
-    REQUIRE(QuasiSerialPort::Result::Success == port.emit(ControlCharacters::NAK, std::chrono::microseconds(1000)));
+    REQUIRE(PipedSerialPort::Result::Success == port.emit(ControlCharacters::NAK, std::chrono::microseconds(1000)));
 
     static const auto get = [&]() -> std::uint8_t
     {
         std::uint8_t b{};
         const auto res = port.receive(b, std::chrono::microseconds(1000));
-        REQUIRE(QuasiSerialPort::Result::Success == res);
+        REQUIRE(PipedSerialPort::Result::Success == res);
         return b;
     };
 
@@ -222,22 +222,46 @@ TEST_CASE("YModem-PortTest")
 
 TEST_CASE("YModem-Basic")
 {
-    static constexpr std::uint32_t ROMSize = 1024 * 1024;
-
     initImageFiles();
-
     mocks::Platform platform;
-    mocks::FileMappedROMBackend rom_backend("ymodem-rom.tmp", ROMSize);
 
+    static constexpr std::uint32_t ROMSize = 1024 * 1024;
+    mocks::FileMappedROMBackend rom_backend("ymodem-rom.tmp", ROMSize);
     kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
     REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
 
-    QuasiSerialPort port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + ValidImageFileName));
-    kocherga_ymodem::YModemProtocol ym(platform, port);
+    // Test YMODEM
+    {
+        PipedSerialPort port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(platform, port);
+        REQUIRE(0 == blc.upgradeApp(ym));
+        REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+    }
 
-    // Update via YMODEM
-    REQUIRE(0 == blc.upgradeApp(ym));
+    // Test YMODEM without the --1k flag
+    blc.cancelBoot();
+    {
+        PipedSerialPort port(piped_process::launch(std::string("sz -vv --ymodem ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(platform, port);
+        REQUIRE(0 == blc.upgradeApp(ym));
+        REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+    }
 
-    // Must be successful
-    REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+    // Test XMODEM
+    blc.cancelBoot();
+    {
+        PipedSerialPort port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(platform, port);
+        REQUIRE(0 == blc.upgradeApp(ym));
+        REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+    }
+
+    // Test XMODEM-1K
+    blc.cancelBoot();
+    {
+        PipedSerialPort port(piped_process::launch(std::string("sz -vv --xmodem --1k ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(platform, port);
+        REQUIRE(0 == blc.upgradeApp(ym));
+        REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+    }
 }
