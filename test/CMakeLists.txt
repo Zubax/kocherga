@@ -51,7 +51,9 @@ add_executable(kocherga_test
                test_core.cpp
                test_ymodem.cpp
                test_mocks.cpp
+               test_piped_process.cpp
                test_main.cpp
                mocks.hpp
                images.hpp
+               piped_process.hpp
                ${KOCHERGA_HEADERS})
