@@ -594,6 +594,7 @@ public:
 
     /**
      * Template method that implements all of the high-level steps of the application update procedure.
+     * Returns zero on success, negative on failure.
      */
     std::int16_t upgradeApp(IProtocol& proto)
     {

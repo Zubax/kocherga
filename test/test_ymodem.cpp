@@ -230,9 +230,14 @@ TEST_CASE("YModem-Basic")
     mocks::FileMappedROMBackend rom_backend("ymodem-rom.tmp", ROMSize);
 
     kocherga::BootloaderController blc(platform, rom_backend, ROMSize, std::chrono::seconds(1));
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
 
-//    QuasiSerialPort port(piped_process::launch("sz -vv --ymodem --1k " + ValidImageFileName));
-//    kocherga_ymodem::YModemProtocol ym(platform, port);
-//
-//    (void) ym;
+    QuasiSerialPort port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + ValidImageFileName));
+    kocherga_ymodem::YModemProtocol ym(platform, port);
+
+    // Update via YMODEM
+    REQUIRE(0 == blc.upgradeApp(ym));
+
+    // Must be successful
+    REQUIRE(kocherga::State::BootDelay == blc.getState());
 }
