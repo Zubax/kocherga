@@ -59,8 +59,8 @@ void initImageFiles()
 {
     if (std::ofstream f(ValidImageFileName, std::ios::binary | std::ios::out); f)
     {
-        f.write(reinterpret_cast<const char*>(images::AppValid.data()),
-                images::AppValid.size());
+        f.write(reinterpret_cast<const char*>(images::AppValid2.data()),
+                images::AppValid2.size());
     }
     else
     {
@@ -263,5 +263,19 @@ TEST_CASE("YModem-Basic")
         kocherga_ymodem::YModemProtocol ym(platform, port);
         REQUIRE(0 == blc.upgradeApp(ym));
         REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
+    }
+
+    const auto info = blc.getAppInfo();
+    REQUIRE(info);
+    REQUIRE(info->image_size == images::AppValid2.size());
+    REQUIRE(info->vcs_commit == images::AppValid2VCSCommit);
+
+    // Uploading invalid image
+    blc.cancelBoot();
+    {
+        PipedSerialPort port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + InvalidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(platform, port);
+        REQUIRE(0 == blc.upgradeApp(ym));
+        REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     }
 }
