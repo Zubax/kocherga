@@ -45,15 +45,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wtype-limits -Wzero-as-null-pointer-con
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Woverloaded-virtual -Wsign-promo -Wold-style-cast")
 
 # Adding library headers explicitly to the project in order to let the IDE handle things properly.
-file(GLOB_RECURSE KOCHERGA_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "../kocherga*.hpp")
+file(GLOB KOCHERGA_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "../kocherga*.hpp")
+
+# Adding all tests
+file(GLOB KOCHERGA_TEST_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cpp")
+file(GLOB KOCHERGA_TEST_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.hpp")
 
 add_executable(kocherga_test
-               test_core.cpp
-               test_ymodem.cpp
-               test_mocks.cpp
-               test_piped_process.cpp
-               test_main.cpp
-               mocks.hpp
-               images.hpp
-               piped_process.hpp
-               ${KOCHERGA_HEADERS})
+               ${KOCHERGA_HEADERS}
+               ${KOCHERGA_TEST_SOURCES}
+               ${KOCHERGA_TEST_HEADERS})
