@@ -281,7 +281,7 @@ TEST_CASE("YModem-Basic")
 }
 
 
-TEST_CASE("YModem-Timeout")
+TEST_CASE("YModem-Timeout-slow")
 {
     initImageFiles();
     mocks::Platform platform;
