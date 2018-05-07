@@ -677,6 +677,12 @@ public:
 
         return ErrOK;
     }
+
+    /**
+     * Returns a reference to the platform interface used by this instance.
+     */
+    const IPlatform& getPlatform() const { return platform_; }
+          IPlatform& getPlatform()       { return platform_; }
 };
 
 /**

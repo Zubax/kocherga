@@ -31,7 +31,7 @@
 #define KOCHERGA_TRACE std::printf
 
 // The library headers must be included first to make sure that they don't have any hidden include dependencies.
-#include <kocherga_uavcan.hpp>
+//#include <kocherga_uavcan.hpp>
 
 #include "catch.hpp"
 #include "mocks.hpp"

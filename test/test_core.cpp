@@ -111,6 +111,9 @@ TEST_CASE("Core-Basic")
     REQUIRE(1 == platform.getMutexLockCount());
     REQUIRE(!platform.isMutexLocked());
 
+    REQUIRE(&platform == &blc.getPlatform());
+    REQUIRE(&platform == &static_cast<const kocherga::BootloaderController&>(blc).getPlatform());
+
     // When verifying the image, we're reading it in 8-byte increments until the end.
     // The controller observes the last read request to fail, which indicates that the end of the ROM is reached.
     REQUIRE((ROMSize / 8) + 1 == rom_backend.getReadCount());
