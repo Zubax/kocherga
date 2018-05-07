@@ -269,7 +269,7 @@ TEST_CASE("Core-AppDataExchange-Registers")
         std::uint8_t  b = 0;
         std::array<std::uint8_t, 3> c{};
     };
-    static_assert(sizeof(Data) == 16);      // Including implicit padding
+    static_assert(sizeof(Data) == 12);      // Including implicit padding; assuming 32-bit platform
 
     struct RegisterBank
     {
@@ -279,9 +279,8 @@ TEST_CASE("Core-AppDataExchange-Registers")
         volatile std::uint8_t c0   = 0;
         volatile std::uint8_t c1   = 0;
         volatile std::uint8_t c2   = 0;
-        volatile std::uint32_t padding = 0;
     } reg_bank;
-    static_assert(sizeof(RegisterBank) == 24);  // Padding made explicit plus CRC64 at the end
+    static_assert(sizeof(RegisterBank) == 20);  // Padding made explicit plus CRC64
 
     auto marshaller = kocherga::makeAppDataExchangeMarshaller<Data>(
         &reg_bank.crc,
@@ -289,8 +288,7 @@ TEST_CASE("Core-AppDataExchange-Registers")
         &reg_bank.b,
         &reg_bank.c0,
         &reg_bank.c1,
-        &reg_bank.c2,
-        &reg_bank.padding);
+        &reg_bank.c2);
 
     // The storage is empty, checking
     REQUIRE(!marshaller.readAndErase());
@@ -367,7 +365,7 @@ TEST_CASE("Core-AppDataExchange-Memory")
         std::uint8_t  b = 0;
         std::array<std::uint8_t, 3> c{};
     };
-    static_assert(sizeof(Data) == 16);      // Including implicit padding
+    static_assert(sizeof(Data) == 12);      // Including implicit padding; assuming 32-bit platform
 
     std::array<std::uint8_t, 100> arena{};
 

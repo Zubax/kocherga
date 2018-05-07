@@ -35,7 +35,10 @@ endif()
 
 include_directories(.. . senoval)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -Wextra -Werror -pedantic")
+# Using 32-bit mode for compatibility with libcanard
+# Enabling all warnings; make them fatal for C++ and non-fatal for C (because C is only needed for dependencies)
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -m32 -std=c11   -Wall -Wextra         -pedantic")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32 -std=c++17 -Wall -Wextra -Werror -pedantic")
 
 # C++ warnings
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wdouble-promotion -Wswitch-enum -Wfloat-equal -Wundef")
@@ -51,7 +54,13 @@ file(GLOB KOCHERGA_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "../kocherga*.hp
 file(GLOB KOCHERGA_TEST_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cpp")
 file(GLOB KOCHERGA_TEST_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.hpp")
 
+# Main test executable
 add_executable(kocherga_test
                ${KOCHERGA_HEADERS}
                ${KOCHERGA_TEST_SOURCES}
                ${KOCHERGA_TEST_HEADERS})
+
+# Libcanard
+include_directories(SYSTEM libcanard)           # Using system include mode to squelch C++ compatibility warnings
+add_library(libcanard libcanard/canard.c)
+target_link_libraries(kocherga_test libcanard)
