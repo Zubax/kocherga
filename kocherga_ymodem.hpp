@@ -49,14 +49,14 @@ static constexpr std::int16_t ErrRemoteRefusedToProvideFile     = 2005;
 static constexpr std::int16_t ErrPortError                      = 2006;
 
 /**
- * Abstracts a platform-specific serial port for the YMODEM protocol.
+ * Abstracts a platform-specific serial port and related functions for the YMODEM protocol.
  * The application can use these functions to reset its watchdog also, provided that the watchdog timeout
  * is not less than one second (otherwise, false-positive timeouts are possible).
  */
-class IYModemSerialPort
+class IYModemPlatform
 {
 public:
-    virtual ~IYModemSerialPort() = default;
+    virtual ~IYModemPlatform() = default;
 
     /**
      * Result of the IO operations.
@@ -83,6 +83,13 @@ public:
      * @return          @ref Result.
      */
     virtual Result receive(std::uint8_t& out_byte, std::chrono::microseconds timeout) = 0;
+
+    /**
+     * Returns the time since boot as a monotonic (i.e. steady) clock.
+     * The clock must never overflow.
+     * This is like @ref kocherga::IPlatform::getMonotonicUptime().
+     */
+    virtual std::chrono::microseconds getMonotonicUptime() const = 0;
 };
 
 /**
@@ -124,8 +131,7 @@ class YModemProtocol final : public kocherga::IProtocol
         static constexpr std::uint8_t CAN = 0x18;
     };
 
-    kocherga::IPlatform& platform_;
-    IYModemSerialPort& port_;
+    IYModemPlatform& platform_;
     std::uint8_t buffer_[WorstCaseBlockSizeWithCRC]{};
 
 
@@ -135,28 +141,20 @@ class YModemProtocol final : public kocherga::IProtocol
         return std::uint8_t(std::accumulate(p, p + size, 0));
     }
 
-    std::chrono::microseconds getMonotonicUptime() const
-    {
-        platform_.lockMutex();
-        const auto x = platform_.getMonotonicUptime();
-        platform_.unlockMutex();
-        return x;
-    }
-
     std::int16_t send(std::uint8_t byte)
     {
         KOCHERGA_TRACE("YMODEM TX 0x%x\n", byte);
-        switch (port_.emit(byte, SendTimeout))
+        switch (platform_.emit(byte, SendTimeout))
         {
-        case IYModemSerialPort::Result::Success:
+        case IYModemPlatform::Result::Success:
         {
             return 0;
         }
-        case IYModemSerialPort::Result::Timeout:
+        case IYModemPlatform::Result::Timeout:
         {
             return -ErrPortWriteTimedOut;
         }
-        case IYModemSerialPort::Result::Error:
+        case IYModemPlatform::Result::Error:
         {
             return -ErrPortError;
         }
@@ -172,14 +170,14 @@ class YModemProtocol final : public kocherga::IProtocol
         for (std::uint16_t i = 0; i < size; i++)
         {
             std::uint8_t byte = 0;
-            switch (port_.receive(byte, CharReceiveTimeout))
+            switch (platform_.receive(byte, CharReceiveTimeout))
             {
-            case IYModemSerialPort::Result::Success:
+            case IYModemPlatform::Result::Success:
             {
                 *ui8++ = std::uint8_t(byte);
                 break;
             }
-            case IYModemSerialPort::Result::Timeout:
+            case IYModemPlatform::Result::Timeout:
             {
                 /*
                  * Note that we may greatly overstay the timeout here, but this is by design,
@@ -195,7 +193,7 @@ class YModemProtocol final : public kocherga::IProtocol
                 }
                 break;
             }
-            case IYModemSerialPort::Result::Error:
+            case IYModemPlatform::Result::Error:
             {
                 return -ErrPortError;
             }
@@ -376,12 +374,10 @@ class YModemProtocol final : public kocherga::IProtocol
 
 public:
     /**
-     * @param channel                   the serial port channel that will be used for downloading
+     * @param serial_port                   the serial port channel that will be used for downloading
      */
-    YModemProtocol(kocherga::IPlatform& platform,
-                   IYModemSerialPort& serial_port) :
-        platform_(platform),
-        port_(serial_port)
+    explicit YModemProtocol(IYModemPlatform& serial_port) :
+        platform_(serial_port)
     { }
 
     std::int16_t downloadImage(kocherga::IDownloadSink& sink) override
@@ -389,16 +385,16 @@ public:
         // This thing will make sure there's no residual garbage in the RX buffer afterwards
         struct Flusher
         {
-            IYModemSerialPort& port;
+            IYModemPlatform& port;
             ~Flusher()
             {
                 std::uint8_t dummy = 0;
-                while (port.receive(dummy, std::chrono::microseconds(1'000)) == IYModemSerialPort::Result::Success)
+                while (port.receive(dummy, std::chrono::microseconds(1'000)) == IYModemPlatform::Result::Success)
                 {
                     KOCHERGA_TRACE("YMODEM FLUSH RX 0x%x\n", unsigned(dummy));
                 }
             }
-        } flusher_{port_};
+        } flusher_{platform_};
 
         // State variables
         std::uint32_t remaining_file_size = 0;
@@ -415,13 +411,13 @@ public:
          * Initiating the transfer, receiving the first block.
          * The sequence ID will be 0 in case of YMODEM, and 1 in case of XMODEM.
          */
-        const auto started_at = getMonotonicUptime();
+        const auto started_at = platform_.getMonotonicUptime();
         for (;;)
         {
             KOCHERGA_TRACE("Trying to initiate X/YMODEM transfer...\n");
 
             // Abort if we couldn't get it going in InitialTimeout
-            if ((getMonotonicUptime() - started_at) > InitialTimeout)
+            if ((platform_.getMonotonicUptime() - started_at) > InitialTimeout)
             {
                 abort();
                 return -ErrRetriesExhausted;

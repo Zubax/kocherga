@@ -37,6 +37,7 @@
 /**
  * This macro can be defined by the application to provide debug output.
  * By default, all trace outputs are removed by the preprocessor.
+ * The expected signature is that of std::printf().
  */
 #ifndef KOCHERGA_TRACE
 # define KOCHERGA_TRACE(...)        (void)0
@@ -680,10 +681,14 @@ public:
     }
 
     /**
-     * Returns a reference to the platform interface used by this instance.
+     * Returns the uptime provided by the platform driver.
+     * Just like any other public method, it is thread safe.
      */
-    const IPlatform& getPlatform() const { return platform_; }
-          IPlatform& getPlatform()       { return platform_; }
+    std::chrono::microseconds getMonotonicUptime() const
+    {
+        MutexLocker mlock(platform_);
+        return platform_.getMonotonicUptime();
+    }
 };
 
 /**

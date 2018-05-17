@@ -82,12 +82,12 @@ void initImageFiles()
  * A serial port implementation that connects to the sender process via pipes.
  * Pipes are used in place of a proper serial port here.
  */
-class PipedSerialPort final : public kocherga_ymodem::IYModemSerialPort
+class Platform final : public kocherga_ymodem::IYModemPlatform
 {
     piped_process::PipedProcessPtr proc_;
 
 public:
-    explicit PipedSerialPort(piped_process::PipedProcessPtr process) :
+    explicit Platform(piped_process::PipedProcessPtr process) :
         proc_(std::move(process))
     {
         proc_->makeIONonBlocking();
@@ -158,6 +158,12 @@ public:
             return Result::Error;
         }
     }
+
+    std::chrono::microseconds getMonotonicUptime() const final
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch());
+    }
 };
 
 /// Standard control characters
@@ -177,22 +183,22 @@ struct ControlCharacters
 
 TEST_CASE("YModem-PortTest")
 {
-    PipedSerialPort port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
+    Platform port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
 
     {
         std::uint8_t b{};
         const auto res = port.receive(b, std::chrono::microseconds(1000));
         std::cout << "Port read result: " << int(res) << std::endl;
-        REQUIRE(PipedSerialPort::Result::Timeout == res);
+        REQUIRE(Platform::Result::Timeout == res);
     }
 
-    REQUIRE(PipedSerialPort::Result::Success == port.emit(ControlCharacters::NAK, std::chrono::microseconds(1000)));
+    REQUIRE(Platform::Result::Success == port.emit(ControlCharacters::NAK, std::chrono::microseconds(1000)));
 
     static const auto get = [&]() -> std::uint8_t
     {
         std::uint8_t b{};
         const auto res = port.receive(b, std::chrono::microseconds(1000));
-        REQUIRE(PipedSerialPort::Result::Success == res);
+        REQUIRE(Platform::Result::Success == res);
         return b;
     };
 
@@ -232,8 +238,8 @@ TEST_CASE("YModem-Basic")
 
     // Test YMODEM
     {
-        PipedSerialPort port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + ValidImageFileName));
-        kocherga_ymodem::YModemProtocol ym(platform, port);
+        Platform port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(port);
         REQUIRE(0 == blc.upgradeApp(ym));
         REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
     }
@@ -241,8 +247,8 @@ TEST_CASE("YModem-Basic")
     // Test YMODEM without the --1k flag
     blc.cancelBoot();
     {
-        PipedSerialPort port(piped_process::launch(std::string("sz -vv --ymodem ") + ValidImageFileName));
-        kocherga_ymodem::YModemProtocol ym(platform, port);
+        Platform port(piped_process::launch(std::string("sz -vv --ymodem ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(port);
         REQUIRE(0 == blc.upgradeApp(ym));
         REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
     }
@@ -250,8 +256,8 @@ TEST_CASE("YModem-Basic")
     // Test XMODEM
     blc.cancelBoot();
     {
-        PipedSerialPort port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
-        kocherga_ymodem::YModemProtocol ym(platform, port);
+        Platform port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(port);
         REQUIRE(0 == blc.upgradeApp(ym));
         REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
     }
@@ -259,8 +265,8 @@ TEST_CASE("YModem-Basic")
     // Test XMODEM-1K
     blc.cancelBoot();
     {
-        PipedSerialPort port(piped_process::launch(std::string("sz -vv --xmodem --1k ") + ValidImageFileName));
-        kocherga_ymodem::YModemProtocol ym(platform, port);
+        Platform port(piped_process::launch(std::string("sz -vv --xmodem --1k ") + ValidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(port);
         REQUIRE(0 == blc.upgradeApp(ym));
         REQUIRE(kocherga::State::ReadyToBoot == blc.getState());
     }
@@ -273,8 +279,8 @@ TEST_CASE("YModem-Basic")
     // Uploading invalid image
     blc.cancelBoot();
     {
-        PipedSerialPort port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + InvalidImageFileName));
-        kocherga_ymodem::YModemProtocol ym(platform, port);
+        Platform port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + InvalidImageFileName));
+        kocherga_ymodem::YModemProtocol ym(port);
         REQUIRE(0 == blc.upgradeApp(ym));
         REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     }
@@ -291,8 +297,8 @@ TEST_CASE("YModem-Timeout-slow")
     kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
     REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
 
-    PipedSerialPort port(piped_process::launch("sleep 3600"));
-    kocherga_ymodem::YModemProtocol ym(platform, port);
+    Platform port(piped_process::launch("sleep 3600"));
+    kocherga_ymodem::YModemProtocol ym(port);
     const auto began_at = std::chrono::steady_clock::now();
     REQUIRE(kocherga_ymodem::ErrRetriesExhausted == -blc.upgradeApp(ym));
     REQUIRE(kocherga::State::NoAppToBoot == blc.getState());

@@ -111,37 +111,38 @@ TEST_CASE("Core-Basic")
     REQUIRE(1 == platform.getMutexLockCount());
     REQUIRE(!platform.isMutexLocked());
 
-    REQUIRE(&platform == &blc.getPlatform());
-    REQUIRE(&platform == &static_cast<const kocherga::BootloaderController&>(blc).getPlatform());
+    REQUIRE(1 == platform.getMutexLockCount());
+    REQUIRE(blc.getMonotonicUptime().count() > 0);
+    REQUIRE(2 == platform.getMutexLockCount());
 
     // When verifying the image, we're reading it in 8-byte increments until the end.
     // The controller observes the last read request to fail, which indicates that the end of the ROM is reached.
     REQUIRE((ROMSize / 8) + 1 == rom_backend.getReadCount());
     REQUIRE(0 == rom_backend.getWriteCount());
 
-    REQUIRE(1 == platform.getMutexLockCount());
-    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     REQUIRE(2 == platform.getMutexLockCount());
-    REQUIRE(!blc.getAppInfo());
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     REQUIRE(3 == platform.getMutexLockCount());
+    REQUIRE(!blc.getAppInfo());
+    REQUIRE(4 == platform.getMutexLockCount());
 
     // Boot request ignored - nothing to boot
-    REQUIRE(3 == platform.getMutexLockCount());
-    blc.requestBoot();
     REQUIRE(4 == platform.getMutexLockCount());
-    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+    blc.requestBoot();
     REQUIRE(5 == platform.getMutexLockCount());
-    REQUIRE(!blc.getAppInfo());
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     REQUIRE(6 == platform.getMutexLockCount());
+    REQUIRE(!blc.getAppInfo());
+    REQUIRE(7 == platform.getMutexLockCount());
 
     // Boot cancellation ignored - nothing to cancel
-    REQUIRE(6 == platform.getMutexLockCount());
-    blc.cancelBoot();
     REQUIRE(7 == platform.getMutexLockCount());
-    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+    blc.cancelBoot();
     REQUIRE(8 == platform.getMutexLockCount());
-    REQUIRE(!blc.getAppInfo());
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
     REQUIRE(9 == platform.getMutexLockCount());
+    REQUIRE(!blc.getAppInfo());
+    REQUIRE(10 == platform.getMutexLockCount());
 
     // Up to this point we did not write the ROM, making sure it's true
     REQUIRE(0 == rom_backend.getWriteCount());
@@ -156,7 +157,7 @@ TEST_CASE("Core-Basic")
                            [&]() { REQUIRE(blc.getState() == kocherga::State::AppUpgradeInProgress); });
         REQUIRE(0 == blc.upgradeApp(proto));
 
-        REQUIRE(11 < platform.getMutexLockCount());
+        REQUIRE(12 < platform.getMutexLockCount());
         REQUIRE(!platform.isMutexLocked());
 
         REQUIRE(kocherga::State::BootDelay == blc.getState());
