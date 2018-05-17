@@ -31,6 +31,17 @@
 #include <canard.h>                     // Lightweight UAVCAN protocol stack implementation
 #include <senoval/string.hpp>           // Utility library for embedded systems
 
+#include <cstddef>
+
+/**
+ * This macro can be defined by the application to provide log output from the UAVCAN node.
+ * By default resolves to KOCHERGA_TRACE().
+ * The expected signature is that of std::printf().
+ */
+#ifndef KOCHERGA_UAVCAN_LOG
+# define KOCHERGA_UAVCAN_LOG(...)        KOCHERGA_TRACE(__VA_ARGS__)
+#endif
+
 
 namespace kocherga_uavcan
 {
@@ -39,20 +50,21 @@ namespace kocherga_uavcan
  */
 static constexpr std::int16_t ErrTimeout        = 3001;
 static constexpr std::int16_t ErrInterrupted    = 3002;
+static constexpr std::int16_t ErrFileReadFailed = 3003;
 
 /**
- * Generic CAN controller driver interface.
+ * Abstractions needed to run the UAVCAN node.
  */
-class ICANIface
+class IUAVCANPlatform
 {
 public:
     /**
-     * Controller operating mode.
+     * CAN controller operating mode.
      * The driver must support silent mode, because it is required for automatic bit rate detection.
      * The automatic transmission abort on error feature is required for dynamic node ID allocation
      * (read the UAVCAN specification for more info).
      */
-    enum class Mode
+    enum class CANMode
     {
         Normal,
         Silent,
@@ -60,18 +72,40 @@ public:
     };
 
     /**
-     * Acceptance filter configuration.
+     * CAN acceptance filter configuration.
      * Acceptance filters may be not supported in the underlying driver, this feature is optional.
      * Bit flags used here are the same as in libcanard.
      * The default constructor makes a filter that accepts all frames.
      */
-    struct AcceptanceFilterConfig
+    struct CANAcceptanceFilterConfig
     {
         std::uint32_t id = 0;
         std::uint32_t mask = 0;
     };
 
-    virtual ~ICANIface() = default;
+    virtual ~IUAVCANPlatform() = default;
+
+    /**
+     * This method is invoked by the node's thread at least once a second.
+     * The application can use it to reset a watchdog, but it is not mandatory.
+     */
+    virtual void resetWatchdog() = 0;
+
+    /**
+     * This method is invoked by the node's thread when it has nothing to do.
+     * It can be used by the application to perform other tasks, or to sleep the current thread
+     * if there is an OS available.
+     */
+    virtual void sleep(std::chrono::microseconds duration) const = 0;
+
+    /**
+     * Returns a pseudo-random unsigned integer within the specified range [lower_bound, upper_bound).
+     * Possible implementation:
+     *      const std::uint64_t rnd = std::uint64_t(std::rand()) * 128UL;
+     *      return lower_bound_usec + rnd % (upper_bound_usec - lower_bound_usec);
+     */
+    virtual std::uint64_t getRandomUnsignedInteger(std::uint64_t lower_bound,
+                                                   std::uint64_t upper_bound) = 0;
 
     /**
      * Initializes the CAN hardware in the specified mode.
@@ -79,7 +113,9 @@ public:
      * @retval 0                Success
      * @retval negative         Error
      */
-    virtual std::int16_t init(std::uint32_t bitrate, Mode mode, AcceptanceFilterConfig& acceptance_filter) = 0;
+    virtual std::int16_t configure(std::uint32_t bitrate,
+                                   CANMode mode,
+                                   const CANAcceptanceFilterConfig& acceptance_filter) = 0;
 
     /**
      * Transmits one CAN frame.
@@ -98,6 +134,17 @@ public:
      * @retval      negative        Error
      */
     virtual std::pair<std::int16_t, CanardCANFrame> receive(std::chrono::microseconds timeout) = 0;
+
+    /**
+     * This method is invoked by the node periodically to check if it should terminate.
+     */
+    virtual bool shouldExit() const = 0;
+
+    /**
+     * Invoked by the node when it is requested to reboot by a remote node.
+     * Returns true on success, false if reboot cannot be performed.
+     */
+    virtual bool tryScheduleReboot() = 0;
 };
 
 
@@ -122,13 +169,6 @@ struct HardwareInfo
 namespace impl_
 {
 /**
- * This timeout should accommodate all operations with the application image storage
- * (which is typically based on flash memory, which is slow).
- * Image verification can take several seconds, especially if the image is invalid.
- */
-static constexpr std::chrono::microseconds WatchdogTimeout{5'000'000};
-
-/**
  * This is the default defined by the UAVCAN specification.
  */
 static constexpr std::chrono::microseconds DefaultServiceRequestTimeout{1'000'000};
@@ -142,37 +182,34 @@ static constexpr std::chrono::microseconds DefaultProgressReportInterval{10'000'
 namespace dsdl
 {
 
-static inline constexpr std::size_t bitlen2bytelen(std::size_t x) noexcept
+static inline constexpr std::uint16_t bitlen2bytelen(std::uint32_t x) noexcept
 {
-    return (x + 7) / 8;
+    return std::uint16_t((x + 7) / 8);
 }
 
 template <std::uint32_t DataTypeID_,
-    std::uint64_t DataTypeSignature_,     // Not to be confused with DSDL signature
-    std::size_t   MaxEncodedBitLength_>
+          std::uint64_t DataTypeSignature_,     // Not to be confused with DSDL signature
+          std::uint32_t MaxEncodedBitLength_>
 struct MessageTypeInfo
 {
     static constexpr std::uint32_t DataTypeID           = DataTypeID_;
     static constexpr std::uint64_t DataTypeSignature    = DataTypeSignature_;
 
-    static constexpr std::size_t   MaxEncodedBitLength  = MaxEncodedBitLength_;
-    static constexpr std::size_t   MaxSizeBytes         = bitlen2bytelen(MaxEncodedBitLength_);
+    static constexpr std::uint16_t MaxSizeBytes         = bitlen2bytelen(MaxEncodedBitLength_);
 };
 
 template <std::uint32_t DataTypeID_,
-    std::uint64_t DataTypeSignature_,     // Not to be confused with DSDL signature
-    std::size_t   MaxEncodedBitLengthRequest_,
-    std::size_t   MaxEncodedBitLengthResponse_>
+          std::uint64_t DataTypeSignature_,     // Not to be confused with DSDL signature
+          std::uint32_t MaxEncodedBitLengthRequest_,
+          std::uint32_t MaxEncodedBitLengthResponse_>
 struct ServiceTypeInfo
 {
     static constexpr std::uint32_t DataTypeID                   = DataTypeID_;
     static constexpr std::uint64_t DataTypeSignature            = DataTypeSignature_;
 
-    static constexpr std::size_t   MaxEncodedBitLengthRequest   = MaxEncodedBitLengthRequest_;
-    static constexpr std::size_t   MaxSizeBytesRequest          = bitlen2bytelen(MaxEncodedBitLengthRequest_);
+    static constexpr std::uint16_t MaxSizeBytesRequest          = bitlen2bytelen(MaxEncodedBitLengthRequest_);
 
-    static constexpr std::size_t   MaxEncodedBitLengthResponse  = MaxEncodedBitLengthResponse_;
-    static constexpr std::size_t   MaxSizeBytesResponse         = bitlen2bytelen(MaxEncodedBitLengthResponse_);
+    static constexpr std::uint16_t MaxSizeBytesResponse         = bitlen2bytelen(MaxEncodedBitLengthResponse_);
 };
 
 // The values have been obtained with the help of the script show_data_type_info.py from libcanard.
@@ -195,8 +232,8 @@ enum class NodeHealth : std::uint8_t
 
 enum class NodeMode : std::uint8_t
 {
-    Maintenance = 2,
-    SoftwareUpdate = 3
+    Initialization = 1,
+    SoftwareUpdate = 3,
 };
 
 }
@@ -206,10 +243,9 @@ enum class NodeMode : std::uint8_t
  */
 enum class LogLevel : std::uint8_t
 {
-    Debug,
-    Info,
-    Warning,
-    Error
+    Info    = 1,
+    Warning = 2,
+    Error   = 3,
 };
 
 }       // namespace impl_
@@ -224,14 +260,12 @@ template <std::size_t MemoryPoolSize = 8192>
 class BootloaderNode final : private ::kocherga::IProtocol
 {
     ::kocherga::BootloaderController& bootloader_;
-    ICANIface& iface_;
+    IUAVCANPlatform& platform_;
 
     const NodeName node_name_;
     const HardwareInfo hw_info_;
 
-    watchdog::Timer watchdog_;
-    impl_::MonotonicTimekeeper timekeeper_;
-    std::uint64_t next_1hz_task_invocation_ = 0;
+    std::chrono::microseconds next_1hz_task_invocation_at_{};
     bool init_done_ = false;
 
     alignas(std::max_align_t) std::array<std::uint8_t, MemoryPoolSize> memory_pool_{};
@@ -243,9 +277,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
     std::uint8_t remote_server_node_id_ = 0;
     senoval::String<200> firmware_file_path_;
 
-    os::Logger logger_{"Bootloader.UAVCAN"};
-
-    std::uint64_t send_next_node_id_allocation_request_at_ = 0;
+    std::chrono::microseconds send_next_node_id_allocation_request_at_{};
     std::uint8_t node_id_allocation_unique_id_offset_ = 0;
 
     std::uint16_t vendor_specific_status_ = 0;
@@ -256,72 +288,73 @@ class BootloaderNode final : private ::kocherga::IProtocol
     std::uint8_t file_read_transfer_id_ = 0;
 
     std::array<std::uint8_t, 256> read_buffer_{};
-    int read_result_ = 0;
+    std::int16_t read_result_ = 0;
 
 
-    using chibios_rt::BaseStaticThread<StackSize>::start;       // This is overloaded below
-
+    std::uint64_t getMonotonicUptimeInMicroseconds() const
+    {
+        const auto ut = bootloader_.getMonotonicUptime();
+        return std::uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(ut).count());
+    }
 
     void delayAfterDriverError()
     {
-        watchdog_.reset();
-        (void) timekeeper_.getMicroseconds();   // This is needed to avoid overflow in the timekeeper
-        ::sleep(1);
-        watchdog_.reset();
-        (void) timekeeper_.getMicroseconds();
+        platform_.resetWatchdog();
+        platform_.sleep(std::chrono::microseconds(1'000'000));
+        platform_.resetWatchdog();
     }
 
-    std::uint64_t getMonotonicTimestampUSec() const
+    std::chrono::microseconds getRandomDuration(std::chrono::microseconds lower_bound,
+                                                std::chrono::microseconds upper_bound) const
     {
-        return timekeeper_.getMicroseconds();
-    }
-
-    std::uint64_t getRandomDurationMicrosecond(std::uint64_t lower_bound_usec,
-                                               std::uint64_t upper_bound_usec) const
-    {
-        const std::uint64_t rnd = std::uint64_t(std::rand()) * 128UL;
-        return lower_bound_usec + rnd % (upper_bound_usec - lower_bound_usec);
+        assert(lower_bound <= upper_bound);
+        return std::chrono::microseconds(platform_.getRandomUnsignedInteger(std::uint64_t(lower_bound.count()),
+                                                                            std::uint64_t(upper_bound.count())));
     }
 
     void makeNodeStatusMessage(std::uint8_t* buffer) const
     {
         std::memset(buffer, 0, impl_::dsdl::NodeStatus::MaxSizeBytes);
 
-        const std::uint32_t uptime_sec = (timekeeper_.getUptimeMicroseconds() + 500000UL) / 1000000UL;
+        const auto uptime_sec =
+            std::uint32_t(std::chrono::duration_cast<std::chrono::seconds>(bootloader_.getMonotonicUptime()).count());
 
         /*
          * Bootloader State        Node Mode       Node Health
          * ----------------------------------------------------
          * NoAppToBoot             SoftwareUpdate  Error
-         * BootDelay               Maintenance     Ok
-         * BootCancelled           Maintenance     Warning
+         * BootDelay               Initialization  Ok
+         * BootCancelled           Initialization  Warning
          * AppUpgradeInProgress    SoftwareUpdate  Ok
-         * ReadyToBoot             Maintenance     Ok
+         * ReadyToBoot             Initialization  Ok
          */
-        auto node_health = std::uint8_t(impl_::dsdl::NodeHealth::Ok);
-        auto node_mode   = std::uint8_t(impl_::dsdl::NodeMode::Maintenance);
-
+        std::uint8_t node_health{};
+        std::uint8_t node_mode{};
         switch (bootloader_.getState())
         {
         case ::kocherga::State::NoAppToBoot:
         {
-            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::SoftwareUpdate);
             node_health = std::uint8_t(impl_::dsdl::NodeHealth::Error);
+            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::SoftwareUpdate);
             break;
         }
         case ::kocherga::State::AppUpgradeInProgress:
         {
-            node_mode = std::uint8_t(impl_::dsdl::NodeMode::SoftwareUpdate);
+            node_health = std::uint8_t(impl_::dsdl::NodeHealth::Ok);
+            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::SoftwareUpdate);
             break;
         }
         case::kocherga:: State::BootCancelled:
         {
             node_health = std::uint8_t(impl_::dsdl::NodeHealth::Warning);
+            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::Initialization);
             break;
         }
         case ::kocherga::State::BootDelay:
         case ::kocherga::State::ReadyToBoot:
         {
+            node_health = std::uint8_t(impl_::dsdl::NodeHealth::Ok);
+            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::Initialization);
             break;
         }
         }
@@ -346,7 +379,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                         dsdl::NodeStatus::MaxSizeBytes);
         if (res <= 0)
         {
-            logger_.println("NodeStatus bc err %d", res);
+            KOCHERGA_UAVCAN_LOG("NodeStatus bc err %d\n", res);
         }
     }
 
@@ -354,7 +387,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
     {
         static const senoval::String<31> SourceName("Bootloader");
         std::uint8_t buffer[1 + 31 + 90]{};
-        buffer[0] = (std::uint8_t(level) << 5) | SourceName.length();
+        buffer[0] = std::uint8_t(std::uint8_t(std::uint16_t(level) << 5U) | SourceName.length());
         std::copy(SourceName.begin(), SourceName.end(), &buffer[1]);
         std::copy(txt.begin(), txt.end(), &buffer[1 + SourceName.length()]);
 
@@ -365,48 +398,49 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                         &log_message_transfer_id_,
                                         CANARD_TRANSFER_PRIORITY_LOWEST,
                                         buffer,
-                                        1 + SourceName.length() + txt.length());
+                                        std::uint16_t(1U + SourceName.length() + txt.length()));
         if (res < 0)
         {
-            logger_.println("Log err %d", res);
+            KOCHERGA_UAVCAN_LOG("Log err %d\n", res);
         }
     }
 
     int initCAN(const std::uint32_t bitrate,
-                const ICANIface::Mode mode,
-                const ICANIface::AcceptanceFilterConfig& acceptance_filter = ICANIface::AcceptanceFilterConfig())
+                const IUAVCANPlatform::CANMode mode,
+                const IUAVCANPlatform::CANAcceptanceFilterConfig& acceptance_filter =
+                    IUAVCANPlatform::CANAcceptanceFilterConfig())
     {
-        const int res = iface_.init(bitrate, mode, acceptance_filter);
+        const int res = platform_.configure(bitrate, mode, acceptance_filter);
         if (res < 0)
         {
-            logger_.println("CAN init err @%u bps: %d", unsigned(bitrate), res);
+            KOCHERGA_UAVCAN_LOG("CAN init err @%u bps: %d\n", unsigned(bitrate), res);
         }
         return res;
     }
 
-    std::pair<int, CanardCANFrame> receive(const int timeout_msec)
+    auto receive(std::chrono::microseconds timeout)
     {
-        const auto res = iface_.receive(timeout_msec);
+        const auto res = platform_.receive(timeout);
         if (res.first < 0)
         {
-            logger_.println("RX err %d", res.first);
+            KOCHERGA_UAVCAN_LOG("RX err %d\n", res.first);
         }
         return res;
     }
 
-    int send(const CanardCANFrame& frame, const int timeout_msec)
+    auto send(const CanardCANFrame& frame, std::chrono::microseconds timeout)
     {
-        const int res = iface_.send(frame, timeout_msec);
+        const auto res = platform_.send(frame, timeout);
         if (res < 0)
         {
-            logger_.println("TX err %d", res);
+            KOCHERGA_UAVCAN_LOG("TX err %d\n", res);
         }
         return res;
     }
 
     void handle1HzTasks()
     {
-        canardCleanupStaleTransfers(&canard_, getMonotonicTimestampUSec());
+        canardCleanupStaleTransfers(&canard_, getMonotonicUptimeInMicroseconds());
 
         // NodeStatus broadcasting
         if (init_done_ && (canardGetLocalNodeID(&canard_) > 0))
@@ -422,13 +456,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
         // Receive
         for (int i = 0; i < MaxFramesPerSpin; i++)
         {
-            const auto res = receive(1);        // Blocking call
+            const auto res = receive(std::chrono::microseconds(1'000));        // Blocking call
             if (res.first < 1)
             {
                 break;                          // Error or no frames
             }
 
-            canardHandleRxFrame(&canard_, &res.second, getMonotonicTimestampUSec());
+            canardHandleRxFrame(&canard_, &res.second, getMonotonicUptimeInMicroseconds());
         }
 
         // Transmit
@@ -440,7 +474,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
                 break;                          // Nothing to transmit
             }
 
-            const int res = send(*txf, 0);      // Non-blocking call
+            const int res = send(*txf, std::chrono::microseconds{});      // Non-blocking call
             if (res == 0)
             {
                 break;                          // Queue is full
@@ -450,9 +484,9 @@ class BootloaderNode final : private ::kocherga::IProtocol
         }
 
         // 1Hz process
-        if (getMonotonicTimestampUSec() >= next_1hz_task_invocation_)
+        if (bootloader_.getMonotonicUptime() >= next_1hz_task_invocation_at_)
         {
-            next_1hz_task_invocation_ += 1000000UL;
+            next_1hz_task_invocation_at_ += std::chrono::seconds(1);
             handle1HzTasks();
         }
     }
@@ -461,27 +495,27 @@ class BootloaderNode final : private ::kocherga::IProtocol
     {
         /// These are defined by the specification; 100 Kbps is added due to its popularity.
         static constexpr std::array<std::uint32_t, 5> StandardBitRates
-            {
-                1000000,        ///< Recommended by UAVCAN
-                500000,        ///< Standard
-                250000,        ///< Standard
-                125000,        ///< Standard
-                100000         ///< Popular bit rate that is not defined by the specification
-            };
+        {
+            1000000,        ///< Recommended by UAVCAN
+             500000,        ///< Standard
+             250000,        ///< Standard
+             125000,        ///< Standard
+             100000         ///< Popular bit rate that is not defined by the specification
+        };
 
         int current_bit_rate_index = 0;
 
         // Loop forever until the bit rate is detected
-        while ((!os::isRebootRequested()) && (can_bus_bit_rate_ == 0))
+        while ((!platform_.shouldExit()) && (can_bus_bit_rate_ == 0))
         {
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
             const std::uint32_t br = StandardBitRates[current_bit_rate_index];
             current_bit_rate_index = (current_bit_rate_index + 1) % StandardBitRates.size();
 
-            if (initCAN(br, ICANIface::Mode::Silent) >= 0)
+            if (initCAN(br, IUAVCANPlatform::CANMode::Silent) >= 0)
             {
-                const int res = receive(1100).first;
+                const auto res = receive(std::chrono::microseconds(1'100'000)).first;
                 if (res > 0)
                 {
                     can_bus_bit_rate_ = br;
@@ -497,7 +531,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
             }
         }
 
-        watchdog_.reset();
+        platform_.resetWatchdog();
     }
 
     void performDynamicNodeIDAllocation()
@@ -507,12 +541,12 @@ class BootloaderNode final : private ::kocherga::IProtocol
         {
             // Accept only anonymous messages with DTID = 1 (Allocation)
             // Observe that we need both responses from allocators and requests from other nodes!
-            ICANIface::AcceptanceFilterConfig filt;
+            IUAVCANPlatform::CANAcceptanceFilterConfig filt;
             filt.id   = 0b00000000000000000000100000000UL | CANARD_CAN_FRAME_EFF;
             filt.mask = 0b00000000000000000001110000000UL | CANARD_CAN_FRAME_EFF | CANARD_CAN_FRAME_RTR |
                         CANARD_CAN_FRAME_ERR;
 
-            if (initCAN(can_bus_bit_rate_, ICANIface::Mode::AutomaticTxAbortOnError, filt) >= 0)
+            if (initCAN(can_bus_bit_rate_, IUAVCANPlatform::CANMode::AutomaticTxAbortOnError, filt) >= 0)
             {
                 break;
             }
@@ -522,14 +556,15 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
         using namespace impl_;
 
-        while ((!os::isRebootRequested()) && (canardGetLocalNodeID(&canard_) == 0))
+        while ((!platform_.shouldExit()) && (canardGetLocalNodeID(&canard_) == 0))
         {
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
             send_next_node_id_allocation_request_at_ =
-                getMonotonicTimestampUSec() + getRandomDurationMicrosecond(600000, 1000000);
+                bootloader_.getMonotonicUptime() + getRandomDuration(std::chrono::microseconds(600'000),
+                                                                     std::chrono::microseconds(1'000'000));
 
-            while ((getMonotonicTimestampUSec() < send_next_node_id_allocation_request_at_) &&
+            while ((bootloader_.getMonotonicUptime() < send_next_node_id_allocation_request_at_) &&
                    (canardGetLocalNodeID(&canard_) == 0))
             {
                 poll();
@@ -574,29 +609,29 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                                   std::uint16_t(uid_size + 1U));
             if (bcast_res < 0)
             {
-                logger_.println("NID alloc bc err %d", bcast_res);
+                KOCHERGA_UAVCAN_LOG("NID alloc bc err %d\n", bcast_res);
             }
 
             // Preparing for timeout; if response is received, this value will be updated from the callback.
             node_id_allocation_unique_id_offset_ = 0;
         }
 
-        watchdog_.reset();
+        platform_.resetWatchdog();
     }
 
-    void main()
+    void runNodeThread()
     {
         /*
          * CAN bit rate
          */
-        watchdog_.reset();
+        platform_.resetWatchdog();
 
         if (can_bus_bit_rate_ == 0)
         {
             performCANBitRateDetection();
         }
 
-        if (os::isRebootRequested())
+        if (platform_.shouldExit())
         {
             return;
         }
@@ -604,14 +639,14 @@ class BootloaderNode final : private ::kocherga::IProtocol
         /*
          * Node ID
          */
-        watchdog_.reset();
+        platform_.resetWatchdog();
 
         if (canardGetLocalNodeID(&canard_) == 0)
         {
             performDynamicNodeIDAllocation();
         }
 
-        if (os::isRebootRequested())
+        if (platform_.shouldExit())
         {
             return;
         }
@@ -620,25 +655,25 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
         // This is the only info message we output during initialization.
         // Fewer messages reduce the chances of breaking UART CLI data flow.
-        logger_.println("CAN %u bps, NID %u", unsigned(can_bus_bit_rate_), confirmed_local_node_id_);
+        KOCHERGA_UAVCAN_LOG("CAN %u bps, NID %u\n", unsigned(can_bus_bit_rate_), confirmed_local_node_id_);
 
         using namespace impl_;
 
         /*
          * Init CAN in proper mode now
          */
-        watchdog_.reset();
+        platform_.resetWatchdog();
 
         while (true)
         {
             // Accept only correctly addressed service requests and responses
             // We don't need message transfers anymore
-            ICANIface::AcceptanceFilterConfig filt;
+            IUAVCANPlatform::CANAcceptanceFilterConfig filt;
             filt.id   = 0b00000000000000000000010000000UL | (confirmed_local_node_id_ << 8U) | CANARD_CAN_FRAME_EFF;
             filt.mask = 0b00000000000000111111110000000UL |
                         CANARD_CAN_FRAME_EFF | CANARD_CAN_FRAME_RTR | CANARD_CAN_FRAME_ERR;
 
-            if (initCAN(can_bus_bit_rate_, ICANIface::Mode::Normal, filt) >= 0)
+            if (initCAN(can_bus_bit_rate_, IUAVCANPlatform::CANMode::Normal, filt) >= 0)
             {
                 break;
             }
@@ -651,45 +686,45 @@ class BootloaderNode final : private ::kocherga::IProtocol
         /*
          * Update loop; run forever because there's nothing else to do
          */
-        while (!os::isRebootRequested())
+        while (!platform_.shouldExit())
         {
             assert((confirmed_local_node_id_ > 0) && (canardGetLocalNodeID(&canard_) > 0));
 
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
             /*
              * Waiting for the firmware update request
              */
             if (remote_server_node_id_ == 0)
             {
-                while ((!os::isRebootRequested()) && (remote_server_node_id_ == 0))
+                while ((!platform_.shouldExit()) && (remote_server_node_id_ == 0))
                 {
-                    watchdog_.reset();
+                    platform_.resetWatchdog();
                     poll();
                 }
             }
 
-            if (os::isRebootRequested())
+            if (platform_.shouldExit())
             {
                 break;
             }
 
-            logger_.println("FW server NID %u path %s",
-                            unsigned(remote_server_node_id_), firmware_file_path_.c_str());
+            KOCHERGA_UAVCAN_LOG("FW server NID %u path %s\n",
+                                unsigned(remote_server_node_id_), firmware_file_path_.c_str());
 
             /*
              * Rewriting the old firmware with the new file
              */
-            watchdog_.reset();
+            platform_.resetWatchdog();
             const int result = bootloader_.upgradeApp(*this);
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
             sendNodeStatus();   // Announcing the new status of the bootloader ASAP
 
             if (result >= 0)
             {
                 vendor_specific_status_ = 0;
-                if (bootloader_.getState() == State::NoAppToBoot)
+                if (bootloader_.getState() == kocherga::State::NoAppToBoot)
                 {
                     sendLog(LogLevel::Error, "Downloaded image is invalid");
                 }
@@ -700,7 +735,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
             }
             else
             {
-                vendor_specific_status_ = std::abs(result);
+                vendor_specific_status_ = std::uint16_t(std::abs(result));
                 sendLog(LogLevel::Error,
                         senoval::String<90>("Upgrade error ") + senoval::convertIntToString(result));
             }
@@ -713,8 +748,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
             firmware_file_path_.clear();
         }
 
-        logger_.puts("Exit");
-        watchdog_.reset();
+        KOCHERGA_UAVCAN_LOG("Exit\n");
+        platform_.resetWatchdog();
     }
 
     std::int16_t downloadImage(kocherga::IDownloadSink& sink) override
@@ -722,15 +757,15 @@ class BootloaderNode final : private ::kocherga::IProtocol
         using namespace impl_;
 
         std::uint64_t offset = 0;
-        std::uint64_t next_progress_report_deadline = getMonotonicTimestampUSec();
+        auto next_progress_report_deadline = bootloader_.getMonotonicUptime();
 
         sendNodeStatus();       // Announcing the new state of the bootloader ASAP
 
         while (true)
         {
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
-            if (os::isRebootRequested())
+            if (platform_.shouldExit())
             {
                 return -ErrInterrupted;
             }
@@ -751,11 +786,11 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                                        CANARD_TRANSFER_PRIORITY_LOW,
                                                        CanardRequest,
                                                        buffer,
-                                                       firmware_file_path_.size() + 5);
+                                                       std::uint16_t(firmware_file_path_.size() + 5U));
                 if (res < 0)
                 {
-                    logger_.println("File req err %d", res);
-                    return res;
+                    KOCHERGA_UAVCAN_LOG("File req err %d\n", res);
+                    return std::int16_t(res);
                 }
             }
 
@@ -763,22 +798,23 @@ class BootloaderNode final : private ::kocherga::IProtocol
              * Await response.
              * Note that the watchdog is not reset in the loop, since its timeout is large enough to wait for response.
              */
-            const std::uint64_t response_deadline =
-                getMonotonicTimestampUSec() + ServiceRequestTimeoutMillisecond * 1000;
+            const std::chrono::microseconds response_deadline =
+                bootloader_.getMonotonicUptime() + DefaultServiceRequestTimeout;
 
-            read_result_ = std::numeric_limits<int>::max();
+            constexpr auto InvalidReadResult = std::numeric_limits<std::int16_t>::max();
+            read_result_ = InvalidReadResult;
 
-            while (read_result_ == std::numeric_limits<int>::max())
+            while (read_result_ == InvalidReadResult)
             {
                 poll();
 
-                if (getMonotonicTimestampUSec() > response_deadline)
+                if (bootloader_.getMonotonicUptime() > response_deadline)
                 {
                     return -ErrTimeout;
                 }
             }
 
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
             if (read_result_ < 0)
             {
@@ -794,25 +830,25 @@ class BootloaderNode final : private ::kocherga::IProtocol
             {
                 offset += read_result_;
 
-                const int res = sink.handleNextDataChunk(read_buffer_.data(), read_result_);
+                const auto res = sink.handleNextDataChunk(read_buffer_.data(), std::uint16_t(read_result_));
                 if (res < 0)
                 {
-                    watchdog_.reset();
+                    platform_.resetWatchdog();
                     return res;
                 }
             }
             else
             {
-                watchdog_.reset();
+                platform_.resetWatchdog();
                 return 0;       // Done
             }
 
             /*
              * Send a progress report if time is up
              */
-            if (getMonotonicTimestampUSec() > next_progress_report_deadline)
+            if (bootloader_.getMonotonicUptime() > next_progress_report_deadline)
             {
-                next_progress_report_deadline += ProgressReportIntervalMillisecond * 1000;
+                next_progress_report_deadline += DefaultProgressReportInterval;
                 sendLog(LogLevel::Info, senoval::convertIntToString(offset) + senoval::String<90>("B down..."));
             }
 
@@ -820,12 +856,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
              * Wait in order to avoid bus congestion
              * The magic shift ensures that the relative bus utilization does not depend on the bit rate.
              */
-            watchdog_.reset();
+            platform_.resetWatchdog();
 
-            const std::uint64_t wait_deadline =
-                getMonotonicTimestampUSec() + 1000000UL / (1UL + (can_bus_bit_rate_ >> 16));
+            const std::chrono::microseconds wait_deadline =
+                bootloader_.getMonotonicUptime() +
+                std::chrono::microseconds(1'000'000UL / (1UL + (can_bus_bit_rate_ >> 16U)));
 
-            while (getMonotonicTimestampUSec() < wait_deadline)
+            while (bootloader_.getMonotonicUptime() < wait_deadline)
             {
                 poll();
             }
@@ -850,7 +887,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
         {
             // Rule C - updating the randomized time interval
             send_next_node_id_allocation_request_at_ =
-                getMonotonicTimestampUSec() + getRandomDurationMicrosecond(600000, 1000000);
+                bootloader_.getMonotonicUptime() + getRandomDuration(std::chrono::microseconds(600'000),
+                                                                     std::chrono::microseconds(1'000'000));
 
             if (transfer->source_node_id == CANARD_BROADCAST_NODE_ID)
             {
@@ -883,7 +921,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
                 // The allocator has confirmed part of unique ID, switching to the next stage and updating the timeout.
                 node_id_allocation_unique_id_offset_ = received_unique_id_len;
                 send_next_node_id_allocation_request_at_ =
-                    getMonotonicTimestampUSec() + getRandomDurationMicrosecond(0, 400000);
+                    bootloader_.getMonotonicUptime() + getRandomDuration(std::chrono::microseconds(0),
+                                                                         std::chrono::microseconds(400'000));
             }
             else
             {
@@ -948,7 +987,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                                         std::uint16_t(total_size));
             if (resp_res <= 0)
             {
-                logger_.println("GetNodeInfo resp err %d", resp_res);
+                KOCHERGA_UAVCAN_LOG("GetNodeInfo resp err %d\n", resp_res);
             }
         }
 
@@ -965,9 +1004,10 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
             if (magic_number == 0xACCE551B1E)
             {
-                response = 1 << 7;
-                // TODO: Delegate the decision to the application via callback
-                os::requestReboot();
+                if (platform_.tryScheduleReboot())
+                {
+                    response = 1U << 7U;
+                }
             }
 
             // No need to release the transfer payload, it's single frame anyway
@@ -979,7 +1019,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                           transfer->priority,
                                           CanardResponse,
                                           &response,
-                                          1);
+                                          1U);
         }
 
         /*
@@ -991,11 +1031,11 @@ class BootloaderNode final : private ::kocherga::IProtocol
             const auto bl_state = bootloader_.getState();
             std::uint8_t error = 0;
 
-            if ((bl_state == State::AppUpgradeInProgress) || (remote_server_node_id_ != 0))
+            if ((bl_state == kocherga::State::AppUpgradeInProgress) || (remote_server_node_id_ != 0))
             {
                 error = 2;      // Already in progress
             }
-            else if ((bl_state == State::ReadyToBoot))
+            else if ((bl_state == kocherga::State::ReadyToBoot))
             {
                 error = 1;      // Invalid mode
             }
@@ -1036,7 +1076,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
                                                         1);
             if (resp_res <= 0)
             {
-                logger_.println("BeginFWUpdate resp err %d", resp_res);
+                KOCHERGA_UAVCAN_LOG("BeginFWUpdate resp err %d\n", resp_res);
             }
         }
 
@@ -1045,20 +1085,20 @@ class BootloaderNode final : private ::kocherga::IProtocol
          */
         if ((transfer->transfer_type == CanardTransferTypeResponse) &&
             (transfer->data_type_id == dsdl::FileRead::DataTypeID) &&
-            (((transfer->transfer_id + 1) & 31) == file_read_transfer_id_))
+            (((transfer->transfer_id + 1U) & 31U) == file_read_transfer_id_))
         {
-            std::uint16_t error = 0;
+            std::int16_t error = 0;
             (void) canardDecodeScalar(transfer, 0, 16, false, &error);
             if (error != 0)
             {
-                read_result_ = -error;
+                read_result_ = -ErrFileReadFailed;
             }
             else
             {
-                read_result_ = std::min(256, transfer->payload_len - 2);
-                for (int i = 0; i < read_result_; i++)
+                read_result_ = std::min<std::int16_t>(256, std::int16_t(transfer->payload_len - 2));
+                for (std::uint32_t i = 0; i < read_result_; i++)
                 {
-                    (void) canardDecodeScalar(transfer, 16 + i * 8, 8, false, &read_buffer_[i]);
+                    (void) canardDecodeScalar(transfer, 16U + i * 8U, 8U, false, &read_buffer_[i]);
                 }
             }
         }
@@ -1146,37 +1186,39 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
 public:
     /**
-     * @param bl                        mutable reference to the bootloader instance
-     * @param iface                     CAN driver adaptor instance
-     * @param name                      product ID, UAVCAN node name
-     * @param hw
+     * @param blc                       mutable reference to the bootloader instance
+     * @param platform                  node platform interface
+     * @param name                      product ID, UAVCAN node name; e.g. com.zubax.telega
+     * @param hw                        hardware version information per UAVCAN specification
      */
-    BootloaderNode(::kocherga::BootloaderController& bl,
-                   ICANIface& iface,
+    BootloaderNode(::kocherga::BootloaderController& blc,
+                   IUAVCANPlatform& platform,
                    const NodeName& name,
                    const HardwareInfo& hw) :
-        bootloader_(bl),
-        iface_(iface),
+        bootloader_(blc),
+        platform_(platform),
         node_name_(name),
         hw_info_(hw)
     {
-        next_1hz_task_invocation_ = getMonotonicTimestampUSec();
+        next_1hz_task_invocation_at_ = bootloader_.getMonotonicUptime();
     }
 
     /**
-     * This function can be invoked only once.
+     * Runs the node thread.
+     * This function never returns unless IUAVCANPlatform::shouldExit() returns true.
+     * If an RTOS is available, it is advisable to run this method from a separate thread.
+     * Otherwise, it is possible to perform other tasks by hijacking certain platform API functions,
+     * such as sleep(), receive(), send(), and resetWatchdog().
      *
-     * @param thread_priority           priority of the UAVCAN thread
      * @param can_bus_bit_rate          set if known; defaults to zero, which initiates CAN bit rate autodetect
      * @param node_id                   set if known; defaults to zero, which initiates dynamic node ID allocation
      * @param remote_server_node_id     set if known; defaults to zero, which makes the node wait for an update request
      * @param remote_file_path          set if known; defaults to an empty string, which can be a valid path too
      */
-    chibios_rt::ThreadReference start(const ::tprio_t thread_priority,
-                                      const std::uint32_t can_bus_bit_rate = 0,
-                                      const std::uint8_t node_id = 0,
-                                      const std::uint8_t remote_server_node_id = 0,
-                                      const char* const remote_file_path = "")
+    void run(const std::uint32_t can_bus_bit_rate = 0,
+             const std::uint8_t node_id = 0,
+             const std::uint8_t remote_server_node_id = 0,
+             const char* const remote_file_path = "")
     {
         this->can_bus_bit_rate_ = can_bus_bit_rate;
 
@@ -1190,8 +1232,8 @@ public:
         canardInit(&canard_,
                    memory_pool_.data(),
                    memory_pool_.size(),
-                   &UAVCANFirmwareUpdateNode::onTransferReceptionTrampoline,
-                   &UAVCANFirmwareUpdateNode::shouldAcceptTransferTrampoline,
+                   &BootloaderNode::onTransferReceptionTrampoline,
+                   &BootloaderNode::shouldAcceptTransferTrampoline,
                    this);
 
         if ((node_id >= CANARD_MIN_NODE_ID) &&
@@ -1200,9 +1242,7 @@ public:
             canardSetLocalNodeID(&canard_, node_id);
         }
 
-        watchdog_.start(impl_::WatchdogTimeout);
-
-        return chibios_rt::BaseStaticThread<StackSize>::start(thread_priority);
+        runNodeThread();
     }
 
     /**

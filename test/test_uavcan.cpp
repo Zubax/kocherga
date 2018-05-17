@@ -28,10 +28,11 @@
 # undef NDEBUG
 #endif
 
-#define KOCHERGA_TRACE std::printf
+#define KOCHERGA_TRACE          std::printf
+#define KOCHERGA_UAVCAN_LOG     std::printf
 
 // The library headers must be included first to make sure that they don't have any hidden include dependencies.
-//#include <kocherga_uavcan.hpp>
+#include <kocherga_uavcan.hpp>
 
 #include "catch.hpp"
 #include "mocks.hpp"
@@ -44,4 +45,8 @@
 #include <utility>
 
 
+TEST_CASE("UAVCAN-Basic")
+{
+
+}
 
