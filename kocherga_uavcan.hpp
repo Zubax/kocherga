@@ -30,6 +30,7 @@
 // Third-party dependencies:
 #include <canard.h>                     // Lightweight UAVCAN protocol stack implementation
 #include <senoval/string.hpp>           // Utility library for embedded systems
+#include <senoval/vector.hpp>           // Utility library for embedded systems
 
 #include <cstddef>
 
@@ -158,9 +159,8 @@ struct HardwareInfo
     typedef std::array<std::uint8_t, 16> UniqueID;
     UniqueID unique_id{};                                       ///< Required field
 
-    typedef std::array<std::uint8_t, 255> CertificateOfAuthenticity;
-    CertificateOfAuthenticity certificate_of_authenticity{};    ///< Optional, set length to zero if not defined
-    std::uint8_t certificate_of_authenticity_length = 0;
+    typedef senoval::Vector<std::uint8_t, 255> CertificateOfAuthenticity;
+    CertificateOfAuthenticity certificate_of_authenticity;      ///< Optional, empty if not defined
 };
 
 /**
@@ -213,14 +213,14 @@ struct ServiceTypeInfo
 };
 
 // The values have been obtained with the help of the script show_data_type_info.py from libcanard.
-using NodeStatus                = MessageTypeInfo<341,   0x0f0868d0c1a7c6f1,    56>;
-using NodeIDAllocation          = MessageTypeInfo<1,     0x0b2a812620a11d40,   141>;
-using LogMessage                = MessageTypeInfo<16383, 0xd654a48e0c049d75,   983>;
+using NodeStatus                = MessageTypeInfo<341U,   0x0f0868d0c1a7c6f1ULL,    56U>;
+using NodeIDAllocation          = MessageTypeInfo<1U,     0x0b2a812620a11d40ULL,   141U>;
+using LogMessage                = MessageTypeInfo<16383U, 0xd654a48e0c049d75ULL,   983U>;
 
-using GetNodeInfo               = ServiceTypeInfo<1,     0xee468a8121c46a9e,     0,  3015>;
-using BeginFirmwareUpdate       = ServiceTypeInfo<40,    0xb7d725df72724126,  1616,  1031>;
-using FileRead                  = ServiceTypeInfo<48,    0x8dcdca939f33f678,  1648,  2073>;
-using RestartNode               = ServiceTypeInfo<5,     0x569e05394a3017f0,    40,     1>;
+using GetNodeInfo               = ServiceTypeInfo<1U,     0xee468a8121c46a9eULL,     0U,  3015U>;
+using BeginFirmwareUpdate       = ServiceTypeInfo<40U,    0xb7d725df72724126ULL,  1616U,  1031U>;
+using FileRead                  = ServiceTypeInfo<48U,    0x8dcdca939f33f678ULL,  1648U,  2073U>;
+using RestartNode               = ServiceTypeInfo<5U,     0x569e05394a3017f0ULL,    40U,     1U>;
 
 
 enum class NodeHealth : std::uint8_t
@@ -962,17 +962,17 @@ class BootloaderNode final : private ::kocherga::IProtocol
             buffer[22] = hw_info_.major;
             buffer[23] = hw_info_.minor;
             std::memmove(&buffer[24], hw_info_.unique_id.data(), hw_info_.unique_id.size());
-            buffer[40] = hw_info_.certificate_of_authenticity_length;
+            buffer[40] = std::uint8_t(hw_info_.certificate_of_authenticity.size());
             std::memmove(&buffer[41],
                          hw_info_.certificate_of_authenticity.data(),
-                         hw_info_.certificate_of_authenticity_length);
+                         hw_info_.certificate_of_authenticity.size());
 
             // Name
-            std::memcpy(&buffer[41 + hw_info_.certificate_of_authenticity_length],
+            std::memcpy(&buffer[41 + hw_info_.certificate_of_authenticity.size()],
                         node_name_.c_str(),
                         node_name_.length());
 
-            const std::size_t total_size = 41 + hw_info_.certificate_of_authenticity_length + node_name_.length();
+            const std::size_t total_size = 41 + hw_info_.certificate_of_authenticity.size() + node_name_.length();
             assert(total_size <= dsdl::GetNodeInfo::MaxSizeBytesResponse);
 
             // No need to release the transfer payload, it's empty
