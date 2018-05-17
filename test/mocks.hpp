@@ -84,6 +84,13 @@ public:
 
     std::chrono::microseconds getMonotonicUptime() const final
     {
+        // The library guarantees that the uptime can only be requested when the mutex is locked.
+        // Making sure this is true.
+        if (mutex_lock_nesting_ <= 0)
+        {
+            throw BadUsageException("Monotonic uptime usage bug: mutex not locked when querying the time.");
+        }
+
         return std::chrono::duration_cast<std::chrono::microseconds>
             (std::chrono::steady_clock::now().time_since_epoch());
     }

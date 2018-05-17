@@ -135,6 +135,14 @@ class YModemProtocol final : public kocherga::IProtocol
         return std::uint8_t(std::accumulate(p, p + size, 0));
     }
 
+    std::chrono::microseconds getMonotonicUptime() const
+    {
+        platform_.lockMutex();
+        const auto x = platform_.getMonotonicUptime();
+        platform_.unlockMutex();
+        return x;
+    }
+
     std::int16_t send(std::uint8_t byte)
     {
         KOCHERGA_TRACE("YMODEM TX 0x%x\n", byte);
@@ -407,13 +415,13 @@ public:
          * Initiating the transfer, receiving the first block.
          * The sequence ID will be 0 in case of YMODEM, and 1 in case of XMODEM.
          */
-        const auto started_at = platform_.getMonotonicUptime();
+        const auto started_at = getMonotonicUptime();
         for (;;)
         {
             KOCHERGA_TRACE("Trying to initiate X/YMODEM transfer...\n");
 
             // Abort if we couldn't get it going in InitialTimeout
-            if ((platform_.getMonotonicUptime() - started_at) > InitialTimeout)
+            if ((getMonotonicUptime() - started_at) > InitialTimeout)
             {
                 abort();
                 return -ErrRetriesExhausted;

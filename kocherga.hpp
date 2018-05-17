@@ -184,6 +184,7 @@ public:
     /**
      * Returns the time since boot as a monotonic (i.e. steady) clock.
      * The clock must never overflow.
+     * This method is invoked only when the mutex is locked.
      */
     virtual std::chrono::microseconds getMonotonicUptime() const = 0;
 };

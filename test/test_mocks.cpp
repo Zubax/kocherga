@@ -70,10 +70,14 @@ TEST_CASE("Mocks-Platform")
 
     // Time check
     {
+        static_cast<kocherga::IPlatform&>(pl).lockMutex();
+
         const auto a = pl.getMonotonicUptime();
         REQUIRE(a.count() > 0);
         std::this_thread::sleep_for(std::chrono::microseconds(1000));
         REQUIRE(a < pl.getMonotonicUptime());
+
+        static_cast<kocherga::IPlatform&>(pl).unlockMutex();
     }
 }
 
