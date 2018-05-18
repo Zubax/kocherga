@@ -61,6 +61,11 @@ add_executable(kocherga_test
                ${KOCHERGA_TEST_HEADERS})
 
 # Libcanard
-include_directories(SYSTEM libcanard)           # Using system include mode to squelch C++ compatibility warnings
-add_library(libcanard libcanard/canard.c)
+include_directories(SYSTEM                          # Using system include mode to squelch C++ compatibility warnings
+                    libcanard)
+
+add_library(libcanard
+            libcanard/canard.c
+            libcanard/drivers/socketcan/socketcan.c)
+
 target_link_libraries(kocherga_test libcanard)

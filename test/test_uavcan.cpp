@@ -34,6 +34,8 @@
 // The library headers must be included first to make sure that they don't have any hidden include dependencies.
 #include <kocherga_uavcan.hpp>
 
+#include <drivers/socketcan/socketcan.h>
+
 #include "catch.hpp"
 #include "mocks.hpp"
 #include "images.hpp"
@@ -43,10 +45,170 @@
 #include <functional>
 #include <iostream>
 #include <utility>
+#include <test/libcanard/canard.h>
+
+
+namespace
+{
+/**
+ * A CAN interface with this name MUST exist in the system in order for the test to succeed.
+ */
+const std::string IfaceName = "kocherga0";
+
+/**
+ * Platform mock.
+ */
+class Platform final : public kocherga_uavcan::IUAVCANPlatform
+{
+    static constexpr std::chrono::seconds WatchdogTimeout{1};
+
+    std::chrono::steady_clock::time_point last_watchdog_reset_at_ = std::chrono::steady_clock::now();
+
+    bool should_exit_ = false;
+
+    std::optional<SocketCANInstance> socketcan_;
+    CANAcceptanceFilterConfig can_acceptance_filter_{};
+    CANMode can_mode_{};
+
+
+    void resetWatchdog() override
+    {
+        const auto n = std::chrono::steady_clock::now();
+        if ((n - last_watchdog_reset_at_) >= WatchdogTimeout)
+        {
+            throw std::logic_error("Watchdog would reset!");
+        }
+
+        last_watchdog_reset_at_ = n;
+    }
+
+    void sleep(std::chrono::microseconds duration) const override
+    {
+        // Ensure that we're not sleeping for more than 1 second to avoid watchdog timeouts
+        assert(duration < std::chrono::seconds(1));
+        std::this_thread::sleep_for(duration);
+    }
+
+    std::uint64_t getRandomUnsignedInteger(std::uint64_t lower_bound,
+                                           std::uint64_t upper_bound) const override
+    {
+        if (lower_bound < upper_bound)
+        {
+            const auto rnd = std::uint64_t(std::rand()) * std::uint64_t(std::rand());
+            const std::uint64_t out = lower_bound + rnd % (upper_bound - lower_bound);
+            assert(out >= lower_bound);
+            assert(out < upper_bound);
+            return out;
+        }
+        else
+        {
+            assert(false);
+            return lower_bound;
+        }
+    }
+
+    std::int16_t configure(std::uint32_t bitrate,
+                           CANMode mode,
+                           const CANAcceptanceFilterConfig& acceptance_filter) override
+    {
+        (void) bitrate;
+        KOCHERGA_TRACE("UAVCAN test: Configuring CAN; bitrate %u, mode %u, filter %08x/%08x\n",
+                       unsigned(bitrate),
+                       unsigned(mode),
+                       unsigned(acceptance_filter.id),
+                       unsigned(acceptance_filter.mask));
+
+        if (socketcan_)
+        {
+            (void) socketcanClose(&*socketcan_);
+        }
+
+        socketcan_.emplace();
+        if (auto res = socketcanInit(&*socketcan_, IfaceName.c_str()); res < 0)
+        {
+            throw std::runtime_error("Could not init SocketCAN interface: errno=" + std::to_string(errno));
+        }
+
+        can_mode_ = mode;
+        can_acceptance_filter_ = acceptance_filter;
+
+        return 0;
+    }
+
+    std::int16_t send(const ::CanardCANFrame& frame, std::chrono::microseconds timeout) override
+    {
+        if (can_mode_ == CANMode::Silent)
+        {
+            throw std::logic_error("Attempting to send() while in silent mode!");
+        }
+
+        if (!socketcan_)
+        {
+            throw std::logic_error("Attempting to use a not configured CAN interface");
+        }
+
+        return std::int16_t(
+            socketcanTransmit(&*socketcan_, &frame,
+                              int(std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count())));
+    }
+
+    std::pair<std::int16_t, ::CanardCANFrame> receive(std::chrono::microseconds timeout) override
+    {
+        if (!socketcan_)
+        {
+            throw std::logic_error("Attempting to use a not configured CAN interface");
+        }
+
+        while (true)
+        {
+            ::CanardCANFrame frame{};
+            const int res = socketcanReceive(&*socketcan_, &frame,
+                                             int(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 timeout).count()));
+            if (res > 0)
+            {
+                // Software acceptance filter emulation
+                if (((frame.id & can_acceptance_filter_.mask) ^ can_acceptance_filter_.id) == 0)
+                {
+                    return {1, frame};
+                }
+            }
+            else if (res == 0)
+            {
+                return {0, {}};
+            }
+            else
+            {
+                return {-1, {}};
+            }
+        }
+    }
+
+    bool shouldExit() const override
+    {
+        return should_exit_;
+    }
+
+    bool tryScheduleReboot() override
+    {
+        if (!should_exit_)
+        {
+            should_exit_ = true;
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+};
+
+}  // namespace
 
 
 TEST_CASE("UAVCAN-Basic")
 {
-
+    // Making sure the interface exists
+    REQUIRE(std::system(("ifconfig " + IfaceName).c_str()) == 0);
 }
 
