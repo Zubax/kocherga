@@ -235,7 +235,11 @@ class Tester:
                 return e.status
 
             def match_node_health_mode(health, mode):
-                ns = get_node_status()
+                try:
+                    ns = get_node_status()
+                except TestException:
+                    return False
+
                 if health is not None:
                     return ns.mode == mode and ns.health == health
                 else:
@@ -361,17 +365,16 @@ class Tester:
             logger.info('Download finished, checking the outcome...')
 
             if using_valid_firmware:
-                _enforce(match_node_health_mode(NODE_STATUS_CONST.HEALTH_OK,
-                                                NODE_STATUS_CONST.MODE_INITIALIZATION),
-                         'Expected successful completion')
-                logger.info('Waiting for the board to boot...')
-                node.spin_for(15)
-
                 if not no_application:
+                    _enforce(match_node_health_mode(NODE_STATUS_CONST.HEALTH_OK,
+                                                    NODE_STATUS_CONST.MODE_INITIALIZATION),
+                             'Expected successful completion')
+                    logger.info('Waiting for the board to boot...')
+                    node.spin_for(15)
                     _enforce(match_node_health_mode(None, NODE_STATUS_CONST.MODE_OPERATIONAL),
                              'Application did not boot')
 
-                check_latest_node_info()
+                    check_latest_node_info()
             else:
                 _enforce(match_node_health_mode(NODE_STATUS_CONST.HEALTH_ERROR,
                                                 NODE_STATUS_CONST.MODE_SOFTWARE_UPDATE),

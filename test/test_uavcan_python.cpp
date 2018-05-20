@@ -59,21 +59,23 @@ const std::string IfaceName = "kocherga0";
 
 /**
  * Platform mock.
- * Its API is thread-safe.
+ * The API is not thread-safe.
  */
 class Platform final : public kocherga_uavcan::IUAVCANPlatform
 {
     static constexpr std::chrono::seconds WatchdogTimeout{3};
 
-    mutable std::recursive_mutex mutex_;
-
     std::chrono::steady_clock::time_point last_watchdog_reset_at_ = std::chrono::steady_clock::now();
 
-    volatile bool should_exit_ = false;
+    bool should_exit_ = false;
 
     std::optional<SocketCANInstance> socketcan_;
     CANAcceptanceFilterConfig can_acceptance_filter_{};
     CANMode can_mode_{};
+
+    kocherga::BootloaderController& blc_;
+
+    std::function<bool ()> exit_checker_;
 
 
     void resetWatchdog() override
@@ -194,14 +196,11 @@ class Platform final : public kocherga_uavcan::IUAVCANPlatform
 
     bool shouldExit() const override
     {
-        std::lock_guard lock(mutex_);
-        return should_exit_;
+        return should_exit_ || (blc_.getState() == kocherga::State::ReadyToBoot) || exit_checker_();
     }
 
-public:
     bool tryScheduleReboot() override
     {
-        std::lock_guard lock(mutex_);
         if (!should_exit_)
         {
             should_exit_ = true;
@@ -213,17 +212,23 @@ public:
         }
     }
 
-    void reset()
+public:
+    Platform(kocherga::BootloaderController& blc,
+             std::function<bool ()> exit_checker) :
+        blc_(blc),
+        exit_checker_(std::move(exit_checker))
     {
-        std::lock_guard lock(mutex_);
-        should_exit_ = false;
+        if (!exit_checker_)
+        {
+            exit_checker_ = []() { return false; };
+        }
     }
 };
 
 }  // namespace
 
 
-TEST_CASE("UAVCAN-Python")
+TEST_CASE("UAVCAN-Python-slow")
 {
     // Making sure the interface exists. This is how you add it manually (as root):
     //     modprobe can
@@ -237,30 +242,27 @@ TEST_CASE("UAVCAN-Python")
     // For debugging reasons it helps to have this printed
     std::cout << "KOCHERGA_TEST_SOURCE_DIR: " << KOCHERGA_TEST_SOURCE_DIR << std::endl;
 
-    // Instantiating the bootloader
-    mocks::Platform platform;
-    static constexpr std::uint32_t ROMSize = 1024 * 1024;
-    mocks::FileMappedROMBackend rom_backend("uavcan-python-rom.tmp", ROMSize);
-    kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
-    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
-
-    kocherga_uavcan::HardwareInfo hw_info;
-    hw_info.major = 12;
-    hw_info.minor = 34;
-    hw_info.unique_id = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-    for (std::uint16_t i = 0; i < hw_info.certificate_of_authenticity.capacity(); i++)
-    {
-        hw_info.certificate_of_authenticity.push_back(std::uint8_t(i));
-    }
-
     volatile bool should_exit = false;
-    Platform uavcan_platform;
-
     std::thread node_thread([&]() {
         while (!should_exit)
         {
             std::cout << "Node is (re)starting..." << std::endl;
-            uavcan_platform.reset();
+
+            mocks::Platform platform;
+            static constexpr std::uint32_t ROMSize = 1024 * 1024;
+            mocks::FileMappedROMBackend rom_backend("uavcan-python-rom.tmp", ROMSize);
+            kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
+            kocherga_uavcan::HardwareInfo hw_info;
+            hw_info.major = 12;
+            hw_info.minor = 34;
+            hw_info.unique_id = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+            for (std::uint16_t i = 0; i < hw_info.certificate_of_authenticity.capacity(); i++)
+            {
+                hw_info.certificate_of_authenticity.push_back(std::uint8_t(i));
+            }
+
+            Platform uavcan_platform(blc, [&]() { return should_exit; });
+
             kocherga_uavcan::BootloaderNode node(blc, uavcan_platform, "com.zubax.kocherga.test", hw_info);
             node.run();
         }
@@ -310,7 +312,6 @@ TEST_CASE("UAVCAN-Python")
 
     std::cout << "Joining the node thread..." << std::endl;
     should_exit = true;
-    (void) uavcan_platform.tryScheduleReboot();
     if (node_thread.joinable())
     {
         node_thread.join();
