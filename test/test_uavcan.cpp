@@ -46,6 +46,8 @@
 #include <iostream>
 #include <utility>
 #include <test/libcanard/canard.h>
+#include <sys/prctl.h>
+#include <csignal>
 
 
 namespace
@@ -57,14 +59,17 @@ const std::string IfaceName = "kocherga0";
 
 /**
  * Platform mock.
+ * Its API is thread-safe.
  */
 class Platform final : public kocherga_uavcan::IUAVCANPlatform
 {
-    static constexpr std::chrono::seconds WatchdogTimeout{1};
+    static constexpr std::chrono::seconds WatchdogTimeout{3};
+
+    mutable std::recursive_mutex mutex_;
 
     std::chrono::steady_clock::time_point last_watchdog_reset_at_ = std::chrono::steady_clock::now();
 
-    bool should_exit_ = false;
+    volatile bool should_exit_ = false;
 
     std::optional<SocketCANInstance> socketcan_;
     CANAcceptanceFilterConfig can_acceptance_filter_{};
@@ -74,9 +79,12 @@ class Platform final : public kocherga_uavcan::IUAVCANPlatform
     void resetWatchdog() override
     {
         const auto n = std::chrono::steady_clock::now();
-        if ((n - last_watchdog_reset_at_) >= WatchdogTimeout)
+        const auto dif = n - last_watchdog_reset_at_;
+        if (dif >= WatchdogTimeout)
         {
-            throw std::logic_error("Watchdog would reset!");
+            throw std::logic_error("Watchdog would reset! Interval: " +
+                                   std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(dif).count()) +
+                                   " ms");
         }
 
         last_watchdog_reset_at_ = n;
@@ -112,7 +120,7 @@ class Platform final : public kocherga_uavcan::IUAVCANPlatform
                            const CANAcceptanceFilterConfig& acceptance_filter) override
     {
         (void) bitrate;
-        KOCHERGA_TRACE("UAVCAN test: Configuring CAN; bitrate %u, mode %u, filter %08x/%08x\n",
+        KOCHERGA_TRACE("UAVCAN test: Configuring CAN; bitrate %u, mode %u, filter 0x%08x/0x%08x\n",
                        unsigned(bitrate),
                        unsigned(mode),
                        unsigned(acceptance_filter.id),
@@ -186,11 +194,14 @@ class Platform final : public kocherga_uavcan::IUAVCANPlatform
 
     bool shouldExit() const override
     {
+        std::lock_guard lock(mutex_);
         return should_exit_;
     }
 
+public:
     bool tryScheduleReboot() override
     {
+        std::lock_guard lock(mutex_);
         if (!should_exit_)
         {
             should_exit_ = true;
@@ -201,14 +212,109 @@ class Platform final : public kocherga_uavcan::IUAVCANPlatform
             return false;
         }
     }
+
+    void reset()
+    {
+        std::lock_guard lock(mutex_);
+        should_exit_ = false;
+    }
 };
 
 }  // namespace
 
 
-TEST_CASE("UAVCAN-Basic")
+TEST_CASE("UAVCAN-Python")
 {
-    // Making sure the interface exists
+    // Making sure the interface exists. This is how you add it manually (as root):
+    //     modprobe can
+    //     modprobe can_raw
+    //     modprobe vcan
+    //     ip link add dev kocherga0 type vcan
+    //     ip link set up kocherga0
+    //     ifconfig kocherga0 up
     REQUIRE(std::system(("ifconfig " + IfaceName).c_str()) == 0);
-}
 
+    // For debugging reasons it helps to have this printed
+    std::cout << "KOCHERGA_TEST_SOURCE_DIR: " << KOCHERGA_TEST_SOURCE_DIR << std::endl;
+
+    // Instantiating the bootloader
+    mocks::Platform platform;
+    static constexpr std::uint32_t ROMSize = 1024 * 1024;
+    mocks::FileMappedROMBackend rom_backend("uavcan-python-rom.tmp", ROMSize);
+    kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
+    REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
+
+    kocherga_uavcan::HardwareInfo hw_info;
+    hw_info.major = 12;
+    hw_info.minor = 34;
+    hw_info.unique_id = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    for (std::uint16_t i = 0; i < hw_info.certificate_of_authenticity.capacity(); i++)
+    {
+        hw_info.certificate_of_authenticity.push_back(std::uint8_t(i));
+    }
+
+    volatile bool should_exit = false;
+    Platform uavcan_platform;
+
+    std::thread node_thread([&]() {
+        while (!should_exit)
+        {
+            std::cout << "Node is (re)starting..." << std::endl;
+            uavcan_platform.reset();
+            kocherga_uavcan::BootloaderNode node(blc, uavcan_platform, "com.zubax.kocherga.test", hw_info);
+            node.run();
+        }
+
+        std::cout << "Node thread is exiting" << std::endl;
+    });
+
+    {
+        std::string cmd;
+
+        // Executable name
+        cmd += KOCHERGA_TEST_SOURCE_DIR;
+        cmd += "/uavcan_tester/main.py";
+        cmd += " ";
+
+        // CAN interface
+        cmd += IfaceName;
+        cmd += " ";
+
+        // Unique ID - see above
+        cmd += "000102030405060708090a0b0c0d0e0f";
+        cmd += " ";
+
+        // Valid images directory
+        cmd += KOCHERGA_TEST_SOURCE_DIR;
+        cmd += "/uavcan_tester/valid-images/";
+        cmd += " ";
+
+        // Invalid images directory
+        cmd += KOCHERGA_TEST_SOURCE_DIR;
+        cmd += "/uavcan_tester/invalid-images/";
+        cmd += " ";
+
+        // Test duration, in minutes
+        cmd += "--duration-min=5";
+        cmd += " ";
+
+        // Tell the tester that we don't have any application
+        cmd += "--no-application";
+        cmd += " ";
+
+        // Running the command; zero means test succeeded
+        (void) ::prctl(PR_SET_PDEATHSIG, SIGKILL);       // Kill the child if the parent dies
+        std::cout << "Executing: " << cmd << std::endl;
+        REQUIRE(0 == std::system(cmd.c_str()));
+    }
+
+    std::cout << "Joining the node thread..." << std::endl;
+    should_exit = true;
+    (void) uavcan_platform.tryScheduleReboot();
+    if (node_thread.joinable())
+    {
+        node_thread.join();
+    }
+
+    std::cout << "Node thread joined, test finished." << std::endl;
+}

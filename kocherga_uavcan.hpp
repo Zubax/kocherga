@@ -87,8 +87,9 @@ public:
     virtual ~IUAVCANPlatform() = default;
 
     /**
-     * This method is invoked by the node's thread at least once a second.
+     * This method is invoked by the node's thread periodically as long as it functions properly.
      * The application can use it to reset a watchdog, but it is not mandatory.
+     * The minimal watchdog timeout is 3 seconds! Lower values may trigger spurious resets.
      */
     virtual void resetWatchdog() = 0;
 
@@ -213,14 +214,14 @@ struct ServiceTypeInfo
 };
 
 // The values have been obtained with the help of the script show_data_type_info.py from libcanard.
-using NodeStatus                = MessageTypeInfo<341U,   0x0f0868d0c1a7c6f1ULL,    56U>;
-using NodeIDAllocation          = MessageTypeInfo<1U,     0x0b2a812620a11d40ULL,   141U>;
+using NodeStatus                = MessageTypeInfo<  341U, 0x0f0868d0c1a7c6f1ULL,    56U>;
+using NodeIDAllocation          = MessageTypeInfo<    1U, 0x0b2a812620a11d40ULL,   141U>;
 using LogMessage                = MessageTypeInfo<16383U, 0xd654a48e0c049d75ULL,   983U>;
 
-using GetNodeInfo               = ServiceTypeInfo<1U,     0xee468a8121c46a9eULL,     0U,  3015U>;
-using BeginFirmwareUpdate       = ServiceTypeInfo<40U,    0xb7d725df72724126ULL,  1616U,  1031U>;
-using FileRead                  = ServiceTypeInfo<48U,    0x8dcdca939f33f678ULL,  1648U,  2073U>;
-using RestartNode               = ServiceTypeInfo<5U,     0x569e05394a3017f0ULL,    40U,     1U>;
+using GetNodeInfo               = ServiceTypeInfo<    1U, 0xee468a8121c46a9eULL,     0U,  3015U>;
+using BeginFirmwareUpdate       = ServiceTypeInfo<   40U, 0xb7d725df72724126ULL,  1616U,  1031U>;
+using FileRead                  = ServiceTypeInfo<   48U, 0x8dcdca939f33f678ULL,  1648U,  2073U>;
+using RestartNode               = ServiceTypeInfo<    5U, 0x569e05394a3017f0ULL,    40U,     1U>;
 
 
 enum class NodeHealth : std::uint8_t
@@ -255,6 +256,8 @@ enum class LogLevel : std::uint8_t
  *
  * This class looks like a bowl of spaghetti because is has been carefully optimized for ROM footprint.
  * Avoid reading this code unless you've familiarized yourself with the UAVCAN specification.
+ *
+ * The API is thread-safe.
  */
 template <std::size_t MemoryPoolSize = 8192>
 class BootloaderNode final : private ::kocherga::IProtocol
@@ -440,6 +443,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
     void handle1HzTasks()
     {
+        platform_.resetWatchdog();
         ::canardCleanupStaleTransfers(&canard_, getMonotonicUptimeInMicroseconds());
 
         // NodeStatus broadcasting
@@ -447,6 +451,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
         {
             sendNodeStatus();
         }
+
+        platform_.resetWatchdog();
     }
 
     void poll()
@@ -456,6 +462,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
         // Receive
         for (int i = 0; i < MaxFramesPerSpin; i++)
         {
+            platform_.resetWatchdog();
+
             const auto res = receive(std::chrono::microseconds(1'000));        // Blocking call
             if (res.first < 1)
             {
@@ -468,6 +476,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
         // Transmit
         for (int i = 0; i < MaxFramesPerSpin; i++)
         {
+            platform_.resetWatchdog();
+
             const ::CanardCANFrame* txf = ::canardPeekTxQueue(&canard_);
             if (txf == nullptr)
             {
@@ -496,14 +506,14 @@ class BootloaderNode final : private ::kocherga::IProtocol
         /// These are defined by the specification; 100 Kbps is added due to its popularity.
         static constexpr std::array<std::uint32_t, 5> StandardBitRates
         {
-            1000000,        ///< Recommended by UAVCAN
+            1000000,        ///< Standard, recommended by UAVCAN
              500000,        ///< Standard
              250000,        ///< Standard
              125000,        ///< Standard
              100000         ///< Popular bit rate that is not defined by the specification
         };
 
-        int current_bit_rate_index = 0;
+        std::uint8_t current_bit_rate_index = 0;
 
         // Loop forever until the bit rate is detected
         while ((!platform_.shouldExit()) && (can_bus_bit_rate_ == 0))
@@ -511,7 +521,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
             platform_.resetWatchdog();
 
             const std::uint32_t br = StandardBitRates[current_bit_rate_index];
-            current_bit_rate_index = (current_bit_rate_index + 1) % StandardBitRates.size();
+            current_bit_rate_index = std::uint8_t((current_bit_rate_index + 1U) % StandardBitRates.size());
 
             if (initCAN(br, IUAVCANPlatform::CANMode::Silent) >= 0)
             {
@@ -539,7 +549,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
         // CAN bus initialization
         while (true)
         {
-            // Accept only anonymous messages with DTID = 1 (Allocation)
+            // Accept only messages with DTID = 1 (Allocation)
             // Observe that we need both responses from allocators and requests from other nodes!
             IUAVCANPlatform::CANAcceptanceFilterConfig filt;
             filt.id   = 0b00000000000000000000100000000UL | CANARD_CAN_FRAME_EFF;
@@ -595,7 +605,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
             assert(node_id_allocation_unique_id_offset_ < hw_info_.unique_id.size());
             assert(uid_size <= MaxLenOfUniqueIDInRequest);
             assert(uid_size > 0);
-            assert((uid_size + node_id_allocation_unique_id_offset_) <= hw_info_.unique_id.size());
+            assert(std::uint16_t(uid_size + node_id_allocation_unique_id_offset_) <= hw_info_.unique_id.size());
 
             std::memmove(&allocation_request[1], &hw_info_.unique_id[node_id_allocation_unique_id_offset_], uid_size);
 
@@ -669,7 +679,8 @@ class BootloaderNode final : private ::kocherga::IProtocol
             // Accept only correctly addressed service requests and responses
             // We don't need message transfers anymore
             IUAVCANPlatform::CANAcceptanceFilterConfig filt;
-            filt.id   = 0b00000000000000000000010000000UL | (confirmed_local_node_id_ << 8U) | CANARD_CAN_FRAME_EFF;
+            filt.id   = 0b00000000000000000000010000000UL |
+                        std::uint32_t(confirmed_local_node_id_ << 8U) | CANARD_CAN_FRAME_EFF;
             filt.mask = 0b00000000000000111111110000000UL |
                         CANARD_CAN_FRAME_EFF | CANARD_CAN_FRAME_RTR | CANARD_CAN_FRAME_ERR;
 
@@ -828,7 +839,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
              */
             if (read_result_ > 0)
             {
-                offset += read_result_;
+                offset = offset + std::uint64_t(read_result_);
 
                 const auto res = sink.handleNextDataChunk(read_buffer_.data(), std::uint16_t(read_result_));
                 if (res < 0)
@@ -898,7 +909,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
             // Copying the unique ID from the message
             static constexpr unsigned UniqueIDBitOffset = 8;
-            std::uint8_t received_unique_id[hw_info_.unique_id.size()];
+            std::uint8_t received_unique_id[std::tuple_size_v<HardwareInfo::UniqueID>];
             std::uint8_t received_unique_id_len = 0;
             for (;
                 received_unique_id_len < (transfer->payload_len - (UniqueIDBitOffset / 8U));
@@ -1100,9 +1111,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
             else
             {
                 read_result_ = std::min<std::int16_t>(256, std::int16_t(transfer->payload_len - 2));
-                for (std::uint32_t i = 0; i < read_result_; i++)
+                for (std::int32_t i = 0; i < read_result_; i++)
                 {
-                    (void) ::canardDecodeScalar(transfer, 16U + i * 8U, 8U, false, &read_buffer_[i]);
+                    (void) ::canardDecodeScalar(transfer,
+                                                std::uint32_t(16 + i * 8),
+                                                8U,
+                                                false,
+                                                &read_buffer_[std::uint32_t(i)]);
                 }
             }
         }

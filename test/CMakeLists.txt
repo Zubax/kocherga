@@ -60,12 +60,17 @@ add_executable(kocherga_test
                ${KOCHERGA_TEST_SOURCES}
                ${KOCHERGA_TEST_HEADERS})
 
+# Location of the test source directory is needed for some tests
+add_definitions(-DKOCHERGA_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # Libcanard
 include_directories(SYSTEM                          # Using system include mode to squelch C++ compatibility warnings
                     libcanard)
-
-add_library(libcanard
+add_library(canard
             libcanard/canard.c
             libcanard/drivers/socketcan/socketcan.c)
 
-target_link_libraries(kocherga_test libcanard)
+# Dependencies
+target_link_libraries(kocherga_test
+                      canard
+                      pthread)
