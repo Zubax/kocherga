@@ -55,7 +55,7 @@ namespace
 /**
  * A CAN interface with this name MUST exist in the system in order for the test to succeed.
  */
-const std::string IfaceName = "kocherga0";
+const std::string IfaceName = "kocherga0";  // NOLINT
 
 /**
  * Platform mock.
@@ -63,7 +63,7 @@ const std::string IfaceName = "kocherga0";
  */
 class Platform final : public kocherga_uavcan::IUAVCANPlatform
 {
-    static constexpr std::chrono::seconds WatchdogTimeout{3};
+    static constexpr std::chrono::seconds WatchdogTimeout{3};  // NOLINT
 
     std::chrono::steady_clock::time_point last_watchdog_reset_at_ = std::chrono::steady_clock::now();
 
@@ -104,7 +104,7 @@ class Platform final : public kocherga_uavcan::IUAVCANPlatform
     {
         if (lower_bound < upper_bound)
         {
-            const auto rnd = std::uint64_t(std::rand()) * std::uint64_t(std::rand());
+            const auto rnd = std::uint64_t(std::rand()) * std::uint64_t(std::rand());  // NOLINT
             const std::uint64_t out = lower_bound + rnd % (upper_bound - lower_bound);
             assert(out >= lower_bound);
             assert(out < upper_bound);
