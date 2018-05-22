@@ -113,11 +113,11 @@ class YModemProtocol final : public kocherga::IProtocol
     static constexpr std::uint16_t WorstCaseBlockSizeWithCRC = BlockSize1K + 2;
 
     /// The timeouts are according to the YMODEM specification
-    static constexpr std::chrono::microseconds SendTimeout          {1'000'000};
-    static constexpr std::chrono::microseconds CharReceiveTimeout   {1'000'000};
-    static constexpr std::chrono::microseconds InitialTimeout      {60'000'000};
-    static constexpr std::chrono::microseconds NextBlockTimeout     {5'000'000};
-    static constexpr std::chrono::microseconds BlockPayloadTimeout  {1'000'000};
+    static constexpr std::chrono::microseconds SendTimeout          {1'000'000};    // NOLINT
+    static constexpr std::chrono::microseconds CharReceiveTimeout   {1'000'000};    // NOLINT
+    static constexpr std::chrono::microseconds InitialTimeout      {60'000'000};    // NOLINT
+    static constexpr std::chrono::microseconds NextBlockTimeout     {5'000'000};    // NOLINT
+    static constexpr std::chrono::microseconds BlockPayloadTimeout  {1'000'000};    // NOLINT
 
     static constexpr std::uint8_t MaxRetries = 3;
 
