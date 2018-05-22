@@ -1,7 +1,7 @@
 sudo: required
 dist: trusty
 
-script:
+before_script:
   # Configuring a virtual CAN bus interface for UAVCAN protocol testing
   - sudo modprobe can
   - sudo modprobe can_raw
@@ -47,7 +47,7 @@ matrix:
             - libc6-dev-i386
       script:
         - clang++-5.0 -E -x c++ - -v < /dev/null    # Print the Clang configuration for troubleshooting purposes
-        - cd tests/
+        - cd test/
         - cmake -DCMAKE_C_COMPILER=clang-5.0 -DCMAKE_CXX_COMPILER=clang++-5.0 .
         - make
         - ./kocherga_test --rng-seed time
