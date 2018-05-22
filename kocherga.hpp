@@ -353,7 +353,7 @@ class BootloaderController final
 
         static constexpr std::array<std::uint8_t, 8> getSignatureValue()
         {
-            return {'A','P','D','e','s','c','0','0'};
+            return {{'A','P','D','e','s','c','0','0'}};
         }
 
         bool isValid(const std::uint32_t max_application_image_size) const
@@ -367,6 +367,7 @@ class BootloaderController final
     };
     static_assert(sizeof(AppDescriptor) == 32, "Invalid packing");
     static_assert(std::is_standard_layout_v<AppDescriptor>, "AppInfo is not standard layout; check your compiler");
+    static_assert(offsetof(AppDescriptor, app_info) + offsetof(AppInfo, image_crc) == 8);
 
     std::optional<AppDescriptor> locateAppDescriptor()
     {
@@ -406,7 +407,7 @@ class BootloaderController final
             // Checking firmware CRC.
             // This block is very computationally intensive, so it has been carefully optimized for speed.
             {
-                const auto crc_offset = offset + offsetof(AppDescriptor, app_info.image_crc);
+                const auto crc_offset = offset + offsetof(AppDescriptor, app_info) + offsetof(AppInfo, image_crc);
                 CRC64 crc;
 
                 // Read large chunks until the CRC field is reached (in most cases it will fit in just one chunk)

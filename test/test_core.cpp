@@ -328,10 +328,10 @@ TEST_CASE("Core-AppDataExchange-Registers")
 
     // Writing non-zeros and checking the representation
     marshaller.write({
-                         0x00AD'EADB'ADC0'FFEE,
-                         123,
-                         {1, 2, 3},
-                     });
+        0x00AD'EADB'ADC0'FFEE,
+        123,
+        {{1, 2, 3}},
+    });
     REQUIRE(reg_bank.crc != 0);
     REQUIRE(reg_bank.a == 0x00AD'EADB'ADC0'FFEE);
     REQUIRE(reg_bank.b == 123);
@@ -401,7 +401,7 @@ TEST_CASE("Core-AppDataExchange-Memory")
     marshaller.write({
         0x00AD'EADB'ADC0'FFEE,
         123,
-        {1, 2, 3},
+        {{1, 2, 3}},
     });
     REQUIRE(0 != std::accumulate(arena.begin(), arena.end(), 0ULL));            // All non-zero
 
