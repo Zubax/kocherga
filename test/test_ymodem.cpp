@@ -219,8 +219,8 @@ TEST_CASE("YModem-PortTest")
     // Checksum
     {
         auto checksum = std::uint8_t(std::accumulate(images::AppValid.begin(),
-                                                     images::AppValid.begin() + 128,
-                                                     0U) & 0xFF);
+                                                     images::AppValid.begin() + 128U,
+                                                     0U) & 0xFFU);
         REQUIRE(checksum == get());
     }
 }
@@ -236,6 +236,10 @@ TEST_CASE("YModem-Basic")
     kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
     REQUIRE(kocherga::State::NoAppToBoot == blc.getState());
 
+    /*
+     * The tests below require the program 'sz'. On Debian-based systems, the package name is 'lrzsz'.
+     * Man page: http://manpages.ubuntu.com/manpages/artful/man1/sz.1.html
+     */
     // Test YMODEM
     {
         Platform port(piped_process::launch(std::string("sz -vv --ymodem --1k ") + ValidImageFileName));
