@@ -255,7 +255,7 @@ TEST_CASE("UAVCAN-Python-slow")
             kocherga_uavcan::HardwareInfo hw_info;
             hw_info.major = 12;
             hw_info.minor = 34;
-            hw_info.unique_id = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+            hw_info.unique_id = {{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}};
             for (std::uint16_t i = 0; i < hw_info.certificate_of_authenticity.capacity(); i++)
             {
                 hw_info.certificate_of_authenticity.push_back(std::uint8_t(i));

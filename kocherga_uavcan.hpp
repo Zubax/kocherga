@@ -505,13 +505,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
     {
         /// These are defined by the specification; 100 Kbps is added due to its popularity.
         static constexpr std::array<std::uint32_t, 5> StandardBitRates
-        {
+        {{
             1000000,        ///< Standard, recommended by UAVCAN
              500000,        ///< Standard
              250000,        ///< Standard
              125000,        ///< Standard
              100000         ///< Popular bit rate that is not defined by the specification
-        };
+        }};
 
         std::uint8_t current_bit_rate_index = 0;
 
