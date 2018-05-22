@@ -41,8 +41,29 @@ CAN bus             | UAVCAN
 
 ## Usage
 
-*Come back later.*
+Just read the code ;)
 
+The entire library is contained in the header file `kocherga.hpp`;
+protocol implementations are provided each in a separate header file named `kocherga_*.hpp`.
+For example, the YMODEM-family protocols are implemented in the header file `kocherga_ymodem.hpp`;
+the UAVCAN protocol is implemented in the file `kocherga_uavcan.hpp`, etc.
+You don't need to use all of them, of course; just take what you need.
+
+Kocherga does not have any compilation units of its own, so just include the required headers and you're ready to roll.
+
+When implementing support for new protocols, please follow the same naming convention:
+`kocherga_whatever.hpp` for the header file, where `whatever` is the name of the protocol;
+the implementation should be contained in a namespace eponymous with the header file,
+e.g. `::kocherga_whatever`.
+
+To integrate Kocherga into your application, just include this repository as a git submodule,
+or simply copy-paste the required header files into your source tree.
+
+The core logic is implemented in the class `kocherga::BootloaderController`.
+Instantiate this class once in your application and use it to perform firmware updates as necessary
+using one of the provided (or custom!) protocol implementations.
+
+The following diagram documents the state machine implemented in the `BootloaderController` class:
 ![Kocherga State Machine Diagram](state_machine.svg "Kocherga State Machine Diagram")
 
 ## Protocols
