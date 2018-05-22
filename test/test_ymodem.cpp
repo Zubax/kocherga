@@ -183,6 +183,7 @@ struct ControlCharacters
 
 TEST_CASE("YModem-PortTest")
 {
+    initImageFiles();
     Platform port(piped_process::launch(std::string("sz -vv --xmodem ") + ValidImageFileName));
 
     {
