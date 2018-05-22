@@ -172,12 +172,12 @@ namespace impl_
 /**
  * This is the default defined by the UAVCAN specification.
  */
-static constexpr std::chrono::microseconds DefaultServiceRequestTimeout{1'000'000};
+static constexpr std::chrono::microseconds DefaultServiceRequestTimeout{1'000'000};  // NOLINT
 
 /**
  * A sensible default value that should suit most applications.
  */
-static constexpr std::chrono::microseconds DefaultProgressReportInterval{10'000'000};
+static constexpr std::chrono::microseconds DefaultProgressReportInterval{10'000'000};  // NOLINT
 
 
 namespace dsdl
@@ -373,13 +373,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
         using namespace impl_;
         std::uint8_t buffer[dsdl::NodeStatus::MaxSizeBytes]{};
         makeNodeStatusMessage(buffer);
-        const int res = ::canardBroadcast(&canard_,
-                                          dsdl::NodeStatus::DataTypeSignature,
-                                          dsdl::NodeStatus::DataTypeID,
-                                          &node_status_transfer_id_,
-                                          CANARD_TRANSFER_PRIORITY_LOW,
-                                          buffer,
-                                          dsdl::NodeStatus::MaxSizeBytes);
+        const auto res = ::canardBroadcast(&canard_,
+                                           dsdl::NodeStatus::DataTypeSignature,
+                                           dsdl::NodeStatus::DataTypeID,
+                                           &node_status_transfer_id_,
+                                           CANARD_TRANSFER_PRIORITY_LOW,
+                                           buffer,
+                                           dsdl::NodeStatus::MaxSizeBytes);
         if (res <= 0)
         {
             KOCHERGA_UAVCAN_LOG("NodeStatus bc err %d\n", res);
@@ -395,25 +395,25 @@ class BootloaderNode final : private ::kocherga::IProtocol
         std::copy(txt.begin(), txt.end(), &buffer[1 + SourceName.length()]);
 
         using impl_::dsdl::LogMessage;
-        const int res = ::canardBroadcast(&canard_,
-                                          LogMessage::DataTypeSignature,
-                                          LogMessage::DataTypeID,
-                                          &log_message_transfer_id_,
-                                          CANARD_TRANSFER_PRIORITY_LOWEST,
-                                          buffer,
-                                          std::uint16_t(1U + SourceName.length() + txt.length()));
+        const auto res = ::canardBroadcast(&canard_,
+                                           LogMessage::DataTypeSignature,
+                                           LogMessage::DataTypeID,
+                                           &log_message_transfer_id_,
+                                           CANARD_TRANSFER_PRIORITY_LOWEST,
+                                           buffer,
+                                           std::uint16_t(1U + SourceName.length() + txt.length()));
         if (res < 0)
         {
             KOCHERGA_UAVCAN_LOG("Log err %d\n", res);
         }
     }
 
-    int initCAN(const std::uint32_t bitrate,
-                const IUAVCANPlatform::CANMode mode,
-                const IUAVCANPlatform::CANAcceptanceFilterConfig& acceptance_filter =
-                    IUAVCANPlatform::CANAcceptanceFilterConfig())
+    auto initCAN(const std::uint32_t bitrate,
+                 const IUAVCANPlatform::CANMode mode,
+                 const IUAVCANPlatform::CANAcceptanceFilterConfig& acceptance_filter =
+                     IUAVCANPlatform::CANAcceptanceFilterConfig())
     {
-        const int res = platform_.configure(bitrate, mode, acceptance_filter);
+        const auto res = platform_.configure(bitrate, mode, acceptance_filter);
         if (res < 0)
         {
             KOCHERGA_UAVCAN_LOG("CAN init err @%u bps: %d\n", unsigned(bitrate), res);
@@ -457,10 +457,10 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
     void poll()
     {
-        constexpr int MaxFramesPerSpin = 10;
+        constexpr std::uint8_t MaxFramesPerSpin = 10;
 
         // Receive
-        for (int i = 0; i < MaxFramesPerSpin; i++)
+        for (std::uint8_t i = 0; i < MaxFramesPerSpin; i++)
         {
             platform_.resetWatchdog();
 
@@ -474,7 +474,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
         }
 
         // Transmit
-        for (int i = 0; i < MaxFramesPerSpin; i++)
+        for (std::uint8_t i = 0; i < MaxFramesPerSpin; i++)
         {
             platform_.resetWatchdog();
 
@@ -484,7 +484,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
                 break;                          // Nothing to transmit
             }
 
-            const int res = send(*txf, std::chrono::microseconds{});      // Non-blocking call
+            const auto res = send(*txf, std::chrono::microseconds{});      // Non-blocking call
             if (res == 0)
             {
                 break;                          // Queue is full
@@ -610,13 +610,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
             std::memmove(&allocation_request[1], &hw_info_.unique_id[node_id_allocation_unique_id_offset_], uid_size);
 
             // Broadcasting the request
-            const int bcast_res = ::canardBroadcast(&canard_,
-                                                    dsdl::NodeIDAllocation::DataTypeSignature,
-                                                    dsdl::NodeIDAllocation::DataTypeID,
-                                                    &node_id_allocation_transfer_id_,
-                                                    CANARD_TRANSFER_PRIORITY_LOW,
-                                                    &allocation_request[0],
-                                                    std::uint16_t(uid_size + 1U));
+            const auto bcast_res = ::canardBroadcast(&canard_,
+                                                     dsdl::NodeIDAllocation::DataTypeSignature,
+                                                     dsdl::NodeIDAllocation::DataTypeID,
+                                                     &node_id_allocation_transfer_id_,
+                                                     CANARD_TRANSFER_PRIORITY_LOW,
+                                                     &allocation_request[0],
+                                                     std::uint16_t(uid_size + 1U));
             if (bcast_res < 0)
             {
                 KOCHERGA_UAVCAN_LOG("NID alloc bc err %d\n", bcast_res);
@@ -727,7 +727,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
              * Rewriting the old firmware with the new file
              */
             platform_.resetWatchdog();
-            const int result = bootloader_.upgradeApp(*this);
+            const auto result = bootloader_.upgradeApp(*this);
             platform_.resetWatchdog();
 
             sendNodeStatus();   // Announcing the new status of the bootloader ASAP
@@ -789,15 +789,15 @@ class BootloaderNode final : private ::kocherga::IProtocol
                 ::canardEncodeScalar(buffer, 0, 40, &offset);
                 std::copy(firmware_file_path_.begin(), firmware_file_path_.end(), &buffer[5]);
 
-                const int res = ::canardRequestOrRespond(&canard_,
-                                                         remote_server_node_id_,
-                                                         dsdl::FileRead::DataTypeSignature,
-                                                         dsdl::FileRead::DataTypeID,
-                                                         &file_read_transfer_id_,
-                                                         CANARD_TRANSFER_PRIORITY_LOW,
-                                                         ::CanardRequest,
-                                                         buffer,
-                                                         std::uint16_t(firmware_file_path_.size() + 5U));
+                const auto res = ::canardRequestOrRespond(&canard_,
+                                                          remote_server_node_id_,
+                                                          dsdl::FileRead::DataTypeSignature,
+                                                          dsdl::FileRead::DataTypeID,
+                                                          &file_read_transfer_id_,
+                                                          CANARD_TRANSFER_PRIORITY_LOW,
+                                                          ::CanardRequest,
+                                                          buffer,
+                                                          std::uint16_t(firmware_file_path_.size() + 5U));
                 if (res < 0)
                 {
                     KOCHERGA_UAVCAN_LOG("File req err %d\n", res);
@@ -908,7 +908,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
             }
 
             // Copying the unique ID from the message
-            static constexpr unsigned UniqueIDBitOffset = 8;
+            static constexpr std::uint8_t UniqueIDBitOffset = 8;
             std::uint8_t received_unique_id[std::tuple_size_v<HardwareInfo::UniqueID>];
             std::uint8_t received_unique_id_len = 0;
             for (;
@@ -991,15 +991,15 @@ class BootloaderNode final : private ::kocherga::IProtocol
             assert(total_size <= dsdl::GetNodeInfo::MaxSizeBytesResponse);
 
             // No need to release the transfer payload, it's empty
-            const int resp_res = ::canardRequestOrRespond(&canard_,
-                                                          transfer->source_node_id,
-                                                          dsdl::GetNodeInfo::DataTypeSignature,
-                                                          dsdl::GetNodeInfo::DataTypeID,
-                                                          &transfer->transfer_id,
-                                                          transfer->priority,
-                                                          ::CanardResponse,
-                                                          &buffer[0],
-                                                          std::uint16_t(total_size));
+            const auto resp_res = ::canardRequestOrRespond(&canard_,
+                                                           transfer->source_node_id,
+                                                           dsdl::GetNodeInfo::DataTypeSignature,
+                                                           dsdl::GetNodeInfo::DataTypeID,
+                                                           &transfer->transfer_id,
+                                                           transfer->priority,
+                                                           ::CanardResponse,
+                                                           &buffer[0],
+                                                           std::uint16_t(total_size));
             if (resp_res <= 0)
             {
                 KOCHERGA_UAVCAN_LOG("GetNodeInfo resp err %d\n", resp_res);
@@ -1066,13 +1066,13 @@ class BootloaderNode final : private ::kocherga::IProtocol
 
                 // Copy the path
                 firmware_file_path_.clear();
-                for (unsigned i = 0;
-                     i < std::min(transfer->payload_len - 1U,
-                                  firmware_file_path_.capacity());
+                for (std::uint16_t i = 0;
+                     i < std::uint16_t(std::min(transfer->payload_len - 1U,
+                                                firmware_file_path_.capacity()));
                      i++)
                 {
                     char val = '\0';
-                    (void) ::canardDecodeScalar(transfer, i * 8 + 8, 8, false, &val);
+                    (void) ::canardDecodeScalar(transfer, i * 8U + 8U, 8, false, &val);
                     firmware_file_path_.push_back(val);
                 }
 
@@ -1080,15 +1080,15 @@ class BootloaderNode final : private ::kocherga::IProtocol
             }
 
             ::canardReleaseRxTransferPayload(&canard_, transfer);
-            const int resp_res = ::canardRequestOrRespond(&canard_,
-                                                          transfer->source_node_id,
-                                                          dsdl::BeginFirmwareUpdate::DataTypeSignature,
-                                                          dsdl::BeginFirmwareUpdate::DataTypeID,
-                                                          &transfer->transfer_id,
-                                                          transfer->priority,
-                                                          ::CanardResponse,
-                                                          &error,
-                                                          1);
+            const auto resp_res = ::canardRequestOrRespond(&canard_,
+                                                           transfer->source_node_id,
+                                                           dsdl::BeginFirmwareUpdate::DataTypeSignature,
+                                                           dsdl::BeginFirmwareUpdate::DataTypeID,
+                                                           &transfer->transfer_id,
+                                                           transfer->priority,
+                                                           ::CanardResponse,
+                                                           &error,
+                                                           1);
             if (resp_res <= 0)
             {
                 KOCHERGA_UAVCAN_LOG("BeginFWUpdate resp err %d\n", resp_res);
