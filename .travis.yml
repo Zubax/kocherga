@@ -10,7 +10,7 @@ before_script:
   - sudo ip link set up kocherga0
   - sudo ifconfig kocherga0 up
   # Installing Python dependencies
-  - sudo pip install "uavcan>=1.0.0.dev26"
+  - sudo pip3 install "uavcan>=1.0.0.dev26"
 
 matrix:
   include:
