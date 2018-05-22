@@ -17,7 +17,7 @@ try:
     # noinspection PyUnresolvedReferences
     import uavcan
 except ImportError:
-    print('Missing PyUAVCAN, please install it: pip3 install "uavcan>=1.0.0.dev26"', file=sys.stderr)
+    print('Missing PyUAVCAN, please install it: pip3 install "uavcan>=1.0.0.dev30"', file=sys.stderr)
     exit(1)
 
 import uavcan_tester
