@@ -153,12 +153,33 @@ enum class State : std::uint8_t
  */
 struct AppInfo
 {
-    std::uint64_t image_crc     = 0;
-    std::uint32_t image_size    = 0;
-    std::uint32_t vcs_commit    = 0;
-    std::uint8_t  major_version = 0;
-    std::uint8_t  minor_version = 0;
-    // Several bytes of padding at the end are reserved for future use.
+    static constexpr std::uint8_t FlagReleaseBuild = 1U;
+    static constexpr std::uint8_t FlagDirtyBuild   = 2U;
+
+    // Offset 0 bytes
+    std::uint64_t image_crc     = 0;        ///< CRC-64-WE of the firmware image padded to 8 bytes while this field zero
+
+    // Offset 8 bytes
+    std::uint32_t image_size    = 0;        ///< Size of the application image in bytes
+    std::uint32_t vcs_commit    = 0;        ///< Version control system revision ID (e.g. git commit hash)
+
+    // Offset 16 bytes
+    std::uint8_t  major_version = 0;        ///< Major semantic version number
+    std::uint8_t  minor_version = 0;        ///< Minor semantic version number
+    std::uint8_t  flags = 0;                ///< Flags: 1 - release build, 2 - dirty build
+    std::uint8_t  _reserved_a_ = 0;         ///< Reserved for future use
+
+    // Offset 20 bytes
+    std::uint32_t build_timestamp_utc = 0;  ///< UTC Unix time in seconds when the application was built
+
+    bool isReleaseBuild() const { return (flags & FlagReleaseBuild) != 0; }
+    bool isDirtyBuild()   const { return (flags & FlagDirtyBuild)   != 0; }
+
+    /// Returns true if the build timestamp is not zero and not 2**32-1. Used for compatibility with older formats.
+    bool isBuildTimestampValid() const
+    {
+        return (build_timestamp_utc != 0) && (build_timestamp_utc != 0xFF'FF'FF'FFUL);
+    }
 };
 
 static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler");
