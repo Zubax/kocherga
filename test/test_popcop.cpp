@@ -23,6 +23,11 @@
  * Author: Pavel Kirienko <pavel.kirienko@zubax.com>
  */
 
+// Skipping in case of Clang because it can't compile Popcop - the compiler is broken.
+// See the bug report here: https://bugs.llvm.org/show_bug.cgi?id=31852
+// TODO: This test should be re-enabled when a fixed version of Clang is available.
+#ifndef __clang__
+
 // We want to ensure that assertion checks are enabled when tests are run, for extra safety
 #ifdef NDEBUG
 # undef NDEBUG
@@ -56,3 +61,5 @@ TEST_CASE("Popcop-Basic")
 {
 
 }
+
+#endif // __clang__
