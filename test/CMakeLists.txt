@@ -33,7 +33,10 @@ if(NOT CMAKE_BUILD_TYPE)
         FORCE)
 endif()
 
-include_directories(.. . senoval)
+include_directories(..
+                    .
+                    senoval
+                    popcop/c++)
 
 # Using 32-bit mode for compatibility with libcanard
 # Enabling all warnings; make them fatal for C++ and non-fatal for C (because C is only needed for dependencies)
