@@ -45,7 +45,6 @@
 #include <functional>
 #include <iostream>
 #include <utility>
-#include <test/libcanard/canard.h>
 #include <sys/prctl.h>
 #include <csignal>
 
