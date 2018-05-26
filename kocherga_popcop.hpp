@@ -29,8 +29,6 @@
 
 // Third-party dependencies:
 #include <popcop.hpp>                   // Popcop protocol implementation in C++
-#include <senoval/string.hpp>           // Utility library for embedded systems
-#include <senoval/vector.hpp>           // Utility library for embedded systems
 #include <utility>
 
 

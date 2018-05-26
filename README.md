@@ -88,7 +88,6 @@ The UAVCAN protocol support requires the following libraries:
 The Popcop protocol support requires the following libraries:
 
 * [Libpopcop](https://github.com/Zubax/popcop) - implementation of the Popcop protocol in C++.
-* [Senoval](https://github.com/Zubax/senoval) - utility library for deeply embedded systems.
 
 ## License
 
