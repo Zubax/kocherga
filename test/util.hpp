@@ -40,17 +40,27 @@ inline std::string makeHexDump(InputIterator begin, const InputIterator end)
     static constexpr std::uint8_t BytesPerRow = 16;
     std::uint32_t offset = 0;
     std::ostringstream output;
+    bool first = true;
 
     output << std::hex << std::setfill('0');
 
     do
     {
+        if (first)
+        {
+            first = false;
+        }
+        else
+        {
+            output << std::endl;
+        }
+
         output << std::setw(8) << offset << "  ";
         offset += BytesPerRow;
 
         {
             auto it = begin;
-            for (unsigned i = 0; i < BytesPerRow; ++i)
+            for (std::uint8_t i = 0; i < BytesPerRow; ++i)
             {
                 if (i == 8)
                 {
@@ -59,7 +69,7 @@ inline std::string makeHexDump(InputIterator begin, const InputIterator end)
 
                 if (it != end)
                 {
-                    output << std::setw(2) << unsigned(*it) << ' ';
+                    output << std::setw(2) << std::uint32_t(*it) << ' ';
                     ++it;
                 }
                 else
@@ -70,11 +80,11 @@ inline std::string makeHexDump(InputIterator begin, const InputIterator end)
         }
 
         output << " ";
-        for (unsigned i = 0; i < BytesPerRow; ++i)
+        for (std::uint8_t i = 0; i < BytesPerRow; ++i)
         {
             if (begin != end)
             {
-                output << ((unsigned(*begin) >= 32U && unsigned(*begin) <= 126U) ? char(*begin) : '.');
+                output << ((std::uint32_t(*begin) >= 32U && std::uint32_t(*begin) <= 126U) ? char(*begin) : '.');
                 ++begin;
             }
             else
@@ -82,8 +92,6 @@ inline std::string makeHexDump(InputIterator begin, const InputIterator end)
                 output << ' ';
             }
         }
-
-        output << std::endl;
     }
     while (begin != end);
 
