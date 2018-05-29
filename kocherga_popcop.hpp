@@ -29,6 +29,7 @@
 
 // Third-party dependencies:
 #include <popcop.hpp>                   // Popcop protocol implementation in C++
+
 #include <utility>
 
 
@@ -133,7 +134,7 @@ class PopcopProtocol final : private kocherga::IProtocol
 {
     ::kocherga::BootloaderController& blc_;
     IPopcopPlatform& platform_;
-    const popcop::standard::NodeInfoMessage node_info_prototype_;
+    const popcop::standard::EndpointInfoMessage endpoint_info_prototype_;
 
     popcop::transport::Parser<> parser_{};
 
@@ -162,9 +163,9 @@ class PopcopProtocol final : private kocherga::IProtocol
                                                                sender).begin());
     }
 
-    void processNodeInfoRequest()
+    void processEndpointInfoRequest()
     {
-        popcop::standard::NodeInfoMessage m = node_info_prototype_;
+        popcop::standard::EndpointInfoMessage m = endpoint_info_prototype_;
         if (const auto ai = blc_.getAppInfo())
         {
             auto& sw = m.software_version;
@@ -235,6 +236,11 @@ class PopcopProtocol final : private kocherga::IProtocol
             resp.state = popcop::standard::BootloaderState::ReadyToBoot;
             break;
         }
+        default:
+        {
+            assert(false);
+            break;
+        }
         }
 
         send(resp);
@@ -285,6 +291,12 @@ class PopcopProtocol final : private kocherga::IProtocol
         {
             break;
         }
+
+        default:
+        {
+            assert(false);
+            break;
+        }
         }
     }
 
@@ -323,6 +335,8 @@ class PopcopProtocol final : private kocherga::IProtocol
                     download_sink_ = nullptr;
                 }
             }
+
+            break;
         }
 
         case popcop::standard::BootloaderImageType::CertificateOfAuthenticity:
@@ -350,6 +364,12 @@ class PopcopProtocol final : private kocherga::IProtocol
             }
             break;
         }
+
+        default:
+        {
+            assert(false);
+            break;
+        }
         }
 
         send(resp);
@@ -361,10 +381,10 @@ class PopcopProtocol final : private kocherga::IProtocol
         {
             const auto& payload = frame.payload;
 
-            if (popcop::standard::NodeInfoMessage::tryDecode(payload.begin(),
-                                                             payload.end()))
+            if (popcop::standard::EndpointInfoMessage::tryDecode(payload.begin(),
+                                                                 payload.end()))
             {
-                processNodeInfoRequest();
+                processEndpointInfoRequest();
             }
             else if (auto dmcr = popcop::standard::DeviceManagementCommandRequestMessage::tryDecode(payload.begin(),
                                                                                                     payload.end()))
@@ -444,20 +464,21 @@ class PopcopProtocol final : private kocherga::IProtocol
         return upgrade_status_code_;
     }
 
-    static popcop::standard::NodeInfoMessage prepareNodeInfoMessage(popcop::standard::NodeInfoMessage prototype)
+    static popcop::standard::EndpointInfoMessage prepareEndpointInfoMessage(
+        popcop::standard::EndpointInfoMessage prototype)
     {
-        prototype.software_version = popcop::standard::NodeInfoMessage::SoftwareVersion();
-        prototype.mode = popcop::standard::NodeInfoMessage::Mode::Bootloader;
+        prototype.software_version = popcop::standard::EndpointInfoMessage::SoftwareVersion();
+        prototype.mode = popcop::standard::EndpointInfoMessage::Mode::Bootloader;
         return prototype;
     }
 
 public:
     PopcopProtocol(::kocherga::BootloaderController& bootloader_controller,
                    IPopcopPlatform& popcop_platform,
-                   const popcop::standard::NodeInfoMessage& ni) :
+                   const popcop::standard::EndpointInfoMessage& epi) :
         blc_(bootloader_controller),
         platform_(popcop_platform),
-        node_info_prototype_(prepareNodeInfoMessage(ni))
+        endpoint_info_prototype_(prepareEndpointInfoMessage(epi))
     { }
 
     /**
