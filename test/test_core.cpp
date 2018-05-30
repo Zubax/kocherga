@@ -169,6 +169,10 @@ TEST_CASE("Core-Basic")
         REQUIRE(app_info.major_version == images::AppValidMajorVersion);
         REQUIRE(app_info.minor_version == images::AppValidMinorVersion);
         REQUIRE(app_info.vcs_commit    == images::AppValidVCSCommit);
+        REQUIRE(app_info.isReleaseBuild()    == images::AppValidReleaseBuild);   // NOLINT
+        REQUIRE(app_info.isDirtyBuild()      == images::AppValidDirtyBuild);     // NOLINT
+        REQUIRE(app_info.build_timestamp_utc == images::AppValidBuildTimestamp);
+        REQUIRE_FALSE(app_info.isBuildTimestampValid());
     };
     upload_valid_image();
 

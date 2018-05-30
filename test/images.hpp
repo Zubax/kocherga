@@ -40,7 +40,10 @@ namespace images
  */
 static constexpr std::uint8_t AppValidMajorVersion = 0;
 static constexpr std::uint8_t AppValidMinorVersion = 1;
-static constexpr std::uint32_t AppValidVCSCommit   = 0x5378b66fUL;
+static constexpr std::uint32_t AppValidVCSCommit      = 0x5378b66fUL;
+static constexpr std::uint32_t AppValidBuildTimestamp = 0xFFFFFFFFUL;
+static constexpr bool AppValidReleaseBuild = true;
+static constexpr bool AppValidDirtyBuild = true;
 static constexpr std::array<std::uint8_t, 1024> AppValid{{
     0x00, 0x10, 0x00, 0x20, 0x61, 0xc3, 0x00, 0x08, 0x71, 0x45, 0x02, 0x08, 0x61, 0x45, 0x02, 0x08,
     0x51, 0x45, 0x02, 0x08, 0x41, 0x45, 0x02, 0x08, 0x31, 0x45, 0x02, 0x08, 0x62, 0xc3, 0x00, 0x08,
@@ -185,6 +188,9 @@ static constexpr std::array<std::uint8_t, 1024> AppWithInvalidDescriptor{{
 static constexpr std::uint8_t AppValid2MajorVersion = 0;
 static constexpr std::uint8_t AppValid2MinorVersion = 1;
 static constexpr std::uint32_t AppValid2VCSCommit   = 0x5378b66fUL;
+static constexpr std::uint32_t AppValid2BuildTimestamp = 0xFFFFFFFFUL;
+static constexpr bool AppValid2ReleaseBuild = true;
+static constexpr bool AppValid2DirtyBuild = true;
 static constexpr std::array<std::uint8_t, 10504> AppValid2{{
     0x00, 0x10, 0x00, 0x20, 0x61, 0xc3, 0x00, 0x08, 0x71, 0x45, 0x02, 0x08, 0x61, 0x45, 0x02, 0x08,
     0x51, 0x45, 0x02, 0x08, 0x41, 0x45, 0x02, 0x08, 0x31, 0x45, 0x02, 0x08, 0x62, 0xc3, 0x00, 0x08,
