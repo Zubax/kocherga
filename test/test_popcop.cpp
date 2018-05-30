@@ -556,8 +556,8 @@ TEST_CASE("Popcop-Basic")
     }
 
     // Upload finished! Waiting for the firmware to boot automatically
-    REQUIRE_FALSE(modem.receive(std::chrono::seconds(2)));    // Wait restart and ROM verification (takes time)
-    REQUIRE(num_restarts == 3);
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(2)));      // Wait restart and ROM verification (takes time)
+    REQUIRE(num_restarts == 3);                                 // After restart, the mock ROM is erased
 
     /*
      * Finalize
