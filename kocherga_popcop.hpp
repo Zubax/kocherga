@@ -384,16 +384,19 @@ class PopcopProtocol final : private kocherga::IProtocol
             if (popcop::standard::EndpointInfoMessage::tryDecode(payload.begin(),
                                                                  payload.end()))
             {
+                KOCHERGA_TRACE("Popcop: EP info req\n");
                 processEndpointInfoRequest();
             }
             else if (auto dmcr = popcop::standard::DeviceManagementCommandRequestMessage::tryDecode(payload.begin(),
                                                                                                     payload.end()))
             {
+                KOCHERGA_TRACE("Popcop: Device mgmt cmd\n");
                 processDeviceManagementCommandRequest(*dmcr);
             }
             else if (auto bsr = popcop::standard::BootloaderStatusRequestMessage::tryDecode(payload.begin(),
                                                                                             payload.end()))
             {
+                KOCHERGA_TRACE("Popcop: Bootloader status req\n");
                 processBootloaderStatusRequest(*bsr);
             }
             else if (auto bidr = popcop::standard::BootloaderImageDataRequestMessage::tryDecode(payload.begin(),
@@ -403,11 +406,13 @@ class PopcopProtocol final : private kocherga::IProtocol
             }
             else
             {
+                KOCHERGA_TRACE("Popcop: Unhandled std frame\n");
                 platform_.processUnhandledFrame(frame);
             }
         }
         else
         {
+            KOCHERGA_TRACE("Popcop: Unhandled app frame type %u\n", frame.type_code);
             platform_.processUnhandledFrame(frame);
         }
     }

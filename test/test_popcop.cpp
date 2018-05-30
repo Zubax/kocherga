@@ -59,22 +59,40 @@ namespace
 
 class DuplexQueue
 {
-    mutable std::recursive_mutex mutex_;
-    std::queue<std::uint8_t> txq_;
-    std::queue<std::uint8_t> rxq_;
+    DuplexQueue(const DuplexQueue&) = delete;
+    DuplexQueue& operator=(const DuplexQueue&) = delete;
 
-    void pushAny(std::queue<std::uint8_t>& q, std::uint8_t byte)
+    struct Queue : public std::queue<std::uint8_t>
+    {
+        Queue() = default;
+        Queue(const Queue&) = delete;
+        Queue& operator=(const Queue&) = delete;
+
+        void reset()
+        {
+            while (!this->empty())
+            {
+                this->pop();
+            }
+        }
+    };
+
+    mutable std::recursive_mutex mutex_;
+    Queue txq_;
+    Queue rxq_;
+
+    void pushAny(Queue& q, std::uint8_t byte)
     {
         std::lock_guard lock(mutex_);
         q.push(byte);
     }
 
-    std::optional<std::uint8_t> popAny(std::queue<std::uint8_t>& q)
+    std::optional<std::uint8_t> popAny(Queue& q)
     {
         std::lock_guard lock(mutex_);
         if (!q.empty())
         {
-            const auto ret = q.back();
+            const std::uint8_t ret = q.front();
             q.pop();
             return ret;
         }
@@ -85,6 +103,8 @@ class DuplexQueue
     }
 
 public:
+    DuplexQueue() = default;
+
     void pushTx(std::uint8_t byte) { pushAny(txq_, byte); }
     void pushRx(std::uint8_t byte) { pushAny(rxq_, byte); }
 
@@ -94,8 +114,8 @@ public:
     void reset()
     {
         std::lock_guard lock(mutex_);
-        txq_ = std::queue<std::uint8_t>();
-        rxq_ = std::queue<std::uint8_t>();
+        txq_.reset();
+        rxq_.reset();
     }
 };
 
@@ -283,7 +303,7 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         do
         {
-            if (auto ret = popTxQueue(std::chrono::milliseconds(1)))
+            if (auto ret = popTxQueue(std::chrono::milliseconds(10)))
             {
                 const auto output = parser_.processNextByte(*ret);
                 if (auto frame = output.getReceivedFrame())
@@ -328,6 +348,8 @@ TEST_CASE("Popcop-Basic")
         {
             std::cout << "Endpoint is (re)starting..." << std::endl;
 
+            queue.reset();      // <--- mighty reset!
+
             mocks::Platform platform;
             static constexpr std::uint32_t ROMSize = 1024 * 1024;
             mocks::FileMappedROMBackend rom_backend("popcop-basic-rom.tmp", ROMSize);
@@ -356,12 +378,10 @@ TEST_CASE("Popcop-Basic")
 
             ep_info.globally_unique_id = {{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}};
 
-            for (std::uint16_t i = 0; i < ep_info.certificate_of_authenticity.capacity(); i++)
+            for (std::uint16_t i = 0; i < ep_info.certificate_of_authenticity.max_size(); i++)
             {
                 ep_info.certificate_of_authenticity.push_back(std::uint8_t(i));
             }
-
-            queue.reset();      // <--- mighty reset!
 
             Platform popcop_platform(queue, blc, [&]() { return should_exit; });
 
@@ -372,12 +392,28 @@ TEST_CASE("Popcop-Basic")
         std::cout << "Endpoint thread is exiting" << std::endl;
     });
 
-    {
-        Modem modem(queue);
+    /*
+     * The actual test
+     */
+    Modem modem(queue);
 
-        REQUIRE_FALSE(modem.receive(std::chrono::milliseconds(10)));
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(1)));    // Wait launch and ROM verification (takes time)
+
+    modem.send(popcop::standard::EndpointInfoMessage());
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        popcop::standard::EndpointInfoMessage m = std::get<popcop::standard::EndpointInfoMessage>(*response);
+
+        REQUIRE(m.endpoint_name == "com.zubax.test");
+    }
+    else
+    {
+        FAIL("No response");
     }
 
+    /*
+     * Finalize
+     */
     std::cout << "Joining the endpoint thread..." << std::endl;
     should_exit = true;
     if (endpoint_thread.joinable())
