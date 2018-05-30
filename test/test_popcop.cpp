@@ -240,8 +240,11 @@ public:
 
 
 using AnyMessage = std::variant<popcop::standard::EndpointInfoMessage,
+                                popcop::standard::DeviceManagementCommandRequestMessage,
                                 popcop::standard::DeviceManagementCommandResponseMessage,
+                                popcop::standard::BootloaderStatusRequestMessage,
                                 popcop::standard::BootloaderStatusResponseMessage,
+                                popcop::standard::BootloaderImageDataRequestMessage,
                                 popcop::standard::BootloaderImageDataResponseMessage>;
 
 class Modem
@@ -339,7 +342,10 @@ public:
 
 TEST_CASE("Popcop-Basic")
 {
+    using namespace popcop;
+
     volatile bool should_exit = false;
+    volatile std::uint32_t num_restarts = 0;
 
     DuplexQueue queue;
 
@@ -347,15 +353,14 @@ TEST_CASE("Popcop-Basic")
         while (!should_exit)
         {
             std::cout << "Endpoint is (re)starting..." << std::endl;
-
-            queue.reset();      // <--- mighty reset!
+            num_restarts++;
 
             mocks::Platform platform;
             static constexpr std::uint32_t ROMSize = 1024 * 1024;
             mocks::FileMappedROMBackend rom_backend("popcop-basic-rom.tmp", ROMSize);
             kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
 
-            popcop::standard::EndpointInfoMessage ep_info;
+            standard::EndpointInfoMessage ep_info;
 
             // The entire software version struct will be overwritten by the protocol implementation
             ep_info.software_version.vcs_commit_id       = 0xdeadbeefUL;
@@ -374,7 +379,7 @@ TEST_CASE("Popcop-Basic")
             ep_info.build_environment_description   = "Build Environment";
             ep_info.runtime_environment_description = "Runtime Environment";
 
-            ep_info.mode = popcop::standard::EndpointInfoMessage::Mode::Normal;   // Will be reset to Bootloader
+            ep_info.mode = standard::EndpointInfoMessage::Mode::Normal;   // Will be reset to Bootloader
 
             ep_info.globally_unique_id = {{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}};
 
@@ -387,29 +392,172 @@ TEST_CASE("Popcop-Basic")
 
             kocherga_popcop::PopcopProtocol endpoint(blc, popcop_platform, ep_info);
             endpoint.run();
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));    // Give the other thread time to read the Q
+            queue.reset();                                                  // <--- mighty reset!
         }
 
         std::cout << "Endpoint thread is exiting" << std::endl;
     });
 
     /*
-     * The actual test
+     * Endpoint info test
      */
     Modem modem(queue);
 
     REQUIRE_FALSE(modem.receive(std::chrono::seconds(1)));    // Wait launch and ROM verification (takes time)
 
-    modem.send(popcop::standard::EndpointInfoMessage());
+    modem.send(standard::EndpointInfoMessage());
     if (auto response = modem.receive(std::chrono::milliseconds(100)))
     {
-        popcop::standard::EndpointInfoMessage m = std::get<popcop::standard::EndpointInfoMessage>(*response);
+        standard::EndpointInfoMessage m = std::get<standard::EndpointInfoMessage>(*response);
 
-        REQUIRE(m.endpoint_name == "com.zubax.test");
+        REQUIRE(m.endpoint_name                   == "com.zubax.test");
+        REQUIRE(m.endpoint_description            == "Test Endpoint");
+        REQUIRE(m.build_environment_description   == "Build Environment");
+        REQUIRE(m.runtime_environment_description == "Runtime Environment");
+
+        REQUIRE(m.mode == standard::EndpointInfoMessage::Mode::Bootloader);
+
+        REQUIRE(m.hardware_version.major == 56);
+        REQUIRE(m.hardware_version.minor == 78);
+
+        REQUIRE(m.globally_unique_id ==
+                std::array<std::uint8_t, 16>{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}});
+
+        for (std::uint16_t i = 0; i < m.certificate_of_authenticity.max_size(); i++)
+        {
+            REQUIRE(m.certificate_of_authenticity[i] == i);
+        }
+
+        // Not populated - no app image available
+        REQUIRE(m.software_version.vcs_commit_id       == 0);
+        REQUIRE(m.software_version.build_timestamp_utc == 0);
+        REQUIRE(m.software_version.major               == 0);
+        REQUIRE(m.software_version.minor               == 0);
+        REQUIRE(!m.software_version.image_crc.has_value());
+        REQUIRE(!m.software_version.dirty_build);
+        REQUIRE(!m.software_version.release_build);
     }
     else
     {
         FAIL("No response");
     }
+
+    /*
+     * Bootloader status test
+     */
+    modem.send(standard::BootloaderStatusRequestMessage{standard::BootloaderState::ReadyToBoot});
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        standard::BootloaderStatusResponseMessage m = std::get<standard::BootloaderStatusResponseMessage>(*response);
+        REQUIRE(m.state == standard::BootloaderState::NoAppToBoot);
+        REQUIRE(m.flags == 0);
+        REQUIRE(m.timestamp.count() > 0);
+        REQUIRE(m.timestamp.count() < std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    /*
+     * Device management command test
+     */
+    REQUIRE(num_restarts == 1);
+
+    // Launch bootloader - we're already in the bootloader, nothing to do
+    modem.send(standard::DeviceManagementCommandRequestMessage{standard::DeviceManagementCommand::LaunchBootloader});
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        standard::DeviceManagementCommandResponseMessage m =
+            std::get<standard::DeviceManagementCommandResponseMessage>(*response);
+        REQUIRE(m.command == standard::DeviceManagementCommand::LaunchBootloader);
+        REQUIRE(m.status == standard::DeviceManagementCommandResponseMessage::Status::Ok);
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    // Restart - restarts the endpoint thread
+    modem.send(standard::DeviceManagementCommandRequestMessage{standard::DeviceManagementCommand::Restart});
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        standard::DeviceManagementCommandResponseMessage m =
+            std::get<standard::DeviceManagementCommandResponseMessage>(*response);
+        REQUIRE(m.command == standard::DeviceManagementCommand::Restart);
+        REQUIRE(m.status == standard::DeviceManagementCommandResponseMessage::Status::Ok);
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(2)));    // Wait restart and ROM verification (takes time)
+    REQUIRE(num_restarts == 2);
+
+    /*
+     * Image upload test
+     */
+    modem.send(standard::BootloaderStatusRequestMessage{standard::BootloaderState::AppUpgradeInProgress});
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        standard::BootloaderStatusResponseMessage m = std::get<standard::BootloaderStatusResponseMessage>(*response);
+        REQUIRE(m.state == standard::BootloaderState::AppUpgradeInProgress);
+        REQUIRE(m.flags == 0);
+        REQUIRE(m.timestamp.count() > 0);
+        REQUIRE(m.timestamp.count() < std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    REQUIRE(num_restarts == 2);
+
+    {
+        std::uint64_t offset = 0;
+        constexpr auto ImageSize = images::AppValid2.size();
+        constexpr auto ImageData = images::AppValid2.data();
+        while (offset < ImageSize)
+        {
+            standard::BootloaderImageDataRequestMessage msg;
+            msg.image_type = standard::BootloaderImageType::Application;
+            msg.image_offset = offset;
+            while ((offset < ImageSize) && (msg.image_data.size() < msg.image_data.max_size()))
+            {
+                msg.image_data.push_back(ImageData[offset]);
+                offset++;
+            }
+
+            std::cout << "Next block @" << offset << " " << msg.image_data.size() << "B" << std::endl;
+            modem.send(msg);
+
+            if (auto response = modem.receive(std::chrono::seconds(1)))
+            {
+                standard::BootloaderImageDataResponseMessage m =
+                    std::get<standard::BootloaderImageDataResponseMessage>(*response);
+                REQUIRE(m.image_type   == standard::BootloaderImageType::Application);
+                REQUIRE(m.image_offset == msg.image_offset);
+                REQUIRE(m.image_data   == msg.image_data);
+            }
+            else
+            {
+                FAIL("No response");
+            }
+        }
+
+        // Emit one empty packet at the end to guarantee transfer completion (not required)
+        standard::BootloaderImageDataRequestMessage msg;
+        msg.image_type = standard::BootloaderImageType::Application;
+        msg.image_offset = offset;
+        modem.send(msg);
+    }
+
+    // Upload finished! Waiting for the firmware to boot automatically
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(2)));    // Wait restart and ROM verification (takes time)
+    REQUIRE(num_restarts == 3);
 
     /*
      * Finalize
