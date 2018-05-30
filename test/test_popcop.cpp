@@ -358,7 +358,10 @@ TEST_CASE("Popcop-Basic")
             mocks::Platform platform;
             static constexpr std::uint32_t ROMSize = 1024 * 1024;
             mocks::FileMappedROMBackend rom_backend("popcop-basic-rom.tmp", ROMSize);
-            kocherga::BootloaderController blc(platform, rom_backend, ROMSize);
+            kocherga::BootloaderController blc(platform,
+                                               rom_backend,
+                                               ROMSize,
+                                               std::chrono::microseconds(2'000'000));
 
             standard::EndpointInfoMessage ep_info;
 
@@ -553,10 +556,69 @@ TEST_CASE("Popcop-Basic")
         msg.image_type = standard::BootloaderImageType::Application;
         msg.image_offset = offset;
         modem.send(msg);
+        REQUIRE(modem.receive(std::chrono::seconds(1)));      // Get rid of the response, we don't need it
     }
 
-    // Upload finished! Waiting for the firmware to boot automatically
-    REQUIRE_FALSE(modem.receive(std::chrono::seconds(2)));      // Wait restart and ROM verification (takes time)
+    // Upload finished! Verifying the node info and the bootloader state
+    // Large timeout is necessary to account for the long CRC verification process
+    modem.send(standard::EndpointInfoMessage());
+    if (auto response = modem.receive(std::chrono::seconds(2)))
+    {
+        standard::EndpointInfoMessage m = std::get<standard::EndpointInfoMessage>(*response);
+
+        REQUIRE(m.endpoint_name                   == "com.zubax.test");
+        REQUIRE(m.endpoint_description            == "Test Endpoint");
+        REQUIRE(m.build_environment_description   == "Build Environment");
+        REQUIRE(m.runtime_environment_description == "Runtime Environment");
+
+        REQUIRE(m.mode == standard::EndpointInfoMessage::Mode::Bootloader);
+
+        REQUIRE(m.hardware_version.major == 56);
+        REQUIRE(m.hardware_version.minor == 78);
+
+        REQUIRE(m.globally_unique_id ==
+                std::array<std::uint8_t, 16>{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}});
+
+        for (std::uint16_t i = 0; i < m.certificate_of_authenticity.max_size(); i++)
+        {
+            REQUIRE(m.certificate_of_authenticity[i] == i);
+        }
+
+        // The above is unchanged; the following is obtained from the test image
+        REQUIRE(m.software_version.vcs_commit_id       == images::AppValid2VCSCommit);
+        REQUIRE(m.software_version.build_timestamp_utc == 0);                               // Zero because invalid
+        REQUIRE(m.software_version.major               == images::AppValid2MajorVersion);
+        REQUIRE(m.software_version.minor               == images::AppValid2MinorVersion);
+        REQUIRE((*m.software_version.image_crc)        != 0);
+        REQUIRE(m.software_version.dirty_build         == images::AppValid2DirtyBuild);     // NOLINT
+        REQUIRE(m.software_version.release_build       == images::AppValid2ReleaseBuild);   // NOLINT
+    }
+    else
+    {
+        std::cout << "EP INFO TIMEOUT AFTER UPLOAD" << std::endl;
+        FAIL("No response");
+    }
+
+    std::cout << "UPLOAD TEST PASSED" << std::endl;
+    REQUIRE(num_restarts == 2);
+
+    modem.send(standard::BootloaderStatusRequestMessage{standard::BootloaderState::BootDelay});
+    if (auto response = modem.receive(std::chrono::seconds(1)))
+    {
+        standard::BootloaderStatusResponseMessage m = std::get<standard::BootloaderStatusResponseMessage>(*response);
+        REQUIRE(m.state == standard::BootloaderState::BootDelay);
+        REQUIRE(m.flags == 0);
+        REQUIRE(m.timestamp.count() > 0);
+        REQUIRE(m.timestamp.count() < std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    // Waiting for the firmware to boot
+    REQUIRE(num_restarts == 2);
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(4)));      // Wait restart and ROM verification (takes time)
     REQUIRE(num_restarts == 3);                                 // After restart, the mock ROM is erased
 
     /*

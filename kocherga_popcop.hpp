@@ -289,6 +289,7 @@ class PopcopProtocol final : private kocherga::IProtocol
         case popcop::standard::BootloaderState::NoAppToBoot:
         case popcop::standard::BootloaderState::BootDelay:
         {
+            sendBootloaderStatusResponse();     // Send response anyway!
             break;
         }
 
