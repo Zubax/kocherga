@@ -70,7 +70,7 @@ It is recommended to allocate the structure closer to the beginning of the image
 The structure contains the following fields:
 
 Offset | Type     | Description
--------|----------|--------------------------------------------------------------------------------------------------------
+-------|----------|-----------------------------------------------------------------------------------------------------
 0      |`uint8[8]`| Eight constant ASCII characters: `APDesc00`.
 8      |`uint64`  | CRC-64-WE of the entire application image when this field itself is set to zero.
 16     |`uint32`  | Size of the application image, in bytes. Note that the image must be padded to eight bytes.
@@ -110,6 +110,16 @@ The UAVCAN protocol support requires the following libraries:
 
 * [Libcanard](http://uavcan.org/Implementations/Libcanard) - lightweight UAVCAN stack in C.
 * [Senoval](https://github.com/Zubax/senoval) - utility library for deeply embedded systems.
+
+The bootloader states are mapped onto UAVCAN node states as follows:
+
+Bootloader state     | Node mode      | Node health
+---------------------|----------------|----------------
+NoAppToBoot          | SoftwareUpdate | Error
+BootDelay            | Initialization | Ok
+BootCancelled        | SoftwareUpdate | Warning
+AppUpgradeInProgress | SoftwareUpdate | Ok
+ReadyToBoot          | Initialization | Ok
 
 ### Popcop
 
