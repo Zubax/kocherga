@@ -71,7 +71,7 @@ The structure contains the following fields:
 
 Offset | Type     | Description
 -------|----------|--------------------------------------------------------------------------------------------------------
-0      |`uint8[]` | Eight constant ASCII characters: `APDesc00`.
+0      |`uint8[8]`| Eight constant ASCII characters: `APDesc00`.
 8      |`uint64`  | CRC-64-WE of the entire application image when this field itself is set to zero.
 16     |`uint32`  | Size of the application image, in bytes. Note that the image must be padded to eight bytes.
 20     |`uint32`  | Version control system (VCS) revision ID. For example, a git hash, or an SVN revision number.
