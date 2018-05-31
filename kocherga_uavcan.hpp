@@ -327,7 +327,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
          * ----------------------------------------------------
          * NoAppToBoot             SoftwareUpdate  Error
          * BootDelay               Initialization  Ok
-         * BootCancelled           Initialization  Warning
+         * BootCancelled           SoftwareUpdate  Warning
          * AppUpgradeInProgress    SoftwareUpdate  Ok
          * ReadyToBoot             Initialization  Ok
          */
@@ -350,7 +350,7 @@ class BootloaderNode final : private ::kocherga::IProtocol
         case::kocherga:: State::BootCancelled:
         {
             node_health = std::uint8_t(impl_::dsdl::NodeHealth::Warning);
-            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::Initialization);
+            node_mode   = std::uint8_t(impl_::dsdl::NodeMode::SoftwareUpdate);
             break;
         }
         case ::kocherga::State::BootDelay:

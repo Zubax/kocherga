@@ -318,7 +318,7 @@ class Tester:
                 # Continuing with other tests
             else:
                 _enforce(match_node_health_mode(NODE_STATUS_CONST.HEALTH_WARNING,
-                                                NODE_STATUS_CONST.MODE_INITIALIZATION) or
+                                                NODE_STATUS_CONST.MODE_SOFTWARE_UPDATE) or
                          match_node_health_mode(NODE_STATUS_CONST.HEALTH_ERROR,
                                                 NODE_STATUS_CONST.MODE_SOFTWARE_UPDATE),
                          'Expected failure')
