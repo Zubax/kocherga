@@ -494,10 +494,12 @@ class BootloaderController final
             state_ = state_on_success;
             boot_delay_started_at_ =
                 platform_.getMonotonicUptime();     // This only makes sense if the new state is BootDelay
-            KOCHERGA_TRACE("App found; version %d.%d.%x, %d bytes\n",
+            KOCHERGA_TRACE("App found; version %d.%d.%x, flags %u, built %u, %d bytes\n",
                            unsigned(appdesc->app_info.major_version),
                            unsigned(appdesc->app_info.minor_version),
                            unsigned(appdesc->app_info.vcs_commit),
+                           unsigned(appdesc->app_info.flags),
+                           unsigned(appdesc->app_info.build_timestamp_utc),
                            unsigned(appdesc->app_info.image_size));
         }
         else
