@@ -559,6 +559,9 @@ TEST_CASE("Popcop-Basic")
         REQUIRE(modem.receive(std::chrono::seconds(1)));      // Get rid of the response, we don't need it
     }
 
+    // Upon completion, we'll get another bootloader status that we don't need:
+    (void) modem.receive(std::chrono::seconds(2));
+
     // Upload finished! Verifying the node info and the bootloader state
     // Large timeout is necessary to account for the long CRC verification process
     modem.send(standard::EndpointInfoMessage());
@@ -638,13 +641,9 @@ TEST_CASE("Popcop-Basic")
         FAIL("No response");
     }
 
+    // Upon timeout we're going to get a status message anyway, not necessary to request anything
     std::cout << "Waiting for image data timeout..." << std::endl;
-    REQUIRE_FALSE(modem.receive(std::chrono::seconds(11)));      // Triggering the timeout
-    REQUIRE(num_restarts == 3);
-
-    // Sending an invalid request to get some response and check it
-    modem.send(standard::BootloaderStatusRequestMessage{standard::BootloaderState::BootDelay});
-    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    if (auto response = modem.receive(std::chrono::seconds(11)))
     {
         standard::BootloaderStatusResponseMessage m = std::get<standard::BootloaderStatusResponseMessage>(*response);
         REQUIRE(m.state == standard::BootloaderState::NoAppToBoot);

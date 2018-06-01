@@ -38,7 +38,8 @@ namespace kocherga_popcop
 /**
  * Error codes specific to this protocol.
  */
-static constexpr std::int16_t ErrTimeout = 4001;
+static constexpr std::int16_t ErrTimeout    = 4001;
+static constexpr std::int16_t ErrCancelled  = 4002;
 
 /**
  * Platform abstraction interface for the Popcop protocol.
@@ -146,7 +147,6 @@ class PopcopProtocol final : private kocherga::IProtocol
     popcop::transport::Parser<> parser_{};
 
     kocherga::IDownloadSink* download_sink_ = nullptr;
-    bool download_image_reached_ = false;
     std::int16_t upgrade_status_code_ = 0;
     std::chrono::microseconds last_application_image_data_request_at_{};
 
@@ -261,7 +261,15 @@ class PopcopProtocol final : private kocherga::IProtocol
         case popcop::standard::BootloaderState::BootCancelled:
         {
             blc_.cancelBoot();
-            sendBootloaderStatusResponse();
+            if (download_sink_ != nullptr)
+            {
+                upgrade_status_code_ = -ErrCancelled;
+                // The response will be sent later
+            }
+            else
+            {
+                sendBootloaderStatusResponse();
+            }
             break;
         }
 
@@ -269,17 +277,14 @@ class PopcopProtocol final : private kocherga::IProtocol
         {
             if (download_sink_ == nullptr)
             {
-                download_image_reached_ = false;
                 upgrade_status_code_ = 0;
                 last_application_image_data_request_at_ = blc_.getMonotonicUptime();
 
                 // This function blocks for a long time; it will send the response itself
                 (void) blc_.upgradeApp(*this);
 
-                if (!download_image_reached_)       // Response has not been sent, do it now
-                {
-                    sendBootloaderStatusResponse();
-                }
+                // And then we send another response at the end regardless
+                sendBootloaderStatusResponse();
             }
             else
             {
@@ -291,7 +296,15 @@ class PopcopProtocol final : private kocherga::IProtocol
         case popcop::standard::BootloaderState::ReadyToBoot:
         {
             blc_.requestBoot();
-            sendBootloaderStatusResponse();
+            if (download_sink_ != nullptr)
+            {
+                upgrade_status_code_ = -ErrCancelled;
+                // The response will be sent later
+            }
+            else
+            {
+                sendBootloaderStatusResponse();
+            }
             break;
         }
 
@@ -461,13 +474,11 @@ class PopcopProtocol final : private kocherga::IProtocol
 
     std::int16_t downloadImage(kocherga::IDownloadSink& sink) final
     {
-        assert(!download_image_reached_);
         assert(download_sink_ == nullptr);
         assert(upgrade_status_code_ == 0);
 
         download_sink_ = &sink;
 
-        download_image_reached_ = true;
         sendBootloaderStatusResponse();
 
         while (!platform_.shouldExit() &&
