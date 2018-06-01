@@ -622,6 +622,43 @@ TEST_CASE("Popcop-Basic")
     REQUIRE(num_restarts == 3);                                 // After restart, the mock ROM is erased
 
     /*
+     * Image upload TIMEOUT test
+     */
+    modem.send(standard::BootloaderStatusRequestMessage{standard::BootloaderState::AppUpgradeInProgress});
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        standard::BootloaderStatusResponseMessage m = std::get<standard::BootloaderStatusResponseMessage>(*response);
+        REQUIRE(m.state == standard::BootloaderState::AppUpgradeInProgress);
+        REQUIRE(m.flags == 0);
+        REQUIRE(m.timestamp.count() > 0);
+        REQUIRE(m.timestamp.count() < std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(4)));      // Triggering the timeout
+    REQUIRE(num_restarts == 3);
+
+    // Sending an invalid request to get some response and check it
+    modem.send(standard::BootloaderStatusRequestMessage{standard::BootloaderState::BootDelay});
+    if (auto response = modem.receive(std::chrono::milliseconds(100)))
+    {
+        standard::BootloaderStatusResponseMessage m = std::get<standard::BootloaderStatusResponseMessage>(*response);
+        REQUIRE(m.state == standard::BootloaderState::NoAppToBoot);
+        REQUIRE(m.flags == 0);
+        REQUIRE(m.timestamp.count() > 0);
+        REQUIRE(m.timestamp.count() < std::chrono::steady_clock::now().time_since_epoch().count());
+    }
+    else
+    {
+        FAIL("No response");
+    }
+
+    REQUIRE(num_restarts == 3);
+
+    /*
      * Finalize
      */
     std::cout << "Joining the endpoint thread..." << std::endl;

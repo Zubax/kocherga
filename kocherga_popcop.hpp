@@ -36,6 +36,11 @@
 namespace kocherga_popcop
 {
 /**
+ * Error codes specific to this protocol.
+ */
+static constexpr std::int16_t ErrTimeout = 4001;
+
+/**
  * Platform abstraction interface for the Popcop protocol.
  */
 class IPopcopPlatform
@@ -132,6 +137,8 @@ public:
  */
 class PopcopProtocol final : private kocherga::IProtocol
 {
+    static constexpr std::chrono::microseconds ImageDataTimeout{3'000'000};  // NOLINT
+
     ::kocherga::BootloaderController& blc_;
     IPopcopPlatform& platform_;
     const popcop::standard::EndpointInfoMessage endpoint_info_prototype_;
@@ -141,6 +148,7 @@ class PopcopProtocol final : private kocherga::IProtocol
     kocherga::IDownloadSink* download_sink_ = nullptr;
     bool download_image_reached_ = false;
     std::int16_t upgrade_status_code_ = 0;
+    std::chrono::microseconds last_application_image_data_request_at_{};
 
 
     // Sends out one frame, ignores errors
@@ -263,6 +271,7 @@ class PopcopProtocol final : private kocherga::IProtocol
             {
                 download_image_reached_ = false;
                 upgrade_status_code_ = 0;
+                last_application_image_data_request_at_ = blc_.getMonotonicUptime();
 
                 // This function blocks for a long time; it will send the response itself
                 (void) blc_.upgradeApp(*this);
@@ -311,6 +320,8 @@ class PopcopProtocol final : private kocherga::IProtocol
         {
         case popcop::standard::BootloaderImageType::Application:
         {
+            last_application_image_data_request_at_ = blc_.getMonotonicUptime();
+
             if (download_sink_ != nullptr)
             {
                 // Observe that we ignore the offset here! The protocol requires that the offset must grow sequentially.
@@ -464,6 +475,13 @@ class PopcopProtocol final : private kocherga::IProtocol
                (upgrade_status_code_ >= 0))
         {
             loopOnce();
+
+            if ((blc_.getMonotonicUptime() - last_application_image_data_request_at_) > ImageDataTimeout)
+            {
+                KOCHERGA_TRACE("Popcop: Timeout\n");
+                upgrade_status_code_ = -ErrTimeout;
+                break;
+            }
         }
 
         download_sink_ = nullptr;
