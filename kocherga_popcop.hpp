@@ -137,7 +137,7 @@ public:
  */
 class PopcopProtocol final : private kocherga::IProtocol
 {
-    static constexpr std::chrono::microseconds ImageDataTimeout{3'000'000};  // NOLINT
+    static constexpr std::chrono::microseconds ImageDataTimeout{10'000'000};  // NOLINT
 
     ::kocherga::BootloaderController& blc_;
     IPopcopPlatform& platform_;

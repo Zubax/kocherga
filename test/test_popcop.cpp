@@ -638,7 +638,8 @@ TEST_CASE("Popcop-Basic")
         FAIL("No response");
     }
 
-    REQUIRE_FALSE(modem.receive(std::chrono::seconds(4)));      // Triggering the timeout
+    std::cout << "Waiting for image data timeout..." << std::endl;
+    REQUIRE_FALSE(modem.receive(std::chrono::seconds(11)));      // Triggering the timeout
     REQUIRE(num_restarts == 3);
 
     // Sending an invalid request to get some response and check it
