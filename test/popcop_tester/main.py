@@ -86,7 +86,7 @@ def main():
         raise Exception('Expected BL data response (CoA read), got:' + repr(response))
 
     if not response.image_data:
-        coa = os.urandom(192)
+        coa = os.urandom(255)
         print('CoA is not set! Writing this:', coa)
 
         port.send_standard(popcop.standard.bootloader.ImageDataRequestMessage(
