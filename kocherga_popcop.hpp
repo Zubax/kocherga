@@ -367,7 +367,7 @@ class PopcopProtocol final : private kocherga::IProtocol
         case popcop::standard::BootloaderImageType::CertificateOfAuthenticity:
         {
             if ((req.image_offset == 0) &&
-                (req.image_data.size() < IPopcopPlatform::CertificateOfAuthenticityMaxLength))
+                (req.image_data.size() <= IPopcopPlatform::CertificateOfAuthenticityMaxLength))
             {
                 resp.image_data.resize(resp.image_data.max_size());
                 const auto result =
