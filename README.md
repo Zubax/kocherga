@@ -127,6 +127,18 @@ The Popcop protocol support requires the following libraries:
 
 * [Libpopcop](https://github.com/Zubax/popcop) - implementation of the Popcop protocol in C++.
 
+## Development
+
+You will need a GNU/Linux machine for development.
+
+The code must follow the [Zubax Coding Conventions](https://kb.zubax.com/x/84Ah).
+The code must be compilable using at least GCC and CLang
+(assuming relatively modern versions here; see the CI script for details).
+
+Build and run the tests like this: `cd test/ && cmake . && make && ./kocherga_test`.
+Don't forget to configure the environment beforehand;
+please refer to the CI build script for details.
+
 ## License
 
 Kochergá is available under the terms of the MIT License.
