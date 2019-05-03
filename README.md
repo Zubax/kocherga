@@ -18,7 +18,7 @@ Kocherga is written in standard C++17 and is distributed as a header-only librar
 
 Kochergá is brick-proof.
 
-The application (i.e. firmware) update process can be interrupted at any point (e.g. by turning off the power supply
+The application (i.e., firmware) update process can be interrupted at any point (e.g., by turning off the power supply
 or by disconnecting the interface), and it is guaranteed that the device will always end up in
 a known valid state.
 No matter what happens during the update process, Kochergá won't let the user brick the device.
@@ -27,7 +27,7 @@ Even if a misbehaving application image was uploaded, Kochergá always can take 
 
 ### Security
 
-Kochergá verifies the correctness of the application (i.e. firmware) image with a strong 64-bit hash function
+Kochergá verifies the correctness of the application (i.e., firmware) image with a strong 64-bit hash function
 before every boot.
 
 ### Supported protocols
@@ -36,7 +36,7 @@ Kochergá supports several communication interfaces and protocols:
 
 Interface           | Protocols
 --------------------|------------------------------------------------------------------------------
-Serial (USB/UART)   | XMODEM, YMODEM, XMODEM-1K, Popcop
+Serial (USB or UART)| XMODEM, YMODEM, XMODEM-1K, Popcop
 CAN bus             | UAVCAN
 
 ## Usage
@@ -54,7 +54,7 @@ Kocherga does not have any compilation units of its own, so just include the req
 When implementing support for new protocols, please follow the same naming convention:
 `kocherga_whatever.hpp` for the header file, where `whatever` is the name of the protocol;
 the implementation should be contained in a namespace eponymous with the header file,
-e.g. `::kocherga_whatever`.
+e.g., `::kocherga_whatever`.
 
 To integrate Kocherga into your application, just include this repository as a git submodule,
 or simply copy-paste the required header files into your source tree.
@@ -79,7 +79,7 @@ Offset | Type     | Description
 25     |`uint8`   | Minor semantic version number.
 26     |`uint8`   | Flags: 1 - this is a release build; 2 - this is a dirty build (uncommitted changes present).
 27     |          | Reserved; set to 0xFF.
-28     |`uint32`  | UNIX build timestamp, UTC; i.e. the number of seconds since 1970-01-01T00:00:00Z.
+28     |`uint32`  | UNIX build timestamp, UTC; i.e., the number of seconds since 1970-01-01T00:00:00Z.
 
 When computing the application image CRC, the process will eventually encounter the location where the CRC itself
 is stored. In order to avoid recursive dependency, the CRC storage location must be replaced with zero bytes
@@ -108,8 +108,8 @@ No additional dependencies are needed.
 
 The UAVCAN protocol support requires the following libraries:
 
-* [Libcanard](http://uavcan.org/Implementations/Libcanard) - lightweight UAVCAN stack in C.
-* [Senoval](https://github.com/Zubax/senoval) - utility library for deeply embedded systems.
+* [Libcanard](http://uavcan.org/Implementations/Libcanard) - a lightweight UAVCAN stack implementation in C99.
+* [Senoval](https://github.com/Zubax/senoval) - an utility library for deeply embedded systems.
 
 The bootloader states are mapped onto UAVCAN node states as follows:
 
@@ -125,7 +125,7 @@ ReadyToBoot          | Initialization | Ok
 
 The Popcop protocol support requires the following libraries:
 
-* [Libpopcop](https://github.com/Zubax/popcop) - implementation of the Popcop protocol in C++.
+* [Libpopcop](https://github.com/Zubax/popcop) - an implementation of the Popcop protocol in C++.
 
 ## Development
 

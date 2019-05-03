@@ -1207,7 +1207,7 @@ public:
     /**
      * @param blc                       mutable reference to the bootloader instance
      * @param platform                  node platform interface
-     * @param name                      product ID, UAVCAN node name; e.g. com.zubax.telega
+     * @param name                      product ID, UAVCAN node name; e.g., com.zubax.telega
      * @param hw                        hardware version information per UAVCAN specification
      */
     BootloaderNode(::kocherga::BootloaderController& blc,

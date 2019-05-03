@@ -48,7 +48,7 @@ namespace kocherga
 {
 /**
  * Error codes.
- * These are returned from functions in negated form, i.e. -1000 means error code 1000.
+ * These are returned from functions in negated form, e.g., -1000 means error code 1000.
  */
 static constexpr std::int16_t ErrOK                     = 0;
 static constexpr std::int16_t ErrInvalidState           = 1001;
@@ -65,7 +65,7 @@ static constexpr std::uint16_t MaxDataBlockSize = 32767;
 
 /**
  * This is used to verify integrity of the application and other data.
- * Note that firmware CRC verification is a very computationally intensive process that needs to be completed
+ * Note that firmware CRC verification is a computationally expensive process that needs to be completed
  * in a limited time interval, which should be minimized. Therefore, this class has been carefully manually
  * optimized to achieve the optimal balance between speed and ROM footprint.
  *
@@ -92,8 +92,10 @@ public:
         while (len --> 0)
         {
             crc_ ^= std::uint64_t(*bytes++) << 56U;
-
-            // Do not fold this into loop! The difference in performance can be drastic.
+            // Unrolled for performance reasons. This path directly affects the boot-up time, so it is very
+            // important to keep it optimized for speed. Rolling this into a loop causes a significant performance
+            // degradation at least with GCC since the compiler refuses to unroll the loop when size optimization
+            // is selected (which is normally used for bootloaders).
             crc_ = (crc_ & Mask) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
             crc_ = (crc_ & Mask) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
             crc_ = (crc_ & Mask) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
@@ -122,10 +124,10 @@ public:
  *         +-------------+                               +-----------+  (typically zero)  +-------------+       |
  *     /-->| NoAppToBoot |        /----------------------| BootDelay |------------------->| ReadyToBoot |       |
  *     |   +-------------+       /                       +-----------+                    +-------------+       |
- *     |          |             /                          |Boot cancelled                   |ReadyToBoot is    |
- *     |Upgrade   |<-----------/                           |e.g. received a state transition |an auxiliary      /
+ *     |          |             /                          |Boot cancelled,                  |ReadyToBoot is    |
+ *     |Upgrade   |<-----------/                           |e.g., received a state transition|an auxiliary      /
  *     |failed,   |Upgrade requested,                      |request to BootCancelled.        |state, it is     /
- *     |no valid  |e.g. received a state transition        v                                 |left automati-  /
+ *     |no valid  |e.g., received a state transition       v                                 |left automati-  /
  *     |image is  |request to AppUpgradeInProgress. +---------------+                        |cally ASAP.    /
  *     |now ava-  |<--------------------------------| BootCancelled |                        v              /
  *     |ilable    |                                 +---------------+                ###############       /
@@ -161,7 +163,7 @@ struct AppInfo
 
     // Offset 8 bytes
     std::uint32_t image_size    = 0;        ///< Size of the application image in bytes
-    std::uint32_t vcs_commit    = 0;        ///< Version control system revision ID (e.g. git commit hash)
+    std::uint32_t vcs_commit    = 0;        ///< Version control system revision ID (e.g., git commit hash)
 
     // Offset 16 bytes
     std::uint8_t  major_version = 0;        ///< Major semantic version number
@@ -204,7 +206,7 @@ public:
     virtual void unlockMutex() { }
 
     /**
-     * Returns the time since boot as a monotonic (i.e. steady) clock.
+     * Returns the time since boot as a monotonic (i.e., steady) clock.
      * The clock must never overflow.
      * This method is invoked only when the mutex is locked.
      */
@@ -426,7 +428,7 @@ class BootloaderController final
             }
 
             // Checking firmware CRC.
-            // This block is very computationally intensive, so it has been carefully optimized for speed.
+            // This block is computationally expensive, so it has been carefully optimized for speed.
             {
                 const auto crc_offset = offset + offsetof(AppDescriptor, app_info) + offsetof(AppInfo, image_crc);
                 CRC64 crc;
@@ -519,9 +521,9 @@ public:
      * valid app descriptor (by virtue of having the same signature, which is only 64 bit long),
      * and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
      * Having an upper size limit for the application image allows the bootloader to weed out too large
-     * values early, greatly improving robustness.
+     * values early, greatly improving the worst case boot time.
      *
-     * By default, the boot delay is set to zero; i.e. if the application is valid it will be launched immediately.
+     * By default, the boot delay is set to zero; i.e., if the application is valid it will be launched immediately.
      */
     BootloaderController(IPlatform& platform,
                          IROMBackend& rom_backend,
@@ -880,10 +882,10 @@ public:
  *      0       8       CRC64 of the following payload. Must be 8-byte aligned (or more if required by the platform).
  *      8       >0      Payload written by the application or by the bootloader
  *
- * @tparam Container                    Payload data type, i.e. a structure that should be stored or read.
+ * @tparam Container                    Payload data type, i.e., a structure that should be stored or read.
  *
  * @param pointers                      List of pointers to registers or memory where the structure will be stored or
- *                                      retrieved from. Pointer type defines access mode and size, e.g. a uint32
+ *                                      retrieved from. Pointer type defines access mode and size, e.g., a uint32
  *                                      pointer will be accessed in 32-bit mode, and its memory block will be used to
  *                                      store exactly 4 bytes, etc. Supported pointer sizes are 8, 16, 32, and 64 bit.
  *                                      A single void pointer can be passed as well, in that case all of the data
