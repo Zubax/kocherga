@@ -91,6 +91,16 @@ The parameters of the CRC-64 algorithm are the following:
 * Output xor: 0xFFFF'FFFF'FFFF'FFFF
 * Check: 0x62EC'59E3'F1A4'F00A
 
+The CRC and size fields cannot be populated until after the application binary is compiled and linked.
+A possible way to populate these fields is to initialize them with zeroes in the source code,
+and then use the script `populate_app_descriptor.py` after the binary is generated to update the fields
+with their actual values.
+The script can be invoked from the build system (e.g., from a Makefile rule) trivially as follows:
+
+```sh
+populate_app_descriptor.py firmware.bin
+```
+
 The following diagram documents the state machine implemented in the `BootloaderController` class:
 ![Kocherga State Machine Diagram](state_machine.svg "Kocherga State Machine Diagram")
 

@@ -15,6 +15,10 @@ before_script:
   - sudo apt-get install python3-pip
   - sudo pip3 install "uavcan>=1.0.0.dev30"
 
+after_script:
+  - cd test/make_boot_descriptor/
+  - ./test.sh
+
 matrix:
   include:
     #
