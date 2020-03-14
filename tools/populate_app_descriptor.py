@@ -35,7 +35,7 @@
 #
 
 import os
-import sys
+import typing
 import struct
 import optparse
 import binascii
@@ -45,15 +45,15 @@ from io import BytesIO
 class AppDescriptor(object):
     """
     Kocherga application image descriptor format:
-        uint64_t signature (bytes [7:0] set to 'APDesc00' in source)
-        uint64_t image_crc (set to 0 in source, updated by this script)
-        uint32_t image_size (set to 0 in source, updated by this script)
-        uint32_t vcs_commit (set in source)
-        uint8_t version_major (set in source)
-        uint8_t version_minor (set in source)
-        uint8_t flags (1 - release build, 2 - dirty build) (set in source)
+        uint64_t signature              (bytes [7:0] set to 'APDesc00' in source)
+        uint64_t image_crc              (set to 0 in source, updated by this script)
+        uint32_t image_size             (set to 0 in source, updated by this script)
+        uint32_t vcs_commit             (set in source)
+        uint8_t  version_major          (set in source)
+        uint8_t  version_minor          (set in source)
+        uint8_t  flags                  (1 - release build, 2 - dirty build) (set in source)
         (uint8_t reserved)
-        uint32_t build_timestamp_utc (set in source)
+        uint32_t build_timestamp_utc    (set in source)
     """
 
     LENGTH = 32
@@ -99,20 +99,18 @@ class AppDescriptor(object):
          self.build_timestamp_utc) = struct.unpack(self.FORMAT, raw)
 
         self.release_build = bool(flags & 1)
-        self.dirty_build   = bool(flags & 2)
+        self.dirty_build = bool(flags & 2)
 
         if not self.empty and not self.valid:
             raise ValueError()
 
     @property
     def empty(self):
-        return (self.signature == AppDescriptor.SIGNATURE and
-                self.image_crc == 0 and self.image_size == 0)
+        return self.signature == AppDescriptor.SIGNATURE and self.image_crc == 0 and self.image_size == 0
 
     @property
     def valid(self):
-        return (self.signature == AppDescriptor.SIGNATURE and
-                self.image_crc != 0 and self.image_size > 0 and
+        return (self.signature == AppDescriptor.SIGNATURE and self.image_crc != 0 and self.image_size > 0 and
                 self.build_timestamp_utc > 0)
 
 
@@ -121,7 +119,8 @@ class FirmwareImage(object):
     PADDING = 8
 
     def __init__(self, path, mode="r"):
-        self._file = open(path, (mode + "b").replace("bb", "b"))
+        # noinspection PyTypeChecker
+        self._file: typing.BinaryIO = open(path, (mode + "b").replace("bb", "b"))
         self._padding = self.PADDING
 
         if "r" in mode:
@@ -146,7 +145,7 @@ class FirmwareImage(object):
     def __iter__(self):
         return iter(self._contents)
 
-    def __exit__(self, *args):
+    def __exit__(self, *_args):
         if self._do_write:
             if getattr(self._file, "seek", None):
                 self._file.seek(0)
@@ -177,25 +176,24 @@ class FirmwareImage(object):
 
     @property
     def crc(self):
-        MASK = 0xFFFFFFFFFFFFFFFF
-        POLY = 0x42F0E1EBA9EA3693
-
+        mask = 0xFFFFFFFFFFFFFFFF
+        poly = 0x42F0E1EBA9EA3693
         # Calculate the image CRC with the image_crc field in the app descriptor zeroed out.
         crc_offset = self.app_descriptor_offset + len(AppDescriptor.SIGNATURE)
         content = bytearray(self._contents.getvalue())
         content[crc_offset:crc_offset + 8] = bytearray(b"\x00" * 8)
         if self._padding:
             content += bytearray(b"\xff" * self._padding)
-        val = MASK
+        val = mask
         for byte in content:
-            val ^= (byte << 56) & MASK
+            val ^= (byte << 56) & mask
             for bit in range(8):
                 if val & (1 << 63):
-                    val = ((val << 1) & MASK) ^ POLY
+                    val = ((val << 1) & mask) ^ poly
                 else:
                     val <<= 1
 
-        return (val & MASK) ^ MASK
+        return (val & mask) ^ mask
 
     @property
     def length(self):
@@ -225,7 +223,7 @@ class FirmwareImage(object):
                 try:
                     # If this throws an exception, there isn't a valid descriptor at this offset
                     AppDescriptor(self._contents.read(AppDescriptor.LENGTH))
-                except Exception:
+                except ValueError:
                     offset += 1
                 else:
                     self._descriptor_offset = offset
@@ -255,11 +253,9 @@ class FirmwareImage(object):
 
 
 if __name__ == "__main__":
-    parser = optparse.OptionParser(usage=
-                                   "Usage:   %prog [options] <input binary>\n"
-                                   "Example: %prog firmware.bin")
+    parser = optparse.OptionParser(usage="Usage:   %prog [options] <input binary>\n"
+                                         "Example: %prog firmware.bin")
     parser.add_option("--also-patch-descriptor-in",
-                      dest="also_patch_descriptor_in",
                       default=[],
                       action='append',
                       help="file(s) where the descriptor will be updated too (e.g., an ELF executable for debugging)",

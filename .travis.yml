@@ -40,8 +40,8 @@ matrix:
         - gcov-9 --preserve-paths --long-file-names $(find CMakeFiles/test_cov.dir -name '*.gcno')
         - 'sonar-scanner -Dsonar.projectKey=Zubax_kocherga
                          -Dsonar.organization=zubax
-                         -Dsonar.sources=kocherga,tests
-                         -Dsonar.exclusions=tests/*,tests/3rd_party/*
+                         -Dsonar.sources=kocherga,tests/native
+                         -Dsonar.exclusions=tests/3rd_party/*
                          -Dsonar.cfamily.gcov.reportsPath=.
                          -Dsonar.cfamily.build-wrapper-output=sonar-dump
                          -Dsonar.cfamily.cache.enabled=false'

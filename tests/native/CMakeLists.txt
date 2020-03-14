@@ -13,7 +13,7 @@ if(NOT CMAKE_BUILD_TYPE)
         FORCE)
 endif()
 
-set(library_dir "${CMAKE_SOURCE_DIR}/../kocherga")
+set(library_dir "${CMAKE_SOURCE_DIR}/../../kocherga")
 
 file(GLOB FORMAT_FILES
      ${library_dir}/*.hpp
@@ -51,7 +51,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsign-conversion -Wcast-align -Wmissing
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wtype-limits -Wzero-as-null-pointer-constant -Wnon-virtual-dtor")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Woverloaded-virtual -Wsign-promo -Wold-style-cast")
 
-include_directories(3rd_party ${library_dir})
+include_directories(../3rd_party ${library_dir})
 add_definitions(-DCATCH_CONFIG_FAST_COMPILE=1)
 
 # Test targets

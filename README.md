@@ -16,7 +16,7 @@ or by disconnecting the interface), and it is guaranteed that the device will al
 If a misbehaving application image was uploaded, Kochergá can regain control after a watchdog reset,
 unless the application prevents the watchdog from triggering a reset.
 
-- **Security** -- Kochergá verifies the correctness of the application image with a 64-bit hash before every boot.
+- **Safety** -- Kochergá verifies the correctness of the application image with a 64-bit hash before every boot.
 
 ### Supported transports
 

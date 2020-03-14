@@ -7,6 +7,10 @@
       <w>dsonar</w>
       <w>gcov</w>
       <w>kocherga</w>
+      <w>kochergá</w>
+      <w>nosonar</w>
+      <w>patchee</w>
+      <w>prog</w>
       <w>vcan</w>
     </words>
   </dictionary>

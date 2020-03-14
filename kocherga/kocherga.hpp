@@ -28,9 +28,9 @@ static constexpr std::int8_t ErrAppImageTooLarge = 4;
 /// The function is CRC-64-WE, see http://reveng.sourceforge.net/crc-catalogue/17plus.htm#crc.cat-bits.64.
 class CRC64
 {
-    static constexpr auto Poly = std::uint64_t(0x42F0E1EBA9EA3693ULL);
-    static constexpr auto Mask = std::uint64_t(1) << 63U;
-    static constexpr auto Xor  = std::uint64_t(0xFFFFFFFFFFFFFFFFULL);
+    static constexpr auto Poly = static_cast<std::uint64_t>(0x42F0'E1EB'A9EA'3693ULL);
+    static constexpr auto Mask = static_cast<std::uint64_t>(1) << 63U;
+    static constexpr auto Xor  = static_cast<std::uint64_t>(0xFFFF'FFFF'FFFF'FFFFULL);
 
     static constexpr auto InputShift = 56U;
 
@@ -44,19 +44,20 @@ public:
         auto bytes = data;
         for (auto remaining = len; remaining > 0; remaining--)
         {
-            crc_ ^= std::uint64_t(*bytes++) << InputShift;
+            crc_ ^= static_cast<std::uint64_t>(*bytes) << InputShift;
+            ++bytes;
             // Unrolled for performance reasons. This path directly affects the boot-up time, so it is very
             // important to keep it optimized for speed. Rolling this into a loop causes a significant performance
             // degradation at least with GCC since the compiler refuses to unroll the loop when size optimization
             // is selected (which is normally used for bootloaders).
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
-            crc_ = ((crc_ & Mask) != 0) ? (crc_ << 1U) ^ Poly : crc_ << 1U;
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
+            crc_ = ((crc_ & Mask) != 0) ? ((crc_ << 1U) ^ Poly) : (crc_ << 1U);
         }
     }
 
@@ -115,19 +116,16 @@ public:
 
     virtual ~IROMBackend() = default;
 
-    /// @return 0 on success, negative on error.
-    [[nodiscard]] virtual auto beginUpgrade() -> std::int8_t = 0;
+    virtual void beginUpgrade()                 = 0;
+    virtual void endUpgrade(const bool success) = 0;
 
-    /// @return number of bytes written; negative on error.
-    [[nodiscard]] virtual auto write(const std::size_t offset, const void* const data, const std::size_t size)
-        -> std::intmax_t = 0;
+    /// @return number of bytes written; a value less than size indicates an overflow triggering an abort.
+    [[nodiscard]] virtual auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
+        -> std::size_t = 0;
 
-    /// @return 0 on success, negative on error.
-    [[nodiscard]] virtual auto endUpgrade(const bool success) -> std::int8_t = 0;
-
-    /// @return number of bytes read; negative on error.
-    [[nodiscard]] virtual auto read(const std::size_t offset, void* const out_data, const std::size_t size) const
-        -> std::intmax_t = 0;
+    /// @return number of bytes read; a value less than size indicates an overrun.
+    [[nodiscard]] virtual auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
+        -> std::size_t = 0;
 };
 
 static constexpr std::size_t DefaultROMBufferSize = 1024U;
@@ -143,14 +141,13 @@ class Bootloader
     const std::chrono::microseconds boot_delay_;
     std::chrono::microseconds       boot_delay_started_at_{};
 
-    std::array<std::uint8_t, ROMBufferSize> rom_buffer_{};
-
     /// Refer to the Brickproof Bootloader specs.
     /// The structure shall be aligned at 8 bytes boundary, and the image shall be padded to 8 bytes!
     struct AppDescriptor
     {
         static constexpr std::size_t SignatureSize = 8U;
         static constexpr std::size_t Size          = 32U;
+        static constexpr std::size_t CRCOffset     = SignatureSize;
 
         alignas(SignatureSize) std::array<std::uint8_t, SignatureSize> signature{};
         alignas(SignatureSize) AppInfo app_info;
@@ -170,11 +167,12 @@ class Bootloader
     };
     static_assert(sizeof(AppDescriptor) == AppDescriptor::Size, "Invalid packing");
     static_assert(std::is_standard_layout_v<AppDescriptor>, "AppInfo is not standard layout; check your compiler");
-    static_assert(offsetof(AppDescriptor, app_info) + offsetof(AppInfo, image_crc) == AppDescriptor::SignatureSize);
+
+    std::array<std::uint8_t, (ROMBufferSize / AppDescriptor::Size) * AppDescriptor::Size> rom_buffer_{};
 
     auto locateAppDescriptor() -> std::optional<AppDescriptor>
     {
-        for (std::size_t offset = 0;; offset += AppDescriptor::SignatureSize)
+        for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
         {
             // Reading the storage in 8 bytes increments until we've found the signature
             {
@@ -205,19 +203,16 @@ class Bootloader
             // Checking firmware CRC.
             // This block is computationally expensive, so it has been carefully optimized for speed.
             {
-                const auto crc_offset = offset + offsetof(AppDescriptor, app_info) + offsetof(AppInfo, image_crc);
-                CRC64      crc;
-
+                CRC64 crc;
                 // Read large chunks until the CRC field is reached (in most cases it will fit in just one chunk)
-                for (std::size_t i = 0; i < crc_offset;)
+                for (std::size_t i = 0; i < AppDescriptor::CRCOffset;)
                 {
-                    const auto res =
-                        backend_.read(i,
-                                      rom_buffer_.data(),
-                                      std::uint16_t(std::min<std::size_t>(rom_buffer_.size(), crc_offset - i)));
+                    const auto res = backend_.read(i,
+                                                   rom_buffer_.data(),
+                                                   std::min(rom_buffer_.size(), AppDescriptor::CRCOffset - i));
                     if (res > 0)
                     {
-                        i += std::size_t(res);
+                        i += res;
                         crc.add(rom_buffer_.data(), std::size_t(res));
                     }
                     else
@@ -233,7 +228,7 @@ class Bootloader
                 }
 
                 // Read the rest of the image in large chunks
-                for (std::size_t i = crc_offset + CRC64::Size; i < desc.app_info.image_size;)
+                for (std::size_t i = AppDescriptor::CRCOffset + CRC64::Size; i < desc.app_info.image_size;)
                 {
                     const auto res = backend_.read(i,
                                                    rom_buffer_.data(),
@@ -241,7 +236,7 @@ class Bootloader
                                                                                        desc.app_info.image_size - i)));
                     if (res > 0)
                     {
-                        i += std::size_t(res);
+                        i += res;
                         crc.add(rom_buffer_.data(), std::size_t(res));
                     }
                     else
@@ -274,9 +269,10 @@ public:
     /// values early, greatly improving the worst case boot time.
     ///
     /// By default, the boot delay is set to zero; i.e., if the application is valid it will be launched immediately.
-    explicit Bootloader(IROMBackend&        rom_backend,
-                        const std::uint32_t max_application_image_size = std::numeric_limits<std::uint32_t>::max(),
-                        const std::chrono::microseconds boot_delay     = std::chrono::microseconds(0)) :
+    /// This is the recommended behavior.
+    Bootloader(IROMBackend&                    rom_backend,
+               const std::uint32_t             max_application_image_size,
+               const std::chrono::microseconds boot_delay = std::chrono::microseconds(0)) :
         backend_(rom_backend), max_application_image_size_(max_application_image_size), boot_delay_(boot_delay)
     {}
 };
@@ -300,27 +296,25 @@ class AppDataExchangeMarshaller
 
     Pointers pointers_;
 
-    class ContainerWrapper
+    struct ContainerWrapper
     {
-        std::uint64_t crc_ = 0;
+        std::uint64_t crc = 0;
+        Container     container{};
 
-    public:
-        Container container;
-
-        ContainerWrapper() : container() {}
+        ContainerWrapper() = default;
 
         explicit ContainerWrapper(const Container& c) : container(c)
         {
             CRC64 crc_computer;
             crc_computer.add(&container, sizeof(container));
-            crc_ = crc_computer.get();
+            crc = crc_computer.get();
         }
 
         auto isValid() const
         {
             CRC64 crc_computer;
             crc_computer.add(&container, sizeof(container));
-            return crc_ == crc_computer.get();
+            return crc == crc_computer.get();
         }
     };
 
@@ -331,7 +325,7 @@ class AppDataExchangeMarshaller
     };
 
     template <std::size_t MaxSize, typename T>  // Holy pants why auto doesn't work here
-    auto readOne(void* const destination, const volatile T* const ptr)
+    auto readOne(std::byte* const destination, const volatile T* const ptr)
         -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         const T x = *ptr;  // Guaranteeing proper pointer access
@@ -340,14 +334,14 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto readOne(void* const destination, const void* const ptr) -> ValueAsType<MaxSize>
+    auto readOne(std::byte* const destination, const void* const ptr) -> ValueAsType<MaxSize>  // NOSONAR void*
     {
         std::memmove(destination, ptr, MaxSize);  // Raw memory access
         return {};
     }
 
     template <std::size_t MaxSize, typename T>
-    auto writeOne(const void* const source, volatile T* const ptr)
+    auto writeOne(const std::byte* const source, volatile T* const ptr)
         -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         T x = T();
@@ -357,26 +351,25 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto writeOne(const void* const source, void* const ptr) -> ValueAsType<MaxSize>
+    auto writeOne(const std::byte* const source, void* const ptr) -> ValueAsType<MaxSize>  // NOSONAR void*
     {
         std::memmove(ptr, source, MaxSize);  // Raw memory access
         return {};
     }
 
     template <bool WriteNotRead, std::size_t PtrIndex, std::size_t RemainingSize>
-    auto unwindReadWrite(void* const structure) -> std::enable_if_t<(RemainingSize > 0)>
+    auto unwindReadWrite(std::byte* const structure) -> std::enable_if_t<(RemainingSize > 0)>
     {
         static_assert(PtrIndex < std::tuple_size<Pointers>::value, "Storage is not large enough for the structure");
         const auto ret = WriteNotRead ? writeOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_))
                                       : readOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_));
         constexpr auto Increment = decltype(ret)::Value;
-        static_assert(RemainingSize >= Increment, "Rock is dead");
-        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(
-            static_cast<void*>(static_cast<std::uint8_t*>(structure) + Increment));
+        static_assert(RemainingSize >= Increment);
+        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(structure + Increment);
     }
 
     template <bool, std::size_t PtrIndex, std::size_t RemainingSize>
-    auto unwindReadWrite(void* const structure) -> std::enable_if_t<(RemainingSize == 0)>
+    auto unwindReadWrite(const std::byte* const structure) -> std::enable_if_t<(RemainingSize == 0)>
     {
         (void) structure;
         // Here we could implement a check whether all storage has been utilized.
@@ -385,7 +378,7 @@ class AppDataExchangeMarshaller
 public:
     /// Do not instantiate this class manually, it's difficult.
     /// Use the factory method instead, @ref makeAppDataExchangeMarshaller().
-    explicit AppDataExchangeMarshaller(const Pointers& ptrs) : pointers_(ptrs) {}
+    explicit AppDataExchangeMarshaller(const Pointers& ps) : pointers_(ps) {}
 
     /// Checks if the data is available and reads it; then erases the storage to prevent deja-vu.
     /// Returns an empty option if no data is available (in that case the storage is not erased).
@@ -397,7 +390,8 @@ public:
         {
             ContainerWrapper empty;
             std::memset(&empty, 0, sizeof(empty));
-            unwindReadWrite<true, 0, sizeof(empty)>(&empty);
+            unwindReadWrite<true, 0, sizeof(empty)>(
+                reinterpret_cast<std::byte*>(&empty));  // NOLINT NOSONAR reinterpret_cast<>()
             return wrapper.container;
         }
         return {};
@@ -407,7 +401,8 @@ public:
     void write(const Container& cont)
     {
         ContainerWrapper wrapper(cont);
-        unwindReadWrite<true, 0, sizeof(wrapper)>(&wrapper);
+        unwindReadWrite<true, 0, sizeof(wrapper)>(
+            reinterpret_cast<std::byte*>(&wrapper));  // NOLINT NOSONAR reinterpret_cast<>()
     }
 };
 
