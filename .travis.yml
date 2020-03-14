@@ -41,7 +41,7 @@ matrix:
         - 'sonar-scanner -Dsonar.projectKey=Zubax_kocherga
                          -Dsonar.organization=zubax
                          -Dsonar.sources=kocherga,tests
-                         -Dsonar.exclusions=tests
+                         -Dsonar.exclusions=tests/*,tests/3rd_party/*
                          -Dsonar.cfamily.gcov.reportsPath=.
                          -Dsonar.cfamily.build-wrapper-output=sonar-dump
                          -Dsonar.cfamily.cache.enabled=false'
