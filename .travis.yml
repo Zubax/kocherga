@@ -35,7 +35,7 @@ matrix:
         # ANALYSIS
         # Using the build wrapper from Sonar and collecting the code coverage.
         # Define NDEBUG=1 to avoid assertion checks being reported as uncovered statements.
-        - cmake tests -DCMAKE_BUILD_TYPE=Debug -DNO_STATIC_ANALYSIS=1 -DCMAKE_C_FLAGS='-DNDEBUG=1'
+        - cmake tests -DCMAKE_BUILD_TYPE=Debug -DNO_STATIC_ANALYSIS=1 -DCMAKE_CXX_FLAGS='-DNDEBUG=1'
         - build-wrapper-linux-x86-64 --out-dir sonar-dump make all
         - make test
         - gcov-9 --preserve-paths --long-file-names $(find CMakeFiles/test_cov.dir -name '*.gcno')
@@ -77,22 +77,22 @@ matrix:
         - clang++-9 -E -x c++ - -v < /dev/null    # Print the Clang configuration for troubleshooting purposes.
 
         # DEBUG
-        - cmake -DCMAKE_C_COMPILER=clang-9 -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=Debug
+        - cmake -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=Debug
         - make VERBOSE=1 && make test
         - make clean
 
         # RELEASE
-        - cmake -DCMAKE_C_COMPILER=clang-9 -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=Release
+        - cmake -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=Release
         - make VERBOSE=1 && make test
         - make clean
 
         # RELWITHDEBINFO
-        - cmake -DCMAKE_C_COMPILER=clang-9 -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        - cmake -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=RelWithDebInfo
         - make VERBOSE=1 && make test
         - make clean
 
         # MINSIZEREL
-        - cmake -DCMAKE_C_COMPILER=clang-9 -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=MinSizeRel
+        - cmake -DCMAKE_CXX_COMPILER=clang++-9 tests -DCMAKE_BUILD_TYPE=MinSizeRel
         - make VERBOSE=1 && make test
         - make clean
 

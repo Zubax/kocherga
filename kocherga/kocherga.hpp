@@ -39,11 +39,10 @@ class CRC64
 public:
     static constexpr std::size_t Size = 8U;
 
-    void add(const void* data, std::size_t len)
+    void add(const std::uint8_t* const data, const std::size_t len)
     {
-        auto bytes = static_cast<const std::uint8_t*>(data);
-        assert(bytes != nullptr);
-        while (len-- > 0)
+        auto bytes = data;
+        for (auto remaining = len; remaining > 0; remaining--)
         {
             crc_ ^= std::uint64_t(*bytes++) << InputShift;
             // Unrolled for performance reasons. This path directly affects the boot-up time, so it is very
@@ -120,13 +119,15 @@ public:
     [[nodiscard]] virtual auto beginUpgrade() -> std::int8_t = 0;
 
     /// @return number of bytes written; negative on error.
-    [[nodiscard]] virtual auto write(std::size_t offset, const void* data, std::size_t size) -> std::intmax_t = 0;
+    [[nodiscard]] virtual auto write(const std::size_t offset, const void* const data, const std::size_t size)
+        -> std::intmax_t = 0;
 
     /// @return 0 on success, negative on error.
-    [[nodiscard]] virtual auto endUpgrade(bool success) -> std::int8_t = 0;
+    [[nodiscard]] virtual auto endUpgrade(const bool success) -> std::int8_t = 0;
 
     /// @return number of bytes read; negative on error.
-    [[nodiscard]] virtual auto read(std::size_t offset, void* out_data, std::size_t size) const -> std::intmax_t = 0;
+    [[nodiscard]] virtual auto read(const std::size_t offset, void* const out_data, const std::size_t size) const
+        -> std::intmax_t = 0;
 };
 
 static constexpr std::size_t DefaultROMBufferSize = 1024U;
@@ -228,7 +229,7 @@ class Bootloader
                 // Fill CRC with zero
                 {
                     static const std::array<std::uint8_t, CRC64::Size> dummy{0};
-                    crc.add(&dummy[0], sizeof(dummy));
+                    crc.add(dummy.data(), sizeof(dummy));
                 }
 
                 // Read the rest of the image in large chunks
@@ -273,9 +274,9 @@ public:
     /// values early, greatly improving the worst case boot time.
     ///
     /// By default, the boot delay is set to zero; i.e., if the application is valid it will be launched immediately.
-    explicit Bootloader(IROMBackend&  rom_backend,
-                        std::uint32_t max_application_image_size = std::numeric_limits<std::uint32_t>::max(),
-                        std::chrono::microseconds boot_delay     = std::chrono::microseconds(0)) :
+    explicit Bootloader(IROMBackend&        rom_backend,
+                        const std::uint32_t max_application_image_size = std::numeric_limits<std::uint32_t>::max(),
+                        const std::chrono::microseconds boot_delay     = std::chrono::microseconds(0)) :
         backend_(rom_backend), max_application_image_size_(max_application_image_size), boot_delay_(boot_delay)
     {}
 };
@@ -330,7 +331,8 @@ class AppDataExchangeMarshaller
     };
 
     template <std::size_t MaxSize, typename T>  // Holy pants why auto doesn't work here
-    auto readOne(void* destination, const volatile T* ptr) -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
+    auto readOne(void* const destination, const volatile T* const ptr)
+        -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         const T x = *ptr;  // Guaranteeing proper pointer access
         std::memmove(destination, &x, std::min<std::size_t>(sizeof(T), MaxSize));
@@ -338,14 +340,15 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto readOne(void* destination, const void* ptr) -> ValueAsType<MaxSize>
+    auto readOne(void* const destination, const void* const ptr) -> ValueAsType<MaxSize>
     {
         std::memmove(destination, ptr, MaxSize);  // Raw memory access
         return {};
     }
 
     template <std::size_t MaxSize, typename T>
-    auto writeOne(const void* source, volatile T* ptr) -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
+    auto writeOne(const void* const source, volatile T* const ptr)
+        -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         T x = T();
         std::memmove(&x, source, std::min<std::size_t>(sizeof(T), MaxSize));
@@ -354,28 +357,26 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto writeOne(const void* source, void* ptr) -> ValueAsType<MaxSize>
+    auto writeOne(const void* const source, void* const ptr) -> ValueAsType<MaxSize>
     {
         std::memmove(ptr, source, MaxSize);  // Raw memory access
         return {};
     }
 
     template <bool WriteNotRead, std::size_t PtrIndex, std::size_t RemainingSize>
-    auto unwindReadWrite(void* structure) -> std::enable_if_t<(RemainingSize > 0)>
+    auto unwindReadWrite(void* const structure) -> std::enable_if_t<(RemainingSize > 0)>
     {
         static_assert(PtrIndex < std::tuple_size<Pointers>::value, "Storage is not large enough for the structure");
         const auto ret = WriteNotRead ? writeOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_))
                                       : readOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_));
-
         constexpr auto Increment = decltype(ret)::Value;
         static_assert(RemainingSize >= Increment, "Rock is dead");
-
-        structure = static_cast<void*>(static_cast<std::uint8_t*>(structure) + Increment);
-        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(structure);
+        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(
+            static_cast<void*>(static_cast<std::uint8_t*>(structure) + Increment));
     }
 
     template <bool, std::size_t PtrIndex, std::size_t RemainingSize>
-    auto unwindReadWrite(void* structure) -> std::enable_if_t<(RemainingSize == 0)>
+    auto unwindReadWrite(void* const structure) -> std::enable_if_t<(RemainingSize == 0)>
     {
         (void) structure;
         // Here we could implement a check whether all storage has been utilized.

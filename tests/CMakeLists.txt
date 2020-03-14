@@ -3,6 +3,7 @@
 # Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
 cmake_minimum_required(VERSION 3.12)
+enable_testing()
 
 project(kocherga_test CXX)
 
