@@ -3,6 +3,7 @@ env:
   - CTEST_OUTPUT_ON_FAILURE=1
 
 before_script:
+  - sudo apt-get install "linux-*-extra-$(uname -r)"
   - sudo modprobe can
   - sudo modprobe can_raw
   - sudo modprobe vcan
