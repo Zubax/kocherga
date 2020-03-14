@@ -27,10 +27,12 @@ cmake-build-*
 *.log
 
 # IDE
-.idea
 .metadata
 .settings
 .project
 .cproject
 .pydevproject
 *.kdev4
+**/.idea/*
+!**/.idea/dictionaries
+!**/.idea/dictionaries/*

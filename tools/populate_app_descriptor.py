@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 #   Copyright (c) 2012-2015 PX4 Development Team. All rights reserved.
-#   Copyright (c) 2018-2019 Zubax Robotics <info@zubax.com>. All rights reserved.
+#   Copyright (c) 2018-2020 Zubax Robotics <info@zubax.com>. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -60,7 +60,7 @@ class AppDescriptor(object):
     SIGNATURE = b'APDesc00'
     FORMAT = '<8sQLLBBBxL'
 
-    def __init__(self, bytes=None):
+    def __init__(self, raw=None):
         self.signature = AppDescriptor.SIGNATURE
         self.image_crc = 0
         self.image_size = 0
@@ -71,11 +71,11 @@ class AppDescriptor(object):
         self.dirty_build = False
         self.build_timestamp_utc = 0
 
-        if bytes:
+        if raw:
             try:
-                self.unpack(bytes)
+                self.unpack(raw)
             except Exception:
-                raise ValueError("Invalid AppDescriptor: {0}".format(binascii.b2a_hex(bytes)))
+                raise ValueError("Invalid AppDescriptor: {0}".format(binascii.b2a_hex(raw)))
 
     def pack(self):
         flags = 0
@@ -88,7 +88,7 @@ class AppDescriptor(object):
         return struct.pack(self.FORMAT, self.signature, self.image_crc, self.image_size, self.vcs_commit,
                            self.version_major, self.version_minor, flags, self.build_timestamp_utc)
 
-    def unpack(self, bytes):
+    def unpack(self, raw):
         (self.signature,
          self.image_crc,
          self.image_size,
@@ -96,7 +96,7 @@ class AppDescriptor(object):
          self.version_major,
          self.version_minor,
          flags,
-         self.build_timestamp_utc) = struct.unpack(self.FORMAT, bytes)
+         self.build_timestamp_utc) = struct.unpack(self.FORMAT, raw)
 
         self.release_build = bool(flags & 1)
         self.dirty_build   = bool(flags & 2)
