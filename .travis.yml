@@ -29,7 +29,6 @@ matrix:
             - gcc-9-multilib
             - linux-libc-dev:i386
       env:
-        - CC=gcc-9
         - CXX=g++-9
       script:
         # ANALYSIS
@@ -41,7 +40,8 @@ matrix:
         - gcov-9 --preserve-paths --long-file-names $(find CMakeFiles/test_cov.dir -name '*.gcno')
         - 'sonar-scanner -Dsonar.projectKey=Zubax_kocherga
                          -Dsonar.organization=zubax
-                         -Dsonar.sources=kocherga
+                         -Dsonar.sources=kocherga,tests
+                         -Dsonar.exclusions=tests
                          -Dsonar.cfamily.gcov.reportsPath=.
                          -Dsonar.cfamily.build-wrapper-output=sonar-dump
                          -Dsonar.cfamily.cache.enabled=false'
