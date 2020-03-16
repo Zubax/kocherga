@@ -63,7 +63,7 @@ inline auto makeHexDump(InputIterator begin, const InputIterator end) -> std::st
             {
                 output << (((static_cast<std::uint32_t>(*begin) >= PrintableASCIIRange.first) &&
                             (static_cast<std::uint32_t>(*begin) <= PrintableASCIIRange.second))
-                               ? char(*begin)
+                               ? static_cast<char>(*begin)
                                : '.');
                 ++begin;
             }

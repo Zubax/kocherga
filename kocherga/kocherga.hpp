@@ -107,14 +107,12 @@ public:
     virtual void onAfterLastWrite(const bool success) { (void) success; }
 
     /// @return Number of bytes written; a value less than size indicates an overflow; empty option indicates failure.
-    [[nodiscard]] virtual auto write(const std::size_t offset,
-                                     const void* const data,  // NOSONAR void*
-                                     const std::size_t size) -> std::optional<std::size_t> = 0;
+    [[nodiscard]] virtual auto write(const std::size_t offset, const void* const data, const std::size_t size)
+        -> std::optional<std::size_t> = 0;
 
     /// @return Number of bytes read; a value less than size indicates an overrun. This operation cannot fail.
-    [[nodiscard]] virtual auto read(const std::size_t offset,
-                                    void* const       out_data,  // NOSONAR void*
-                                    const std::size_t size) const -> std::size_t = 0;
+    [[nodiscard]] virtual auto read(const std::size_t offset, void* const out_data, const std::size_t size) const
+        -> std::size_t = 0;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -178,7 +176,7 @@ public:
         for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
         {
             AppDescriptor desc;
-            if (sizeof(desc) == backend_.read(offset, &desc, sizeof(desc)))  // NOSONAR cast to void*
+            if (sizeof(desc) == backend_.read(offset, &desc, sizeof(desc)))
             {
                 if (desc.isValid(max_application_image_size_) &&
                     validateImageCRC(offset + AppDescriptor::CRCOffset,
@@ -221,7 +219,7 @@ private:
         alignas(SignatureSize) AppInfo app_info;
     };
     static_assert(sizeof(AppDescriptor) == AppDescriptor::Size, "Invalid packing");
-    static_assert(std::is_standard_layout_v<AppDescriptor>, "AppInfo is not standard layout; check your compiler");
+    static_assert(std::is_standard_layout_v<AppDescriptor>, "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
                                         const std::size_t   image_size,
@@ -363,15 +361,15 @@ class AppDataExchangeMarshaller
     auto readOne(std::byte* const destination, const volatile T* const ptr)
         -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
-        const T x = *ptr;                                                          // Guaranteeing proper pointer access
-        std::memmove(destination, &x, std::min<std::size_t>(sizeof(T), MaxSize));  // NOSONAR cast to void*
+        const T x = *ptr;  // Guaranteeing proper pointer access
+        std::memmove(destination, &x, std::min<std::size_t>(sizeof(T), MaxSize));
         return {};
     }
 
     template <std::size_t MaxSize>
-    auto readOne(std::byte* const destination, const void* const ptr) -> Size<MaxSize>  // NOSONAR void*
+    auto readOne(std::byte* const destination, const void* const ptr) -> Size<MaxSize>
     {
-        std::memmove(destination, ptr, MaxSize);  // NOSONAR cast to void*
+        std::memmove(destination, ptr, MaxSize);
         return {};
     }
 
@@ -380,15 +378,15 @@ class AppDataExchangeMarshaller
         -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         T x = T();
-        std::memmove(&x, source, std::min<std::size_t>(sizeof(T), MaxSize));  // NOSONAR cast to void*
-        *ptr = x;                                                             // Guaranteeing proper pointer access
+        std::memmove(&x, source, std::min<std::size_t>(sizeof(T), MaxSize));
+        *ptr = x;  // Guaranteeing proper pointer access
         return {};
     }
 
     template <std::size_t MaxSize>
-    auto writeOne(const std::byte* const source, void* const ptr) -> Size<MaxSize>  // NOSONAR void*
+    auto writeOne(const std::byte* const source, void* const ptr) -> Size<MaxSize>
     {
-        std::memmove(ptr, source, MaxSize);  // NOSONAR cast to void*
+        std::memmove(ptr, source, MaxSize);
         return {};
     }
 
