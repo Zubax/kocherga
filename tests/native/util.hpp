@@ -47,7 +47,7 @@ inline auto makeHexDump(InputIterator begin, const InputIterator end) -> std::st
 
             if (it != end)
             {
-                output << std::setw(2) << std::uint32_t(*it) << ' ';
+                output << std::setw(2) << static_cast<std::uint32_t>(*it) << ' ';
                 ++it;
             }
             else
@@ -61,8 +61,8 @@ inline auto makeHexDump(InputIterator begin, const InputIterator end) -> std::st
         {
             if (begin != end)
             {
-                output << ((std::uint32_t(*begin) >= PrintableASCIIRange.first &&
-                            std::uint32_t(*begin) <= PrintableASCIIRange.second)
+                output << (((static_cast<std::uint32_t>(*begin) >= PrintableASCIIRange.first) &&
+                            (static_cast<std::uint32_t>(*begin) <= PrintableASCIIRange.second))
                                ? char(*begin)
                                : '.');
                 ++begin;
