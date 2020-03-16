@@ -24,6 +24,104 @@ static constexpr std::int8_t ErrInvalidParams    = 2;
 static constexpr std::int8_t ErrROMWriteFailure  = 3;
 static constexpr std::int8_t ErrAppImageTooLarge = 4;
 
+// --------------------------------------------------------------------------------------------------------------------
+
+/// The structure is mapped to the ROM. The fields are ordered to avoid padding.
+struct AppInfo
+{
+    static constexpr std::uint8_t FlagReleaseBuild = 1U;
+    static constexpr std::uint8_t FlagDirtyBuild   = 2U;
+
+    /// Offset 0 bytes.
+    /// CRC-64-WE of the firmware image padded to 8 bytes while this field zero.
+    std::uint64_t image_crc = 0;
+
+    /// Offset 8 bytes.
+    /// Size of the application image in bytes.
+    /// Version control system revision ID (e.g., git commit hash).
+    std::uint32_t image_size = 0;
+    std::uint32_t vcs_commit = 0;
+
+    /// Offset 16 bytes.
+    /// Semantic version numbers.
+    /// Flags: 1 - release build, 2 - dirty build.
+    std::uint8_t major_version = 0;
+    std::uint8_t minor_version = 0;
+    std::uint8_t flags         = 0;
+    std::uint8_t _reserved_a_  = 0;
+
+    /// Offset 20 bytes
+    /// UTC Unix time in seconds when the application was built.
+    std::uint32_t build_timestamp_utc = 0;
+
+    [[nodiscard]] auto isReleaseBuild() const { return (flags & FlagReleaseBuild) != 0; }
+    [[nodiscard]] auto isDirtyBuild() const { return (flags & FlagDirtyBuild) != 0; }
+};
+static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler");
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// Target platform services.
+class IPlatform
+{
+public:
+    IPlatform(const IPlatform&) = delete;
+    IPlatform(IPlatform&&)      = delete;
+    auto operator=(const IPlatform&) -> IPlatform& = delete;
+    auto operator=(IPlatform &&) -> IPlatform& = delete;
+
+    virtual ~IPlatform() = default;
+
+    /// Returns the time since boot as a monotonic (i.e., steady) clock. The clock shall never overflow.
+    [[nodiscard]] virtual auto getMonotonicUptime() const -> std::chrono::microseconds = 0;
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// This interface abstracts the target-specific ROM routines.
+/// Upgrade scenario:
+///  1. onBeforeFirstWrite()
+///  2. write() repeated until finished.
+///  3. onAfterLastWrite(success or not)
+///
+/// The read() method may be invoked at any time. Its performance is critical.
+/// Slow access may lead to watchdog timeouts (assuming that the watchdog is used) and/or disruption of communications.
+/// To avoid issues, ensure that the entirety of the image can be read x10 in less than the watchdog timeout interval.
+class IROMBackend
+{
+public:
+    IROMBackend(const IROMBackend&) = delete;
+    IROMBackend(IROMBackend&&)      = delete;
+    auto operator=(const IROMBackend&) -> IROMBackend& = delete;
+    auto operator=(IROMBackend &&) -> IROMBackend& = delete;
+
+    virtual ~IROMBackend() = default;
+
+    /// This hook allows the ROM driver to enable write operations, erase ROM, etc, depending on the hardware.
+    /// False may be returned to indicate failure, the update is aborted in this case.
+    /// @return True on success, False on error.
+    [[nodiscard]] virtual auto onBeforeFirstWrite() -> bool { return true; }
+
+    /// This hook allows the ROM driver to disable write operations or to perform other hardware-specific steps.
+    /// The argument signifies whether the update process was successful. This operation cannot fail.
+    virtual void onAfterLastWrite(const bool success) { (void) success; }
+
+    /// @return Number of bytes written; a value less than size indicates an overflow; empty option indicates failure.
+    [[nodiscard]] virtual auto write(const std::size_t offset,
+                                     const void* const data,  // NOSONAR void*
+                                     const std::size_t size) -> std::optional<std::size_t> = 0;
+
+    /// @return Number of bytes read; a value less than size indicates an overrun. This operation cannot fail.
+    [[nodiscard]] virtual auto read(const std::size_t offset,
+                                    void* const       out_data,  // NOSONAR void*
+                                    const std::size_t size) const -> std::size_t = 0;
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// Internal use only.
+namespace detail
+{
 /// This is used to verify integrity of the application and other data.
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to
@@ -67,107 +165,38 @@ public:
     [[nodiscard]] auto get() const { return crc_ ^ Xor; }
 };
 
-/// The structure is mapped to the ROM. The fields are ordered to avoid padding.
-struct AppInfo
-{
-    static constexpr std::uint8_t FlagReleaseBuild = 1U;
-    static constexpr std::uint8_t FlagDirtyBuild   = 2U;
-
-    /// Offset 0 bytes.
-    /// CRC-64-WE of the firmware image padded to 8 bytes while this field zero.
-    std::uint64_t image_crc = 0;
-
-    /// Offset 8 bytes.
-    /// Size of the application image in bytes.
-    /// Version control system revision ID (e.g., git commit hash).
-    std::uint32_t image_size = 0;
-    std::uint32_t vcs_commit = 0;
-
-    /// Offset 16 bytes.
-    /// Semantic version numbers.
-    /// Flags: 1 - release build, 2 - dirty build.
-    std::uint8_t major_version = 0;
-    std::uint8_t minor_version = 0;
-    std::uint8_t flags         = 0;
-    std::uint8_t _reserved_a_  = 0;
-
-    /// Offset 20 bytes
-    /// UTC Unix time in seconds when the application was built.
-    std::uint32_t build_timestamp_utc = 0;
-
-    [[nodiscard]] auto isReleaseBuild() const { return (flags & FlagReleaseBuild) != 0; }
-    [[nodiscard]] auto isDirtyBuild() const { return (flags & FlagDirtyBuild) != 0; }
-};
-static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler");
-
-/// Target platform services.
-class IPlatform
+/// Detects the application in the ROM, verifies it, and retrieves the information about it.
+class AppLocator
 {
 public:
-    IPlatform(const IPlatform&) = delete;
-    IPlatform(IPlatform&&)      = delete;
-    auto operator=(const IPlatform&) -> IPlatform& = delete;
-    auto operator=(IPlatform &&) -> IPlatform& = delete;
+    AppLocator(IROMBackend& backend, const std::uint32_t max_application_image_size) :
+        max_application_image_size_(max_application_image_size), backend_(backend)
+    {}
 
-    virtual ~IPlatform() = default;
+    [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
+    {
+        for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
+        {
+            AppDescriptor desc;
+            if (sizeof(desc) == backend_.read(offset, &desc, sizeof(desc)))  // NOSONAR cast to void*
+            {
+                if (desc.isValid(max_application_image_size_) &&
+                    validateImageCRC(offset + AppDescriptor::CRCOffset,
+                                     static_cast<std::size_t>(desc.getAppInfo().image_size),
+                                     desc.getAppInfo().image_crc))
+                {
+                    return desc.getAppInfo();
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+        return {};
+    }
 
-    /// Returns the time since boot as a monotonic (i.e., steady) clock. The clock shall never overflow.
-    [[nodiscard]] virtual auto getMonotonicUptime() const -> std::chrono::microseconds = 0;
-};
-
-/// This interface abstracts the target-specific ROM routines.
-/// Upgrade scenario:
-///  1. onBeforeFirstWrite()
-///  2. write() repeated until finished.
-///  3. onAfterLastWrite(success or not)
-///
-/// read() may be invoked at any time.
-///
-/// The performance of the ROM reading routine is critical.
-/// Slow access may lead to watchdog timeouts (assuming that the watchdog is used),
-/// disruption of communications, and premature expiration of the boot timeout.
-class IROMBackend
-{
-public:
-    IROMBackend(const IROMBackend&) = delete;
-    IROMBackend(IROMBackend&&)      = delete;
-    auto operator=(const IROMBackend&) -> IROMBackend& = delete;
-    auto operator=(IROMBackend &&) -> IROMBackend& = delete;
-
-    virtual ~IROMBackend() = default;
-
-    /// This hook allows the ROM driver to enable write operations, erase ROM, etc, depending on the hardware.
-    /// False may be returned to indicate failure, the update is aborted in this case.
-    /// @return True on success, False on error.
-    [[nodiscard]] virtual auto onBeforeFirstWrite() -> bool { return true; }
-
-    /// This hook allows the ROM driver to disable write operations or to perform other hardware-specific steps.
-    /// The argument signifies whether the update process was successful. This operation cannot fail.
-    virtual void onAfterLastWrite(const bool success) { (void) success; }
-
-    /// @return Number of bytes written; a value less than size indicates an overflow; empty option indicates failure.
-    [[nodiscard]] virtual auto write(const std::size_t offset,
-                                     const void* const data,
-                                     const std::size_t size) -> std::optional<std::size_t> = 0;  // NOSONAR void*
-
-    /// @return Number of bytes read; a value less than size indicates an overrun. This operation cannot fail.
-    [[nodiscard]] virtual auto read(const std::size_t offset,
-                                    void* const       out_data,
-                                    const std::size_t size) const -> std::size_t = 0;  // NOSONAR void*
-};
-
-/// The bootloader logic.
-/// Larger buffer enables faster CRC verification, which is important, especially with large firmwares.
-class Bootloader
-{
-    static constexpr std::size_t ROMBufferSize = 256;
-
-    const std::uint32_t max_application_image_size_;
-    IPlatform&          platform_;
-    IROMBackend&        backend_;
-
-    /// Refer to the Brickproof Bootloader specs.
-    /// The structure shall be aligned at 8 bytes boundary, and the image shall be padded to 8 bytes!
+private:
     class AppDescriptor
     {
     public:
@@ -175,10 +204,9 @@ class Bootloader
         static constexpr std::size_t Size          = 32U;
         static constexpr std::size_t CRCOffset     = SignatureSize;
 
-        [[nodiscard]] auto isValid(const std::uint32_t max_application_image_size) const
+        [[nodiscard]] auto isValid(const std::uint32_t max_application_image_size) const -> bool
         {
-            const auto sgn = getSignatureValue();
-            return std::equal(std::begin(signature), std::end(signature), std::begin(sgn)) &&
+            return std::equal(std::begin(signature), std::end(signature), std::begin(ReferenceSignature)) &&
                    (app_info.image_size > 0) && (app_info.image_size <= max_application_image_size) &&
                    ((app_info.image_size % SignatureSize) == 0);
         }
@@ -186,20 +214,18 @@ class Bootloader
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
 
     private:
+        static constexpr std::array<std::uint8_t, SignatureSize> ReferenceSignature{
+            {65, 80, 68, 101, 115, 99, 48, 48}};  // APDesc00
+
         alignas(SignatureSize) std::array<std::uint8_t, SignatureSize> signature{};
         alignas(SignatureSize) AppInfo app_info;
-
-        static constexpr auto getSignatureValue() -> std::array<std::uint8_t, SignatureSize>
-        {
-            return {{'A', 'P', 'D', 'e', 's', 'c', '0', '0'}};
-        }
     };
     static_assert(sizeof(AppDescriptor) == AppDescriptor::Size, "Invalid packing");
     static_assert(std::is_standard_layout_v<AppDescriptor>, "AppInfo is not standard layout; check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
                                         const std::size_t   image_size,
-                                        const std::uint64_t image_crc) const
+                                        const std::uint64_t image_crc) const -> bool
     {
         std::array<std::uint8_t, ROMBufferSize> buffer{};
         CRC64                                   crc;
@@ -240,28 +266,23 @@ class Bootloader
         return crc.get() == image_crc;
     }
 
-    [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
-    {
-        for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
-        {
-            AppDescriptor desc;
-            if (sizeof(desc) == backend_.read(offset, &desc, sizeof(desc)))
-            {
-                if (desc.isValid(max_application_image_size_) &&
-                    validateImageCRC(offset + AppDescriptor::CRCOffset,
-                                     static_cast<std::size_t>(desc.getAppInfo().image_size),
-                                     desc.getAppInfo().image_crc))
-                {
-                    return desc.getAppInfo();
-                }
-            }
-            else
-            {
-                break;
-            }
-        }
-        return {};
-    }
+    static constexpr std::size_t ROMBufferSize = 256;
+
+    const std::uint32_t max_application_image_size_;
+    IROMBackend&        backend_;
+};
+
+}  // namespace detail
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// The bootloader logic.
+/// Larger buffer enables faster CRC verification, which is important, especially with large firmwares.
+class Bootloader
+{
+    const std::uint32_t max_application_image_size_;
+    IPlatform&          platform_;
+    IROMBackend&        backend_;
 
 public:
     /// Time since boot will be measured starting from the moment when the object was constructed.
@@ -282,13 +303,17 @@ public:
     [[nodiscard]] auto run(const std::chrono::microseconds boot_delay = std::chrono::microseconds(0))
         -> std::optional<AppInfo>
     {
-        auto app_info = identifyApplication();
+        detail::AppLocator locator(backend_, max_application_image_size_);
+        auto               app_info = locator.identifyApplication();
+
         const std::chrono::microseconds boot_deadline = platform_.getMonotonicUptime() + boot_delay;
         (void) boot_deadline;
         (void) &Bootloader::run;
         return app_info;
     }
 };
+
+// --------------------------------------------------------------------------------------------------------------------
 
 /// This class allows the user to exchange arbitrary data between the bootloader and the application.
 /// The data is CRC-64 protected to ensure its validity.
@@ -318,28 +343,25 @@ class AppDataExchangeMarshaller
 
         explicit ContainerWrapper(const Container& c) : container(c)
         {
-            CRC64 crc_computer;
+            detail::CRC64 crc_computer;
             crc_computer.add(&container, sizeof(container));
             crc = crc_computer.get();
         }
 
         auto isValid() const
         {
-            CRC64 crc_computer;
+            detail::CRC64 crc_computer;
             crc_computer.add(&container, sizeof(container));
             return crc == crc_computer.get();
         }
     };
 
-    template <auto N>
-    struct ValueAsType
-    {
-        static constexpr decltype(N) Value = N;
-    };
+    template <std::size_t N>
+    using Size = std::integral_constant<std::size_t, N>;
 
     template <std::size_t MaxSize, typename T>  // Holy pants why auto doesn't work here
     auto readOne(std::byte* const destination, const volatile T* const ptr)
-        -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
+        -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         const T x = *ptr;                                                          // Guaranteeing proper pointer access
         std::memmove(destination, &x, std::min<std::size_t>(sizeof(T), MaxSize));  // NOSONAR cast to void*
@@ -347,7 +369,7 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto readOne(std::byte* const destination, const void* const ptr) -> ValueAsType<MaxSize>  // NOSONAR void*
+    auto readOne(std::byte* const destination, const void* const ptr) -> Size<MaxSize>  // NOSONAR void*
     {
         std::memmove(destination, ptr, MaxSize);  // NOSONAR cast to void*
         return {};
@@ -355,7 +377,7 @@ class AppDataExchangeMarshaller
 
     template <std::size_t MaxSize, typename T>
     auto writeOne(const std::byte* const source, volatile T* const ptr)
-        -> ValueAsType<std::min<std::size_t>(sizeof(T), MaxSize)>
+        -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         T x = T();
         std::memmove(&x, source, std::min<std::size_t>(sizeof(T), MaxSize));  // NOSONAR cast to void*
@@ -364,7 +386,7 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto writeOne(const std::byte* const source, void* const ptr) -> ValueAsType<MaxSize>  // NOSONAR void*
+    auto writeOne(const std::byte* const source, void* const ptr) -> Size<MaxSize>  // NOSONAR void*
     {
         std::memmove(ptr, source, MaxSize);  // NOSONAR cast to void*
         return {};
@@ -376,7 +398,7 @@ class AppDataExchangeMarshaller
         static_assert(PtrIndex < std::tuple_size<Pointers>::value, "Storage is not large enough for the structure");
         const auto ret = WriteNotRead ? writeOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_))
                                       : readOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_));
-        constexpr auto Increment = decltype(ret)::Value;
+        constexpr auto Increment = decltype(ret)::value;
         static_assert(RemainingSize >= Increment);
         unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(structure + Increment);
     }
