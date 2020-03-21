@@ -270,63 +270,9 @@ private:
     IROMBackend&        backend_;
 };
 
-}  // namespace detail
-
-// --------------------------------------------------------------------------------------------------------------------
-
-/// The bootloader logic.
-/// Larger buffer enables faster CRC verification, which is important, especially with large firmwares.
-class Bootloader
-{
-    const std::uint32_t max_application_image_size_;
-    IPlatform&          platform_;
-    IROMBackend&        backend_;
-
-public:
-    /// Time since boot will be measured starting from the moment when the object was constructed.
-    ///
-    /// The max application image size parameter is very important for performance reasons;
-    /// without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
-    /// valid app descriptor (by virtue of having the same signature, which is only 64 bit long),
-    /// and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
-    /// Having an upper size limit for the application image allows the bootloader to weed out too large
-    /// values early, greatly improving the worst case boot time.
-    ///
-    /// By default, the boot delay is set to zero; i.e., if the application is valid it will be launched immediately.
-    /// This is the recommended behavior.
-    Bootloader(IPlatform& platform, IROMBackend& rom_backend, const std::uint32_t max_application_image_size) :
-        max_application_image_size_(max_application_image_size), platform_(platform), backend_(rom_backend)
-    {}
-
-    [[nodiscard]] auto run(const std::chrono::microseconds boot_delay = std::chrono::microseconds(0))
-        -> std::optional<AppInfo>
-    {
-        detail::AppLocator locator(backend_, max_application_image_size_);
-        auto               app_info = locator.identifyApplication();
-
-        const std::chrono::microseconds boot_deadline = platform_.getMonotonicUptime() + boot_delay;
-        (void) boot_deadline;
-        (void) &Bootloader::run;
-        return app_info;
-    }
-};
-
-// --------------------------------------------------------------------------------------------------------------------
-
-/// This class allows the user to exchange arbitrary data between the bootloader and the application.
-/// The data is CRC-64 protected to ensure its validity.
-/// Two usage scenarios are supported:
-///
-///  1. Simple - the data is simply stored at a dedicated location in RAM. Normally this approach is recommended.
-///     Normally the reserved RAM area would be situated at the very end of the RAM.
-///
-///  2. Memory-efficient - the data is scattered across a set of special-function registers specified by the user.
-///     This approach permits the user to avoid reserving any memory regions for data exchange, which is
-///     useful in RAM-constrained systems.
-///
-/// For more information, refer to the factory function @ref makeAppDataExchangeMarshaller().
+/// Refer to the factory function makeAppDataMarshaller().
 template <typename Container, typename Pointers>
-class AppDataExchangeMarshaller
+class AppDataMarshaller
 {
     static_assert(std::is_standard_layout_v<Container>, "Container must be a standard layout type.");
 
@@ -342,14 +288,16 @@ class AppDataExchangeMarshaller
         explicit ContainerWrapper(const Container& c) : container(c)
         {
             detail::CRC64 crc_computer;
-            crc_computer.add(&container, sizeof(container));
+            crc_computer.add(reinterpret_cast<const std::uint8_t*>(&container),  // NOLINT NOSONAR reinterpret_cast<>()
+                             sizeof(container));
             crc = crc_computer.get();
         }
 
-        auto isValid() const
+        [[nodiscard]] auto isValid() const
         {
             detail::CRC64 crc_computer;
-            crc_computer.add(&container, sizeof(container));
+            crc_computer.add(reinterpret_cast<const std::uint8_t*>(&container),  // NOLINT NOSONAR reinterpret_cast<>()
+                             sizeof(container));
             return crc == crc_computer.get();
         }
     };
@@ -358,7 +306,7 @@ class AppDataExchangeMarshaller
     using Size = std::integral_constant<std::size_t, N>;
 
     template <std::size_t MaxSize, typename T>  // Holy pants why auto doesn't work here
-    auto readOne(std::byte* const destination, const volatile T* const ptr)
+    [[nodiscard]] auto readOne(std::byte* const destination, const volatile T* const ptr)
         -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         const T x = *ptr;  // Guaranteeing proper pointer access
@@ -367,14 +315,14 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto readOne(std::byte* const destination, const void* const ptr) -> Size<MaxSize>
+    [[nodiscard]] auto readOne(std::byte* const destination, const void* const ptr) -> Size<MaxSize>
     {
         std::memmove(destination, ptr, MaxSize);
         return {};
     }
 
     template <std::size_t MaxSize, typename T>
-    auto writeOne(const std::byte* const source, volatile T* const ptr)
+    [[nodiscard]] auto writeOne(const std::byte* const source, volatile T* const ptr)
         -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
     {
         T x = T();
@@ -384,7 +332,7 @@ class AppDataExchangeMarshaller
     }
 
     template <std::size_t MaxSize>
-    auto writeOne(const std::byte* const source, void* const ptr) -> Size<MaxSize>
+    [[nodiscard]] auto writeOne(const std::byte* const source, void* const ptr) -> Size<MaxSize>
     {
         std::memmove(ptr, source, MaxSize);
         return {};
@@ -398,7 +346,8 @@ class AppDataExchangeMarshaller
                                       : readOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_));
         constexpr auto Increment = decltype(ret)::value;
         static_assert(RemainingSize >= Increment);
-        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(structure + Increment);
+        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(
+            structure + Increment);  // NOSONAR NOLINT pointer arithmetic
     }
 
     template <bool, std::size_t, std::size_t RemainingSize>
@@ -409,16 +358,16 @@ class AppDataExchangeMarshaller
     }
 
 public:
-    /// Do not instantiate this class manually, it's difficult.
-    /// Use the factory method instead, @ref makeAppDataExchangeMarshaller().
-    explicit AppDataExchangeMarshaller(const Pointers& ps) : pointers_(ps) {}
+    /// Do not instantiate this class manually. Use the factory makeAppDataMarshaller() instead.
+    explicit AppDataMarshaller(const Pointers ps) : pointers_(std::move(ps)) {}
 
     /// Checks if the data is available and reads it; then erases the storage to prevent deja-vu.
     /// Returns an empty option if no data is available (in that case the storage is not erased).
-    auto readAndErase() -> std::optional<Container>
+    [[nodiscard]] auto readAndErase() -> std::optional<Container>
     {
         ContainerWrapper wrapper;
-        unwindReadWrite<false, 0, sizeof(wrapper)>(&wrapper);
+        unwindReadWrite<false, 0, sizeof(wrapper)>(
+            reinterpret_cast<std::byte*>(&wrapper));  // NOLINT NOSONAR reinterpret_cast<>()
         if (wrapper.isValid())
         {
             ContainerWrapper empty;
@@ -439,10 +388,59 @@ public:
     }
 };
 
+}  // namespace detail
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// The bootloader logic.
+/// Larger buffer enables faster CRC verification, which is important, especially with large firmwares.
+class Bootloader
+{
+    const std::uint32_t max_application_image_size_;
+    IPlatform&          platform_;
+    IROMBackend&        backend_;
+
+public:
+    /// The max application image size parameter is very important for performance reasons;
+    /// without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
+    /// valid app descriptor (by virtue of having the same signature, which is only 64 bit long),
+    /// and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
+    /// Having an upper size limit for the application image allows the bootloader to weed out too large
+    /// values early, greatly improving the worst case boot time.
+    Bootloader(IPlatform& platform, IROMBackend& rom_backend, const std::uint32_t max_application_image_size) :
+        max_application_image_size_(max_application_image_size), platform_(platform), backend_(rom_backend)
+    {}
+
+    [[nodiscard]] auto run(const std::chrono::microseconds boot_delay = std::chrono::microseconds(0))
+        -> std::optional<AppInfo>
+    {
+        detail::AppLocator locator(backend_, max_application_image_size_);
+        auto               app_info = locator.identifyApplication();
+
+        const std::chrono::microseconds boot_deadline = platform_.getMonotonicUptime() + boot_delay;
+        (void) boot_deadline;
+        (void) &Bootloader::run;
+        return app_info;
+    }
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
 /// Constructs an object that can be used to store and retrieve data for exchange with the application.
+/// The data is CRC-64 protected to ensure its validity.
+/// Two usage scenarios are supported:
+///
+///  1. Simple - the data is simply stored at a dedicated location in RAM. Normally this approach is recommended.
+///     Normally the reserved area would be situated at the very end of the RAM.
+///
+///  2. Memory-efficient - the data is scattered across a set of special-function registers specified by the user.
+///     This approach permits the user to avoid reserving any memory regions for data exchange, which is
+///     useful in RAM-constrained systems.
+///
 /// Usage example:
 ///
-///     auto marshaller = makeAppDataExchangeMarshaller<DataType>(&REG_A, &REG_B, &REG_C, &REG_D, &REG_E, &REG_F);
+///     // The list of registers can be replaced with a single void* pointer to a specific memory region.
+///     auto marshaller = makeAppDataMarshaller<DataType>(&REG_A, &REG_B, &REG_C, &REG_D, &REG_E, &REG_F);
 ///     // Reading data (always destructively):
 ///     if (auto data = marshaller.readAndErase())
 ///     {
@@ -455,11 +453,11 @@ public:
 ///     // Writing data:
 ///     marshaller.write(the_data);
 ///
-/// The application should use the following memory layout for writing and reading the shared struct:
+/// The following memory layout is used for the shared struct:
 ///
 ///      Offset  Length  Purpose
 ///      0       8       CRC64 of the following payload. Must be 8-byte aligned (or more if required by the platform).
-///      8       >0      Payload written by the application or by the bootloader
+///      8       >0      Payload written by the application or by the bootloader.
 ///
 /// @tparam Container Payload data type, i.e., a structure that should be stored or read.
 ///
@@ -469,11 +467,11 @@ public:
 ///                   Supported pointer sizes are 8, 16, 32, and 64 bit. A single void pointer can be passed as well,
 ///                   in that case all of the data will be simply stored at that pointer using conventional memmove().
 ///
-/// @return An instance of @ref AppDataExchangeMarshaller<>.
+/// @return An instance of @ref AppDataMarshaller<>.
 template <typename Container, typename... RegisterPointers>
-inline auto makeAppDataExchangeMarshaller(RegisterPointers... pointers)
+[[nodiscard]] inline auto makeAppDataMarshaller(RegisterPointers... pointers)
 {
-    return AppDataExchangeMarshaller<Container, std::tuple<RegisterPointers...>>(std::make_tuple(pointers...));
+    return detail::AppDataMarshaller<Container, std::tuple<RegisterPointers...>>(std::make_tuple(pointers...));
 }
 
 }  // namespace kocherga
