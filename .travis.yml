@@ -57,6 +57,9 @@ matrix:
         - make all VERBOSE=1 && make test
         - make clean
 
+        # Tools
+        - ./tools/populate_app_descriptor.py --test
+
     # -------------------- Clang 9 --------------------
     - language: cpp
       addons:

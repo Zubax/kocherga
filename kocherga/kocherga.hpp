@@ -27,36 +27,28 @@ static constexpr std::int8_t ErrAppImageTooLarge = 4;
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// The structure is mapped to the ROM. The fields are ordered to avoid padding.
+/// The structure is mapped to the ROM.
 struct AppInfo
 {
-    static constexpr std::uint8_t FlagReleaseBuild = 1U;
-    static constexpr std::uint8_t FlagDirtyBuild   = 2U;
+    std::uint64_t image_crc     = 0;  ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
+    std::uint64_t vcs_commit    = 0;  ///< Version control system revision ID (e.g., git commit hash).
+    std::uint32_t image_size    = 0;  ///< Size of the application image in bytes.
+    std::uint32_t timestamp_utc = 0;  ///< UTC Unix time in seconds when the application was built.
+    std::uint32_t _reserved_a_  = 0;  ///< Set to zero when writing, ignore when reading.
+    std::uint8_t  version_major = 0;  ///< Semantic version number, major.
+    std::uint8_t  version_minor = 0;  ///< Semantic version number, minor.
+    std::uint8_t  flags         = 0;  ///< Flags; see the constants. Unused flags shall not be set.
+    std::uint8_t  _reserved_b_  = 0;  ///< Set to zero when writing, ignore when reading.
 
-    /// Offset 0 bytes.
-    /// CRC-64-WE of the firmware image padded to 8 bytes while this field zero.
-    std::uint64_t image_crc = 0;
+    /// Bit mask values of the flags field.
+    struct Flags
+    {
+        static constexpr std::uint8_t ReleaseBuild = 1U;
+        static constexpr std::uint8_t DirtyBuild   = 2U;
+    };
 
-    /// Offset 8 bytes.
-    /// Size of the application image in bytes.
-    /// Version control system revision ID (e.g., git commit hash).
-    std::uint32_t image_size = 0;
-    std::uint32_t vcs_commit = 0;
-
-    /// Offset 16 bytes.
-    /// Semantic version numbers.
-    /// Flags: 1 - release build, 2 - dirty build.
-    std::uint8_t major_version = 0;
-    std::uint8_t minor_version = 0;
-    std::uint8_t flags         = 0;
-    std::uint8_t _reserved_a_  = 0;
-
-    /// Offset 20 bytes
-    /// UTC Unix time in seconds when the application was built.
-    std::uint32_t build_timestamp_utc = 0;
-
-    [[nodiscard]] auto isReleaseBuild() const { return (flags & FlagReleaseBuild) != 0; }
-    [[nodiscard]] auto isDirtyBuild() const { return (flags & FlagDirtyBuild) != 0; }
+    [[nodiscard]] auto isReleaseBuild() const { return (flags & Flags::ReleaseBuild) != 0; }
+    [[nodiscard]] auto isDirtyBuild() const { return (flags & Flags::DirtyBuild) != 0; }
 };
 static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler");
 
@@ -203,7 +195,6 @@ private:
     {
     public:
         static constexpr std::size_t SignatureSize = 8U;
-        static constexpr std::size_t Size          = 32U;
         static constexpr std::size_t CRCOffset     = SignatureSize;
 
         [[nodiscard]] auto isValid(const std::uint32_t max_application_image_size) const -> bool
@@ -217,12 +208,11 @@ private:
 
     private:
         static constexpr std::array<std::uint8_t, SignatureSize> ReferenceSignature{
-            {65, 80, 68, 101, 115, 99, 48, 48}};  // APDesc00
+            {65, 80, 68, 101, 115, 99, 48, 49}};  // APDesc01
 
         alignas(SignatureSize) std::array<std::uint8_t, SignatureSize> signature{};
         alignas(SignatureSize) AppInfo app_info;
     };
-    static_assert(sizeof(AppDescriptor) == AppDescriptor::Size, "Invalid packing");
     static_assert(std::is_standard_layout_v<AppDescriptor>, "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
