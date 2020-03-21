@@ -7,6 +7,7 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -89,6 +90,9 @@ public:
 /// To avoid issues, ensure that the entirety of the image can be read x10 in less than the watchdog timeout interval.
 class IROMBackend
 {
+protected:
+    IROMBackend() = default;
+
 public:
     IROMBackend(const IROMBackend&) = delete;
     IROMBackend(IROMBackend&&)      = delete;

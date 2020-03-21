@@ -21,6 +21,9 @@ Checks: >-
   -misc-non-private-member-variables-in-classes,
   -cppcoreguidelines-non-private-member-variables-in-classes,
   -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -modernize-pass-by-value,
+  -hicpp-no-array-decay,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 AnalyzeTemporaryDtors: false
