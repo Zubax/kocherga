@@ -30,11 +30,10 @@ static constexpr std::int8_t ErrAppImageTooLarge = 4;
 /// The structure is mapped to the ROM.
 struct AppInfo
 {
-    static constexpr std::uint8_t Size = 40;
+    static constexpr std::uint8_t Size = 32;
 
     std::uint64_t image_crc{};          ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
     std::uint64_t image_size{};         ///< Size of the application image in bytes.
-    std::uint64_t build_ts_utc_usec{};  ///< UTC Unix time in microseconds when the application was built.
     std::uint64_t vcs_commit{};         ///< Version control system revision ID (e.g., git commit hash).
     std::uint32_t _reserved_{};         ///< Zero when writing, ignore when reading.
     std::uint16_t flags{};              ///< Flags; see the constants. Unused flags shall not be set.

@@ -58,7 +58,7 @@ matrix:
         - make clean
 
         # Tools
-        - ./tools/populate_app_descriptor.py self-test
+        - ./tests/tools/test.sh
 
     # -------------------- Clang 9 --------------------
     - language: cpp
