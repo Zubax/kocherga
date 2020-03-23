@@ -445,7 +445,7 @@ def _main() -> int:
     # Perform the side-patching.
     for path in args.side_patch:
         with open(path, 'rb') as f:
-            data = f.read()
+            data = bytearray(f.read())
         offset = data.find(AppDescriptor.get_search_prefix(model.byte_order, uninitialized_only=True))
         if offset < 0:
             _logger.fatal(f'Side-patching failure: an uninitialized app descriptor could not be found in {path!r}')

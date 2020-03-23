@@ -6,8 +6,4 @@
 #include "kocherga.hpp"
 #include "util.hpp"
 
-
-TEST_CASE("AppLocator")
-{
-
-}
+TEST_CASE("AppLocator") {}

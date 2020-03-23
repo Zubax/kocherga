@@ -32,11 +32,11 @@ struct AppInfo
 {
     static constexpr std::uint8_t Size = 32;
 
-    std::uint64_t image_crc{};          ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
-    std::uint64_t image_size{};         ///< Size of the application image in bytes.
-    std::uint64_t vcs_commit{};         ///< Version control system revision ID (e.g., git commit hash).
-    std::uint32_t _reserved_{};         ///< Zero when writing, ignore when reading.
-    std::uint16_t flags{};              ///< Flags; see the constants. Unused flags shall not be set.
+    std::uint64_t image_crc{};   ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
+    std::uint64_t image_size{};  ///< Size of the application image in bytes.
+    std::uint64_t vcs_commit{};  ///< Version control system revision ID (e.g., git commit hash).
+    std::uint32_t _reserved_{};  ///< Zero when writing, ignore when reading.
+    std::uint16_t flags{};       ///< Flags; see the constants. Unused flags shall not be set.
     std::pair<std::uint8_t, std::uint8_t> version{};  ///< Semantic version numbers, major then minor.
 
     /// Bit mask values of the flags field.
@@ -295,6 +295,7 @@ class AppDataMarshaller
             return crc == crc_computer.get();
         }
     };
+    static_assert(std::is_standard_layout_v<ContainerWrapper>, "Internal error. The compiler is misbehaving perhaps?");
 
     template <std::size_t N>
     using Size = std::integral_constant<std::size_t, N>;
@@ -365,7 +366,6 @@ public:
         if (wrapper.isValid())
         {
             ContainerWrapper empty;
-            std::memset(&empty, 0, sizeof(empty));
             unwindReadWrite<true, 0, sizeof(empty)>(
                 reinterpret_cast<std::byte*>(&empty));  // NOLINT NOSONAR reinterpret_cast<>()
             return wrapper.container;
