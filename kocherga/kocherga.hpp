@@ -30,27 +30,28 @@ static constexpr std::int8_t ErrAppImageTooLarge = 4;
 /// The structure is mapped to the ROM.
 struct AppInfo
 {
-    std::uint64_t image_crc     = 0;  ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
-    std::uint64_t vcs_commit    = 0;  ///< Version control system revision ID (e.g., git commit hash).
-    std::uint32_t image_size    = 0;  ///< Size of the application image in bytes.
-    std::uint32_t timestamp_utc = 0;  ///< UTC Unix time in seconds when the application was built.
-    std::uint32_t _reserved_a_  = 0;  ///< Set to zero when writing, ignore when reading.
-    std::uint8_t  version_major = 0;  ///< Semantic version number, major.
-    std::uint8_t  version_minor = 0;  ///< Semantic version number, minor.
-    std::uint8_t  flags         = 0;  ///< Flags; see the constants. Unused flags shall not be set.
-    std::uint8_t  _reserved_b_  = 0;  ///< Set to zero when writing, ignore when reading.
+    static constexpr std::uint8_t Size = 40;
+
+    std::uint64_t image_crc{};          ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
+    std::uint64_t image_size{};         ///< Size of the application image in bytes.
+    std::uint64_t build_ts_utc_usec{};  ///< UTC Unix time in microseconds when the application was built.
+    std::uint64_t vcs_commit{};         ///< Version control system revision ID (e.g., git commit hash).
+    std::uint32_t _reserved_{};         ///< Zero when writing, ignore when reading.
+    std::uint16_t flags{};              ///< Flags; see the constants. Unused flags shall not be set.
+    std::pair<std::uint8_t, std::uint8_t> version{};  ///< Semantic version numbers, major then minor.
 
     /// Bit mask values of the flags field.
     struct Flags
     {
-        static constexpr std::uint8_t ReleaseBuild = 1U;
-        static constexpr std::uint8_t DirtyBuild   = 2U;
+        static constexpr std::uint16_t DebugBuild = 1U;
+        static constexpr std::uint16_t DirtyBuild = 2U;
     };
 
-    [[nodiscard]] auto isReleaseBuild() const { return (flags & Flags::ReleaseBuild) != 0; }
+    [[nodiscard]] auto isDebugBuild() const { return (flags & Flags::DebugBuild) != 0; }
     [[nodiscard]] auto isDirtyBuild() const { return (flags & Flags::DirtyBuild) != 0; }
 };
-static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler");
+static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler.");
+static_assert(AppInfo::Size == sizeof(AppInfo), "The size of AppInfo is invalid; check your compiler.");
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -199,21 +200,21 @@ private:
 
         [[nodiscard]] auto isValid(const std::uint32_t max_application_image_size) const -> bool
         {
-            return std::equal(std::begin(signature), std::end(signature), std::begin(ReferenceSignature)) &&
-                   (app_info.image_size > 0) && (app_info.image_size <= max_application_image_size) &&
-                   ((app_info.image_size % SignatureSize) == 0);
+            return (signature == ReferenceSignature) && (app_info.image_size > 0) &&
+                   (app_info.image_size <= max_application_image_size) && ((app_info.image_size % SignatureSize) == 0);
         }
 
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
 
     private:
-        static constexpr std::array<std::uint8_t, SignatureSize> ReferenceSignature{
-            {65, 80, 68, 101, 115, 99, 48, 49}};  // APDesc01
+        /// The signature is also used for byte order detection. The value is obtained from a random number generator.
+        static constexpr std::uint64_t ReferenceSignature = 0x5E4415146FC0C4C7ULL;
 
-        alignas(SignatureSize) std::array<std::uint8_t, SignatureSize> signature{};
+        alignas(SignatureSize) std::uint64_t signature{};
         alignas(SignatureSize) AppInfo app_info;
     };
     static_assert(std::is_standard_layout_v<AppDescriptor>, "Check your compiler");
+    static_assert((AppInfo::Size + AppDescriptor::SignatureSize) == sizeof(AppDescriptor), "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
                                         const std::size_t   image_size,
