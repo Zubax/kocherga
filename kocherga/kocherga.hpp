@@ -295,14 +295,14 @@ class AppDataMarshaller
             return crc == crc_computer.get();
         }
     };
-    static_assert(std::is_standard_layout_v<ContainerWrapper>, "Internal error. The compiler is misbehaving perhaps?");
+    static_assert(std::is_standard_layout_v<ContainerWrapper>, "Internal error.");
 
     template <std::size_t N>
     using Size = std::integral_constant<std::size_t, N>;
 
-    template <std::size_t MaxSize, typename T>  // Holy pants why auto doesn't work here
+    template <std::size_t MaxSize, typename T>
     [[nodiscard]] auto readOne(std::byte* const destination, const volatile T* const ptr)
-        -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
+        -> Size<std::min(sizeof(T), MaxSize)>
     {
         const T x = *ptr;  // Guaranteeing proper pointer access
         std::memmove(destination, &x, std::min<std::size_t>(sizeof(T), MaxSize));
@@ -318,7 +318,7 @@ class AppDataMarshaller
 
     template <std::size_t MaxSize, typename T>
     [[nodiscard]] auto writeOne(const std::byte* const source, volatile T* const ptr)
-        -> Size<std::min<std::size_t>(sizeof(T), MaxSize)>
+        -> Size<std::min(sizeof(T), MaxSize)>
     {
         T x = T();
         std::memmove(&x, source, std::min<std::size_t>(sizeof(T), MaxSize));
@@ -374,9 +374,9 @@ public:
     }
 
     /// Writes the data. This function cannot fail.
-    void write(const Container& cont)
+    void write(const Container& data)
     {
-        ContainerWrapper wrapper(cont);
+        ContainerWrapper wrapper(data);
         unwindReadWrite<true, 0, sizeof(wrapper)>(
             reinterpret_cast<std::byte*>(&wrapper));  // NOLINT NOSONAR reinterpret_cast<>()
     }
@@ -455,17 +455,17 @@ public:
 ///
 /// @tparam Container Payload data type, i.e., a structure that should be stored or read.
 ///
-/// @param pointers   List of pointers to registers or memory where the structure will be stored or retrieved from.
+/// @param storage    List of pointers to registers or memory where the structure will be stored or retrieved from.
 ///                   Pointer type defines access mode and size, e.g., a uint32_t pointer will be accessed in
 ///                   32-bit mode, and its memory block will be used to store exactly 4 bytes, etc.
 ///                   Supported pointer sizes are 8, 16, 32, and 64 bit. A single void pointer can be passed as well,
 ///                   in that case all of the data will be simply stored at that pointer using conventional memmove().
 ///
 /// @return An instance of @ref AppDataMarshaller<>.
-template <typename Container, typename... RegisterPointers>
-[[nodiscard]] inline auto makeAppDataMarshaller(RegisterPointers... pointers)
+template <typename Container, typename... Pointers>
+[[nodiscard]] auto makeAppDataMarshaller(Pointers... storage)
 {
-    return detail::AppDataMarshaller<Container, std::tuple<RegisterPointers...>>(std::make_tuple(pointers...));
+    return detail::AppDataMarshaller<Container, std::tuple<Pointers...>>(std::make_tuple(storage...));
 }
 
 }  // namespace kocherga
