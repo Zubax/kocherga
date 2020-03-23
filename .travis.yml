@@ -1,6 +1,9 @@
-dist: xenial
+dist: bionic
 env:
   - CTEST_OUTPUT_ON_FAILURE=1
+
+python:
+  - '3.7'
 
 before_script:
   - sudo apt-get install "linux-*-extra-$(uname -r)"
