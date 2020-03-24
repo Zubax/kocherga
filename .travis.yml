@@ -2,9 +2,6 @@ dist: bionic
 env:
   - CTEST_OUTPUT_ON_FAILURE=1
 
-python:
-  - '3.7'
-
 before_script:
   - sudo apt-get install "linux-*-extra-$(uname -r)"
   - sudo modprobe can
@@ -18,6 +15,7 @@ matrix:
   include:
     # -------------------- GCC + SonarCloud --------------------
     - language: cpp
+      python: '3.7'
       addons:
         sonarcloud:
           organization: uavcan
