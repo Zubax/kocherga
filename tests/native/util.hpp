@@ -99,10 +99,12 @@ public:
     };
 
     /// This overload creates a new file filled as specified. If the file exists, it will be written over.
-    FileROMBackend(const std::string& file_name, const std::size_t rom_size, const std::uint8_t empty_memory_fill) :
-        file_name_(file_name), rom_size_(rom_size)
+    FileROMBackend(const std::filesystem::path& file_path,
+                   const std::size_t            rom_size,
+                   const std::uint8_t           empty_memory_fill) :
+        path_(file_path), rom_size_(rom_size)
     {
-        std::ofstream f(file_name_, std::ios::binary | std::ios::out | std::ios::trunc);
+        std::ofstream f(path_, std::ios::binary | std::ios::out | std::ios::trunc);
         if (f)
         {
             const std::vector<char>
@@ -118,8 +120,8 @@ public:
     }
 
     /// This overload opens an existing file.
-    explicit FileROMBackend(const std::string& file_name) :
-        file_name_(file_name), rom_size_(static_cast<std::size_t>(std::filesystem::file_size(file_name)))
+    explicit FileROMBackend(const std::filesystem::path& file_path) :
+        path_(file_path), rom_size_(static_cast<std::size_t>(std::filesystem::file_size(file_path)))
     {
         checkFileHealth();
     }
@@ -129,7 +131,7 @@ public:
     auto isSameImage(const std::byte* const reference, const std::size_t reference_size) const
     {
         checkFileHealth();
-        if (std::ifstream f(file_name_, std::ios::binary | std::ios::in); f)
+        if (std::ifstream f(path_, std::ios::binary | std::ios::in); f)
         {
             f.seekg(0);
             std::vector<char> buffer(reference_size, '\0');
@@ -147,7 +149,7 @@ public:
         assert(out <= size);
         assert((out + offset) <= rom_size_);
         checkFileHealth();
-        if (std::ifstream f(file_name_, std::ios::binary | std::ios::in); f)
+        if (std::ifstream f(path_, std::ios::binary | std::ios::in); f)
         {
             f.seekg(static_cast<std::streamoff>(offset));
             f.read(reinterpret_cast<char*>(out_data),  // NOLINT NOSONAR reinterpret_cast
@@ -165,7 +167,7 @@ public:
 private:
     void checkFileHealth() const
     {
-        if (std::filesystem::file_size(file_name_) != rom_size_)
+        if (std::filesystem::file_size(path_) != rom_size_)
         {
             throw Error("Invalid size of the ROM mapping file");
         }
@@ -214,7 +216,7 @@ private:
         const std::size_t out = ((offset + size) > rom_size_) ? (rom_size_ - offset) : size;
         assert(out <= size);
         assert((out + offset) <= rom_size_);
-        if (std::ofstream f(file_name_, std::ios::binary | std::ios::out | std::ios::in); f)
+        if (std::ofstream f(path_, std::ios::binary | std::ios::out | std::ios::in); f)
         {
             f.seekp(static_cast<std::streamoff>(offset));
             f.write(reinterpret_cast<const char*>(data),  // NOLINT NOSONAR reinterpret_cast
@@ -225,13 +227,38 @@ private:
         throw Error("Could not open the ROM emulation file for writing");
     }
 
-    const std::string file_name_;
-    const std::size_t rom_size_;
+    const std::filesystem::path path_;
+    const std::size_t           rom_size_;
 
     mutable std::uint64_t read_count_          = 0;
     std::uint64_t         write_count_         = 0;
     bool                  upgrade_in_progress_ = false;
     bool                  trigger_failure_     = false;
 };
+
+class EnvironmentError : public std::runtime_error
+{
+public:
+    explicit EnvironmentError(const std::string& x) : std::runtime_error(x) {}
+};
+
+/// A safe wrapper over the standard getenv() that returns an empty option if the variable is not set.
+inline auto getEnvironmentVariable(const std::string& name) -> std::optional<std::string>
+{
+    if (const auto st = std::getenv(name.c_str()); st != nullptr)
+    {
+        return std::string(st);
+    }
+    return {};
+}
+
+inline auto getSourceDir() -> std::filesystem::path
+{
+    if (const auto path = getEnvironmentVariable("SOURCE_DIR"))
+    {
+        return std::filesystem::path(*path);
+    }
+    throw EnvironmentError("The environment variable SOURCE_DIR shall be set.");
+}
 
 }  // namespace util

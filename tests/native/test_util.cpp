@@ -32,7 +32,7 @@ TEST_CASE("util::FileROMBackend")
     const std::vector<std::byte> ref3(123, std::byte{0xAA});
     REQUIRE(!back.isSameImage(ref3.data(), ref3.size()));
 
-    util::FileROMBackend existing("test_rom.bin.tmp");
+    const util::FileROMBackend existing("test_rom.bin.tmp");
     REQUIRE(existing.getSize() == 1024U);
     REQUIRE(existing.isSameImage(ref.data(), ref.size()));
 
@@ -82,7 +82,7 @@ TEST_CASE("util::FileROMBackend")
     REQUIRE(std::all_of(buf1.begin() + 128, buf1.begin() + 512, [](auto x) { return x == std::byte{0xFF}; }));
     REQUIRE(std::all_of(buf1.begin() + 512, buf1.begin() + 640, [](auto x) { return x == std::byte{0xAA}; }));
 
-    REQUIRE(1024 == static_cast<kocherga::IROMBackend&>(existing).read(0, buf1.data(), 2000));
+    REQUIRE(1024 == static_cast<const kocherga::IROMBackend&>(existing).read(0, buf1.data(), 2000));
     REQUIRE(std::all_of(buf1.begin() + 0, buf1.begin() + 128, [](auto x) { return x == std::byte{0xAA}; }));
     REQUIRE(std::all_of(buf1.begin() + 128, buf1.begin() + 512, [](auto x) { return x == std::byte{0xFF}; }));
     REQUIRE(std::all_of(buf1.begin() + 512, buf1.begin() + 640, [](auto x) { return x == std::byte{0xAA}; }));

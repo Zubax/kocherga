@@ -35,9 +35,9 @@ struct AppInfo
     std::uint64_t image_crc{};   ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
     std::uint64_t image_size{};  ///< Size of the application image in bytes.
     std::uint64_t vcs_commit{};  ///< Version control system revision ID (e.g., git commit hash).
-    std::uint32_t _reserved_{};  ///< Zero when writing, ignore when reading.
+    std::uint32_t reserved{};    ///< Zero when writing, ignore when reading.
     std::uint16_t flags{};       ///< Flags; see the constants. Unused flags shall not be set.
-    std::pair<std::uint8_t, std::uint8_t> version{};  ///< Semantic version numbers, major then minor.
+    std::array<std::uint8_t, 2> version{};  ///< Semantic version numbers, major then minor.
 
     /// Bit mask values of the flags field.
     struct Flags
@@ -80,6 +80,8 @@ public:
 /// The read() method may be invoked at any time. Its performance is critical.
 /// Slow access may lead to watchdog timeouts (assuming that the watchdog is used) and/or disruption of communications.
 /// To avoid issues, ensure that the entirety of the image can be read x10 in less than the watchdog timeout interval.
+///
+/// The zero offset shall point to the beginning of the ROM segment dedicated to the application.
 class IROMBackend
 {
 protected:
@@ -185,7 +187,7 @@ private:
 class AppLocator
 {
 public:
-    AppLocator(IROMBackend& backend, const std::uint32_t max_application_image_size) :
+    AppLocator(const IROMBackend& backend, const std::uint32_t max_application_image_size) :
         max_application_image_size_(max_application_image_size), backend_(backend)
     {}
 
@@ -230,13 +232,15 @@ private:
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
 
     private:
-        /// The signature is also used for byte order detection. The value is obtained from a random number generator.
+        /// The signature is also used for byte order detection.
+        /// The value of the signature was obtained from a random number generator, it does not mean anything.
         static constexpr std::uint64_t ReferenceSignature = 0x5E44'1514'6FC0'C4C7ULL;
 
         alignas(SignatureSize) std::uint64_t signature{};
         alignas(SignatureSize) AppInfo app_info;
     };
-    static_assert(std::is_standard_layout_v<AppDescriptor>, "Check your compiler");
+    static_assert(std::is_standard_layout_v<AppDescriptor> && std::is_trivially_copyable_v<AppDescriptor>,
+                  "Check your compiler");
     static_assert((AppInfo::Size + AppDescriptor::SignatureSize) == sizeof(AppDescriptor), "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
@@ -290,7 +294,7 @@ private:
     static constexpr std::size_t ROMBufferSize = 256;
 
     const std::uint32_t max_application_image_size_;
-    IROMBackend&        backend_;
+    const IROMBackend&  backend_;
 };
 
 }  // namespace detail
@@ -301,10 +305,6 @@ private:
 /// Larger buffer enables faster CRC verification, which is important, especially with large firmwares.
 class Bootloader
 {
-    const std::uint32_t max_application_image_size_;
-    IPlatform&          platform_;
-    IROMBackend&        backend_;
-
 public:
     /// The max application image size parameter is very important for performance reasons;
     /// without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
@@ -327,6 +327,11 @@ public:
         (void) &Bootloader::run;
         return app_info;
     }
+
+protected:
+    const std::uint32_t max_application_image_size_;
+    IPlatform&          platform_;
+    IROMBackend&        backend_;
 };
 
 // --------------------------------------------------------------------------------------------------------------------

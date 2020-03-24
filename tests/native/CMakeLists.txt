@@ -59,7 +59,9 @@ function(gen_test name files compile_definitions compile_flags link_flags)
     target_compile_definitions(${name} PUBLIC ${compile_definitions})
     target_link_libraries(${name} pthread)
     set_target_properties(${name} PROPERTIES COMPILE_FLAGS "${compile_flags}" LINK_FLAGS "${link_flags}")
+
     add_test("run_${name}" "${name}" --rng-seed time)
+    set_tests_properties("run_${name}" PROPERTIES ENVIRONMENT SOURCE_DIR=${CMAKE_SOURCE_DIR})
 endfunction()
 
 file(GLOB test_sources ${CMAKE_SOURCE_DIR}/test_*.cpp)
