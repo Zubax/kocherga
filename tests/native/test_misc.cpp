@@ -12,9 +12,11 @@
 TEST_CASE("CRC")
 {
     kocherga::detail::CRC64 crc;
-    crc.add(reinterpret_cast<const std::byte*>("12345"), 5);  // NOSONAR NOLINT reinterpret_cast
+    const char*             val = "12345";
+    crc.add(reinterpret_cast<const std::byte*>(val), 5);  // NOSONAR NOLINT reinterpret_cast
     crc.add(nullptr, 0);
-    crc.add(reinterpret_cast<const std::byte*>("6789"), 4);  // NOSONAR NOLINT reinterpret_cast
+    val = "6789";
+    crc.add(reinterpret_cast<const std::byte*>(val), 4);  // NOSONAR NOLINT reinterpret_cast
 
     REQUIRE(0x62EC'59E3'F1A4'F00AULL == crc.get());
     REQUIRE(crc.getBytes().at(0) == std::byte{0x62U});

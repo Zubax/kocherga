@@ -17,8 +17,11 @@
 
 namespace kocherga
 {
+/// Semantic version number pair: major then minor.
+using SemanticVersion = std::array<std::uint8_t, 2>;
+
 /// Version of the library, major and minor.
-static constexpr std::pair<std::uint8_t, std::uint8_t> Version{1, 0};
+static constexpr SemanticVersion Version{{1, 0}};
 
 /// Error codes.  These are returned from functions in negated form, e.g., -100 means error code 100.
 static constexpr std::int8_t ErrInvalidParams    = 2;
@@ -27,17 +30,24 @@ static constexpr std::int8_t ErrAppImageTooLarge = 4;
 
 // --------------------------------------------------------------------------------------------------------------------
 
+/// The transport-specific node abstraction interface. Kocherga runs a separate node per transport interface.
+/// If redundant transports are desired, they should be implemented in a custom implementation of INode.
+class INode
+{};
+
+// --------------------------------------------------------------------------------------------------------------------
+
 /// The structure is mapped to the ROM.
 struct AppInfo
 {
     static constexpr std::uint8_t Size = 32;
 
-    std::uint64_t image_crc;              ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
-    std::uint64_t image_size;             ///< Size of the application image in bytes.
-    std::uint64_t vcs_commit;             ///< Version control system revision ID (e.g., git commit hash).
-    std::uint32_t reserved;               ///< Zero when writing, ignore when reading.
-    std::uint16_t flags;                  ///< Flags; see the constants. Unused flags shall not be set.
-    std::array<std::uint8_t, 2> version;  ///< Semantic version numbers, major then minor.
+    std::uint64_t   image_crc;   ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
+    std::uint64_t   image_size;  ///< Size of the application image in bytes.
+    std::uint64_t   vcs_commit;  ///< Version control system revision ID (e.g., git commit hash).
+    std::uint32_t   reserved;    ///< Zero when writing, ignore when reading.
+    std::uint16_t   flags;       ///< Flags; see the constants. Unused flags shall not be set.
+    SemanticVersion version;     ///< Semantic version numbers, major then minor.
 
     /// Bit mask values of the flags field.
     struct Flags
@@ -183,7 +193,7 @@ private:
     std::uint64_t crc_ = Xor;
 };
 
-/// Detects the application in the ROM, verifies it, and retrieves the information about it.
+/// Detects the application in the ROM, verifies its integrity, and retrieves the information about it.
 class AppLocator
 {
 public:
@@ -191,6 +201,7 @@ public:
         max_application_image_size_(max_application_image_size), backend_(backend)
     {}
 
+    /// Returns the AppInfo if the application is found and its integrity is intact. Otherwise, returns an empty option.
     [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
     {
         for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
@@ -322,7 +333,7 @@ public:
         return app_info;
     }
 
-protected:
+private:
     const std::uint32_t max_application_image_size_;
     IPlatform&          platform_;
     IROMBackend&        backend_;
@@ -342,8 +353,9 @@ protected:
 /// that there is no data to read (the latter typically occurs when the bootloader is started after power-on reset,
 /// a power loss, or a hard reset).
 ///
-/// The stored data type shall be a trivial type. The storage space shall be large enough to accommodate an
-/// instance of the stored data type plus eight bytes for the CRC (no padding inserted).
+/// The stored data type shall be a trivial type (see https://en.cppreference.com/w/cpp/named_req/TrivialType).
+/// The storage space shall be large enough to accommodate an instance of the stored data type plus eight bytes
+/// for the CRC (no padding inserted).
 ///
 /// Here is a usage example. Initialization:
 ///
@@ -398,8 +410,7 @@ public:
     }
 
 protected:
-    static_assert(std::is_trivial_v<Container>,
-                  "Container shall be a trivial type: https://en.cppreference.com/w/cpp/named_req/TrivialType.");
+    static_assert(std::is_trivial_v<Container>, "Container shall be a trivial type.");
 
     static constexpr std::uint8_t EraseFillValue = 0xCA;
 
