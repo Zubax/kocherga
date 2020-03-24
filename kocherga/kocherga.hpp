@@ -32,12 +32,12 @@ struct AppInfo
 {
     static constexpr std::uint8_t Size = 32;
 
-    std::uint64_t image_crc{};   ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
-    std::uint64_t image_size{};  ///< Size of the application image in bytes.
-    std::uint64_t vcs_commit{};  ///< Version control system revision ID (e.g., git commit hash).
-    std::uint32_t reserved{};    ///< Zero when writing, ignore when reading.
-    std::uint16_t flags{};       ///< Flags; see the constants. Unused flags shall not be set.
-    std::array<std::uint8_t, 2> version{};  ///< Semantic version numbers, major then minor.
+    std::uint64_t image_crc;              ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
+    std::uint64_t image_size;             ///< Size of the application image in bytes.
+    std::uint64_t vcs_commit;             ///< Version control system revision ID (e.g., git commit hash).
+    std::uint32_t reserved;               ///< Zero when writing, ignore when reading.
+    std::uint16_t flags;                  ///< Flags; see the constants. Unused flags shall not be set.
+    std::array<std::uint8_t, 2> version;  ///< Semantic version numbers, major then minor.
 
     /// Bit mask values of the flags field.
     struct Flags
@@ -49,8 +49,8 @@ struct AppInfo
     [[nodiscard]] auto isDebugBuild() const { return (flags & Flags::DebugBuild) != 0; }
     [[nodiscard]] auto isDirtyBuild() const { return (flags & Flags::DirtyBuild) != 0; }
 };
-static_assert(std::is_standard_layout_v<AppInfo>, "AppInfo is not standard layout; check your compiler.");
-static_assert(AppInfo::Size == sizeof(AppInfo), "The size of AppInfo is invalid; check your compiler.");
+static_assert(std::is_trivial_v<AppInfo>, "Check your compiler.");
+static_assert(AppInfo::Size == sizeof(AppInfo), "Check your compiler.");
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -128,7 +128,7 @@ class CRC64
 public:
     static constexpr std::size_t Size = 8U;
 
-    void add(const std::uint8_t* const data, const std::size_t len)
+    void add(const std::byte* const data, const std::size_t len)
     {
         auto bytes = data;
         for (auto remaining = len; remaining > 0; remaining--)
@@ -155,14 +155,14 @@ public:
 
     /// The current CRC value represented as a big-endian sequence of bytes.
     /// This method is designed for inserting the computed CRC value after the data.
-    [[nodiscard]] auto getBytes() const -> std::array<std::uint8_t, Size>
+    [[nodiscard]] auto getBytes() const -> std::array<std::byte, Size>
     {
-        auto                           x = get();
-        std::array<std::uint8_t, Size> out{};
-        const auto                     rend = std::rend(out);
+        auto                        x = get();
+        std::array<std::byte, Size> out{};
+        const auto                  rend = std::rend(out);
         for (auto it = std::rbegin(out); it != rend; ++it)
         {
-            *it = static_cast<std::uint8_t>(x);
+            *it = static_cast<std::byte>(static_cast<std::uint8_t>(x));
             x >>= BitsPerByte;
         }
         return out;
@@ -195,7 +195,7 @@ public:
     {
         for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
         {
-            AppDescriptor desc;
+            AppDescriptor desc{};
             if (sizeof(desc) == backend_.read(offset,
                                               reinterpret_cast<std::byte*>(&desc),  // NOLINT NOSONAR reinterpret_cast
                                               sizeof(desc)))
@@ -236,27 +236,24 @@ private:
         /// The value of the signature was obtained from a random number generator, it does not mean anything.
         static constexpr std::uint64_t ReferenceSignature = 0x5E44'1514'6FC0'C4C7ULL;
 
-        alignas(SignatureSize) std::uint64_t signature{};
-        alignas(SignatureSize) AppInfo app_info;
+        std::uint64_t signature;
+        AppInfo       app_info;
     };
-    static_assert(std::is_standard_layout_v<AppDescriptor> && std::is_trivially_copyable_v<AppDescriptor>,
-                  "Check your compiler");
+    static_assert(std::is_trivial_v<AppDescriptor>, "Check your compiler");
     static_assert((AppInfo::Size + AppDescriptor::SignatureSize) == sizeof(AppDescriptor), "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
                                         const std::size_t   image_size,
                                         const std::uint64_t image_crc) const -> bool
     {
-        std::array<std::uint8_t, ROMBufferSize> buffer{};
-        CRC64                                   crc;
-        std::size_t                             offset = 0U;
+        std::array<std::byte, ROMBufferSize> buffer{};
+        CRC64                                crc;
+        std::size_t                          offset = 0U;
         // Read large chunks until the CRC field is reached (in most cases it will fit in just one chunk).
         while (offset < crc_storage_offset)
         {
             const auto res =
-                backend_.read(offset,
-                              reinterpret_cast<std::byte*>(buffer.data()),  // NOLINT NOSONAR reinterpret_cast
-                              std::min(std::size(buffer), crc_storage_offset - offset));
+                backend_.read(offset, buffer.data(), std::min(std::size(buffer), crc_storage_offset - offset));
             if (res > 0)
             {
                 offset += res;
@@ -268,16 +265,13 @@ private:
             }
         }
         // Fill CRC with zero.
-        static const std::array<std::uint8_t, CRC64::Size> dummy{};
-        offset += std::size(dummy);
-        crc.add(dummy.data(), std::size(dummy));
+        static const std::array<std::byte, CRC64::Size> dummy{};
+        offset += CRC64::Size;
+        crc.add(dummy.data(), CRC64::Size);
         // Read the rest of the image in large chunks.
         while (offset < image_size)
         {
-            const auto res =
-                backend_.read(offset,
-                              reinterpret_cast<std::byte*>(buffer.data()),  // NOLINT NOSONAR reinterpret_cast
-                              std::min(std::size(buffer), image_size - offset));
+            const auto res = backend_.read(offset, buffer.data(), std::min(std::size(buffer), image_size - offset));
             if (res > 0)
             {
                 offset += res;
@@ -348,7 +342,7 @@ protected:
 /// that there is no data to read (the latter typically occurs when the bootloader is started after power-on reset,
 /// a power loss, or a hard reset).
 ///
-/// The stored data type shall be trivially copyable. The storage space shall be large enough to accommodate an
+/// The stored data type shall be a trivial type. The storage space shall be large enough to accommodate an
 /// instance of the stored data type plus eight bytes for the CRC (no padding inserted).
 ///
 /// Here is a usage example. Initialization:
@@ -375,7 +369,7 @@ public:
     /// The amount of memory required to store the data. This is the size of the container plus 8 bytes.
     static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;
 
-    explicit VolatileStorage(std::uint8_t* const location) : ptr_(location) {}
+    explicit VolatileStorage(std::byte* const location) : ptr_(location) {}
 
     /// Checks if the data is available and reads it, then erases the storage to prevent deja-vu.
     /// Returns an empty option if no data is available (in that case the storage is not erased).
@@ -404,12 +398,12 @@ public:
     }
 
 protected:
-    static_assert(std::is_standard_layout_v<Container> && std::is_trivially_copyable_v<Container>,
-                  "Container must be a trivially copyable standard layout type.");
+    static_assert(std::is_trivial_v<Container>,
+                  "Container shall be a trivial type: https://en.cppreference.com/w/cpp/named_req/TrivialType.");
 
     static constexpr std::uint8_t EraseFillValue = 0xCA;
 
-    std::uint8_t* const ptr_;
+    std::byte* const ptr_;
 };
 
 }  // namespace kocherga

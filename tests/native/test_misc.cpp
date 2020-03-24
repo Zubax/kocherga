@@ -11,22 +11,20 @@
 
 TEST_CASE("CRC")
 {
-    const std::array<std::uint8_t, 9> ref{49, 50, 51, 52, 53, 54, 55, 56, 57};
-
     kocherga::detail::CRC64 crc;
-    crc.add(ref.data(), 5);
+    crc.add(reinterpret_cast<const std::byte*>("12345"), 5);  // NOSONAR NOLINT reinterpret_cast
     crc.add(nullptr, 0);
-    crc.add(&ref.at(5), 4);
+    crc.add(reinterpret_cast<const std::byte*>("6789"), 4);  // NOSONAR NOLINT reinterpret_cast
 
     REQUIRE(0x62EC'59E3'F1A4'F00AULL == crc.get());
-    REQUIRE(crc.getBytes().at(0) == 0x62U);
-    REQUIRE(crc.getBytes().at(1) == 0xECU);
-    REQUIRE(crc.getBytes().at(2) == 0x59U);
-    REQUIRE(crc.getBytes().at(3) == 0xE3U);
-    REQUIRE(crc.getBytes().at(4) == 0xF1U);
-    REQUIRE(crc.getBytes().at(5) == 0xA4U);
-    REQUIRE(crc.getBytes().at(6) == 0xF0U);
-    REQUIRE(crc.getBytes().at(7) == 0x0AU);
+    REQUIRE(crc.getBytes().at(0) == std::byte{0x62U});
+    REQUIRE(crc.getBytes().at(1) == std::byte{0xECU});
+    REQUIRE(crc.getBytes().at(2) == std::byte{0x59U});
+    REQUIRE(crc.getBytes().at(3) == std::byte{0xE3U});
+    REQUIRE(crc.getBytes().at(4) == std::byte{0xF1U});
+    REQUIRE(crc.getBytes().at(5) == std::byte{0xA4U});
+    REQUIRE(crc.getBytes().at(6) == std::byte{0xF0U});
+    REQUIRE(crc.getBytes().at(7) == std::byte{0x0AU});
 
     REQUIRE(!crc.isResidueCorrect());
     crc.add(crc.getBytes().data(), 8);
@@ -38,14 +36,14 @@ TEST_CASE("VolatileStorage")
 {
     struct Data
     {
-        std::uint64_t               a = 0;
-        std::uint8_t                b = 0;
-        std::array<std::uint8_t, 3> c{};
+        std::uint64_t               a;
+        std::uint8_t                b;
+        std::array<std::uint8_t, 3> c;
     };
     static_assert(sizeof(Data) <= 16);
     static_assert(kocherga::VolatileStorage<Data>::StorageSize == (sizeof(Data) + 8U));
 
-    std::array<std::uint8_t, kocherga::VolatileStorage<Data>::StorageSize> arena{};
+    std::array<std::byte, kocherga::VolatileStorage<Data>::StorageSize> arena{};
 
     kocherga::VolatileStorage<Data> marshaller(arena.data());
 
@@ -55,8 +53,8 @@ TEST_CASE("VolatileStorage")
     // Writing zeros and checking the representation
     marshaller.store(Data());
     std::cout << util::makeHexDump(arena) << std::endl;
-    REQUIRE(std::all_of(arena.begin(), arena.begin() + 12, [](auto x) { return x == 0U; }));          // Zero payload
-    REQUIRE(std::any_of(arena.begin() + sizeof(Data), arena.end(), [](auto x) { return x != 0U; }));  // CRC non-zero
+    REQUIRE(std::all_of(arena.begin(), arena.begin() + 12, [](auto x) { return x == std::byte{0}; }));
+    REQUIRE(std::any_of(arena.begin() + sizeof(Data), arena.end(), [](auto x) { return x != std::byte{0}; }));
 
     // Reading and making sure it's erased afterwards
     auto rd = marshaller.take();
@@ -68,7 +66,7 @@ TEST_CASE("VolatileStorage")
     REQUIRE(rd->c[2] == 0);
 
     std::cout << util::makeHexDump(arena) << std::endl;
-    REQUIRE(std::all_of(arena.begin(), arena.end(), [](auto x) { return x == 0xCAU; }));
+    REQUIRE(std::all_of(arena.begin(), arena.end(), [](auto x) { return x == std::byte{0xCAU}; }));
     REQUIRE(!marshaller.take());
 
     // Writing non-zeros and checking the representation
@@ -88,6 +86,6 @@ TEST_CASE("VolatileStorage")
     REQUIRE(rd->c[1] == 2);
     REQUIRE(rd->c[2] == 3);
     std::cout << util::makeHexDump(arena) << std::endl;
-    REQUIRE(std::all_of(arena.begin(), arena.end(), [](auto x) { return x == 0xCAU; }));
+    REQUIRE(std::all_of(arena.begin(), arena.end(), [](auto x) { return x == std::byte{0xCAU}; }));
     REQUIRE(!marshaller.take());
 }
