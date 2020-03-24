@@ -194,7 +194,8 @@ private:
         checkFileHealth();
         if (trigger_failure_)
         {
-            return {};
+            // Can't use {} because of a bug in GCC: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=92092
+            return std::optional<std::size_t>(std::nullopt);
         }
         const std::size_t out = ((offset + size) > rom_size_) ? (rom_size_ - offset) : size;
         assert(out <= size);

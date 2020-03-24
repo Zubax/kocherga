@@ -120,17 +120,9 @@ namespace detail
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to
 /// achieve the optimal balance between speed and ROM footprint.
-/// The function is CRC-64-WE, see http://reveng.sourceforge.net/crc-catalogue/17plus.htm#crc.cat-bits.64.
+/// The function is CRC-64/WE, see http://reveng.sourceforge.net/crc-catalogue/17plus.htm#crc.cat-bits.64.
 class CRC64
 {
-    static constexpr auto Poly = static_cast<std::uint64_t>(0x42F0'E1EB'A9EA'3693ULL);
-    static constexpr auto Mask = static_cast<std::uint64_t>(1) << 63U;
-    static constexpr auto Xor  = static_cast<std::uint64_t>(0xFFFF'FFFF'FFFF'FFFFULL);
-
-    static constexpr auto InputShift = 56U;
-
-    std::uint64_t crc_ = Xor;
-
 public:
     static constexpr std::size_t Size = 8U;
 
@@ -156,7 +148,36 @@ public:
         }
     }
 
+    /// The current CRC value.
     [[nodiscard]] auto get() const { return crc_ ^ Xor; }
+
+    /// The current CRC value represented as a big-endian sequence of bytes.
+    /// This method is designed for inserting the computed CRC value after the data.
+    [[nodiscard]] auto getBytes() const -> std::array<std::uint8_t, Size>
+    {
+        auto                           x = get();
+        std::array<std::uint8_t, Size> out{};
+        for (auto it = std::rbegin(out); it != std::rend(out); ++it)
+        {
+            *it = static_cast<std::uint8_t>(x);
+            x >>= BitsPerByte;
+        }
+        return out;
+    }
+
+    /// True if the current CRC value is a correct residue (i.e., CRC verification successful).
+    [[nodiscard]] auto isResidueCorrect() const { return crc_ == Residue; }
+
+private:
+    static constexpr auto Poly    = static_cast<std::uint64_t>(0x42F0'E1EB'A9EA'3693ULL);
+    static constexpr auto Mask    = static_cast<std::uint64_t>(1) << 63U;
+    static constexpr auto Xor     = static_cast<std::uint64_t>(0xFFFF'FFFF'FFFF'FFFFULL);
+    static constexpr auto Residue = static_cast<std::uint64_t>(0xFCAC'BEBD'5931'A992ULL);
+
+    static constexpr auto BitsPerByte = 8U;
+    static constexpr auto InputShift  = 56U;
+
+    std::uint64_t crc_ = Xor;
 };
 
 /// Detects the application in the ROM, verifies it, and retrieves the information about it.
@@ -264,124 +285,6 @@ private:
     IROMBackend&        backend_;
 };
 
-/// Refer to the factory function makeAppDataMarshaller().
-template <typename Container, typename Pointers>
-class AppDataMarshaller
-{
-    static_assert(std::is_standard_layout_v<Container>, "Container must be a standard layout type.");
-
-    Pointers pointers_;
-
-    struct ContainerWrapper
-    {
-        std::uint64_t crc = 0;
-        Container     container{};
-
-        ContainerWrapper() = default;
-
-        explicit ContainerWrapper(const Container& c) : container(c)
-        {
-            detail::CRC64 crc_computer;
-            crc_computer.add(reinterpret_cast<const std::uint8_t*>(&container),  // NOLINT NOSONAR reinterpret_cast<>()
-                             sizeof(container));
-            crc = crc_computer.get();
-        }
-
-        [[nodiscard]] auto isValid() const
-        {
-            detail::CRC64 crc_computer;
-            crc_computer.add(reinterpret_cast<const std::uint8_t*>(&container),  // NOLINT NOSONAR reinterpret_cast<>()
-                             sizeof(container));
-            return crc == crc_computer.get();
-        }
-    };
-    static_assert(std::is_standard_layout_v<ContainerWrapper>, "Internal error.");
-
-    template <std::size_t N>
-    using Size = std::integral_constant<std::size_t, N>;
-
-    template <std::size_t MaxSize, typename T>
-    [[nodiscard]] auto readOne(std::byte* const destination, const volatile T* const ptr)
-        -> Size<std::min(sizeof(T), MaxSize)>
-    {
-        const T x = *ptr;  // Guaranteeing proper pointer access
-        std::memmove(destination, &x, std::min<std::size_t>(sizeof(T), MaxSize));
-        return {};
-    }
-
-    template <std::size_t MaxSize>
-    [[nodiscard]] auto readOne(std::byte* const destination, const void* const ptr) -> Size<MaxSize>
-    {
-        std::memmove(destination, ptr, MaxSize);
-        return {};
-    }
-
-    template <std::size_t MaxSize, typename T>
-    [[nodiscard]] auto writeOne(const std::byte* const source, volatile T* const ptr)
-        -> Size<std::min(sizeof(T), MaxSize)>
-    {
-        T x = T();
-        std::memmove(&x, source, std::min<std::size_t>(sizeof(T), MaxSize));
-        *ptr = x;  // Guaranteeing proper pointer access
-        return {};
-    }
-
-    template <std::size_t MaxSize>
-    [[nodiscard]] auto writeOne(const std::byte* const source, void* const ptr) -> Size<MaxSize>
-    {
-        std::memmove(ptr, source, MaxSize);
-        return {};
-    }
-
-    template <bool WriteNotRead, std::size_t PtrIndex, std::size_t RemainingSize>
-    auto unwindReadWrite(std::byte* const structure) -> std::enable_if_t<(RemainingSize > 0)>
-    {
-        static_assert(PtrIndex < std::tuple_size<Pointers>::value, "Storage is not large enough for the structure");
-        const auto ret = WriteNotRead ? writeOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_))
-                                      : readOne<RemainingSize>(structure, std::get<PtrIndex>(pointers_));
-        constexpr auto Increment = decltype(ret)::value;
-        static_assert(RemainingSize >= Increment);
-        unwindReadWrite<WriteNotRead, PtrIndex + 1U, RemainingSize - Increment>(
-            structure + Increment);  // NOSONAR NOLINT pointer arithmetic
-    }
-
-    template <bool, std::size_t, std::size_t RemainingSize>
-    auto unwindReadWrite(const std::byte* const structure) -> std::enable_if_t<(RemainingSize == 0)>
-    {
-        (void) structure;
-        // Here we could implement a check whether all storage has been utilized.
-    }
-
-public:
-    /// Do not instantiate this class manually. Use the factory makeAppDataMarshaller() instead.
-    explicit AppDataMarshaller(const Pointers ps) : pointers_(std::move(ps)) {}
-
-    /// Checks if the data is available and reads it; then erases the storage to prevent deja-vu.
-    /// Returns an empty option if no data is available (in that case the storage is not erased).
-    [[nodiscard]] auto readAndErase() -> std::optional<Container>
-    {
-        ContainerWrapper wrapper;
-        unwindReadWrite<false, 0, sizeof(wrapper)>(
-            reinterpret_cast<std::byte*>(&wrapper));  // NOLINT NOSONAR reinterpret_cast<>()
-        if (wrapper.isValid())
-        {
-            ContainerWrapper empty;
-            unwindReadWrite<true, 0, sizeof(empty)>(
-                reinterpret_cast<std::byte*>(&empty));  // NOLINT NOSONAR reinterpret_cast<>()
-            return wrapper.container;
-        }
-        return {};
-    }
-
-    /// Writes the data. This function cannot fail.
-    void write(const Container& data)
-    {
-        ContainerWrapper wrapper(data);
-        unwindReadWrite<true, 0, sizeof(wrapper)>(
-            reinterpret_cast<std::byte*>(&wrapper));  // NOLINT NOSONAR reinterpret_cast<>()
-    }
-};
-
 }  // namespace detail
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -420,23 +323,29 @@ public:
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// Constructs an object that can be used to store and retrieve data for exchange with the application.
-/// The data is CRC-64 protected to ensure its validity.
-/// Two usage scenarios are supported:
+/// This helper class allows the bootloader and the application to exchange arbitrary data in a robust way.
+/// The data is stored in the specified memory location (usually it is a small dedicated area a few hundred bytes
+/// large at the very end of the slowest RAM segment) together with a strong CRC64 hash to ensure its validity.
+/// When one component (either the bootloader or the application) needs to pass data to another (e.g., when commencing
+/// the upgrade process, the application needs to reboot into the bootloader and pass specific parameters to it),
+/// the data is prepared in a particular application-specific data structure which is then passed into this class.
+/// The class writes the data structure into the provided memory region and appends the CRC64 hash immediately
+/// afterwards (no padding inserted). The other component then checks the memory region where the data is expected to
+/// be found and validates its CRC; if the CRC matches, the data is reported to be found, otherwise it is reported
+/// that there is no data to read (the latter typically occurs when the bootloader is started after power-on reset,
+/// a power loss, or a hard reset).
 ///
-///  1. Simple - the data is simply stored at a dedicated location in RAM. Normally this approach is recommended.
-///     Normally the reserved area would be situated at the very end of the RAM.
+/// The stored data type shall be trivially copyable. The storage space shall be large enough to accommodate an
+/// instance of the stored data type plus eight bytes for the CRC (no padding inserted).
 ///
-///  2. Memory-efficient - the data is scattered across a set of special-function registers specified by the user.
-///     This approach permits the user to avoid reserving any memory regions for data exchange, which is
-///     useful in RAM-constrained systems.
+/// Here is a usage example. Initialization:
 ///
-/// Usage example:
+///     struct MyDataStructureForExchangeBetweenBootloaderAndApplication;
+///     VolatileStorage<MyDataStructureForExchangeBetweenBootloaderAndApplication> storage(my_memory_location);
 ///
-///     // The list of registers can be replaced with a single void* pointer to a specific memory region.
-///     auto marshaller = makeAppDataMarshaller<DataType>(&REG_A, &REG_B, &REG_C, &REG_D, &REG_E, &REG_F);
-///     // Reading data (always destructively):
-///     if (auto data = marshaller.readAndErase())
+/// Reading the data from the storage (the storage is always erased when reading to prevent deja-vu after restart):
+///
+///     if (auto data = storage.take())
 ///     {
 ///         // Process the data...
 ///     }
@@ -444,28 +353,50 @@ public:
 ///     {
 ///         // Data is not available (not stored)
 ///     }
-///     // Writing data:
-///     marshaller.write(the_data);
 ///
-/// The following memory layout is used for the shared struct:
-///
-///      Offset  Length  Purpose
-///      0       8       CRC64 of the following payload. Must be 8-byte aligned (or more if required by the platform).
-///      8       >0      Payload written by the application or by the bootloader.
-///
-/// @tparam Container Payload data type, i.e., a structure that should be stored or read.
-///
-/// @param storage    List of pointers to registers or memory where the structure will be stored or retrieved from.
-///                   Pointer type defines access mode and size, e.g., a uint32_t pointer will be accessed in
-///                   32-bit mode, and its memory block will be used to store exactly 4 bytes, etc.
-///                   Supported pointer sizes are 8, 16, 32, and 64 bit. A single void pointer can be passed as well,
-///                   in that case all of the data will be simply stored at that pointer using conventional memmove().
-///
-/// @return An instance of @ref AppDataMarshaller<>.
-template <typename Container, typename... Pointers>
-[[nodiscard]] auto makeAppDataMarshaller(Pointers... storage)
+/// Writing the data into the storage: storage.store(data).
+template <typename Container>
+class VolatileStorage
 {
-    return detail::AppDataMarshaller<Container, std::tuple<Pointers...>>(std::make_tuple(storage...));
-}
+public:
+    /// The amount of memory required to store the data. This is the size of the container plus 8 bytes.
+    static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;
+
+    explicit VolatileStorage(std::uint8_t* const location) : ptr_(location) {}
+
+    /// Checks if the data is available and reads it, then erases the storage to prevent deja-vu.
+    /// Returns an empty option if no data is available (in that case the storage is not erased).
+    [[nodiscard]] auto take() -> std::optional<Container>
+    {
+        detail::CRC64 crc;
+        crc.add(ptr_, StorageSize);
+        if (crc.isResidueCorrect())
+        {
+            Container out{};
+            (void) std::memmove(&out, ptr_, sizeof(Container));
+            (void) std::memset(ptr_, EraseFillValue, StorageSize);
+            return out;
+        }
+        return {};
+    }
+
+    /// Writes the data into the storage with CRC64 protection.
+    void store(const Container& data)
+    {
+        (void) std::memmove(ptr_, &data, sizeof(Container));
+        detail::CRC64 crc;
+        crc.add(ptr_, sizeof(Container));
+        const auto crc_ptr = ptr_ + sizeof(Container);  // NOLINT NOSONAR pointer arithmetic
+        (void) std::memmove(crc_ptr, crc.getBytes().data(), detail::CRC64::Size);
+    }
+
+protected:
+    static_assert(std::is_standard_layout_v<Container> && std::is_trivially_copyable_v<Container>,
+                  "Container must be a trivially copyable standard layout type.");
+
+    static constexpr std::uint8_t EraseFillValue = 0xCA;
+
+    std::uint8_t* const ptr_;
+};
 
 }  // namespace kocherga
