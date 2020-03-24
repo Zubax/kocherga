@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -68,7 +69,7 @@ inline auto makeHexDump(InputIterator begin, const InputIterator end) -> std::st
             {
                 output << (((static_cast<std::uint32_t>(*begin) >= PrintableASCIIRange.first) &&
                             (static_cast<std::uint32_t>(*begin) <= PrintableASCIIRange.second))
-                               ? static_cast<char>(*begin)
+                               ? static_cast<char>(*begin)  // NOSONAR intentional conversion to plain char
                                : '.');
                 ++begin;
             }
@@ -91,39 +92,54 @@ inline auto makeHexDump(const Container& cont)
 class FileROMBackend : public kocherga::IROMBackend
 {
 public:
-    FileROMBackend(const std::string&  file_name,
-                   const std::uint32_t rom_size,
-                   const std::uint8_t  empty_memory_fill = 0xFF) :
+    class Error : public std::runtime_error
+    {
+    public:
+        explicit Error(const std::string& x) : std::runtime_error(x) {}
+    };
+
+    /// This overload creates a new file filled as specified. If the file exists, it will be written over.
+    FileROMBackend(const std::string& file_name, const std::size_t rom_size, const std::uint8_t empty_memory_fill) :
         file_name_(file_name), rom_size_(rom_size)
     {
         std::ofstream f(file_name_, std::ios::binary | std::ios::out | std::ios::trunc);
         if (f)
         {
-            const std::vector<char> empty_image(rom_size, static_cast<char>(empty_memory_fill));
-            f.write(empty_image.data(), std::streamsize(empty_image.size()));
+            const std::vector<char>
+                empty_image(rom_size,
+                            static_cast<char>(empty_memory_fill));  // NOSONAR intentional conversion to plain char
+            f.write(empty_image.data(), static_cast<std::streamsize>(empty_image.size()));
+            f.flush();
         }
         else
         {
-            throw std::runtime_error("Could not init the ROM mapping file");
+            throw Error("Could not init the ROM mapping file");
         }
+    }
+
+    /// This overload opens an existing file.
+    explicit FileROMBackend(const std::string& file_name) :
+        file_name_(file_name), rom_size_(static_cast<std::size_t>(std::filesystem::file_size(file_name)))
+    {
+        checkFileHealth();
     }
 
     void enableFailureInjection(const bool enabled) { trigger_failure_ = enabled; }
 
-    auto isSameImage(const void* const reference, const std::size_t reference_size) const
+    auto isSameImage(const std::byte* const reference, const std::size_t reference_size) const
     {
         checkFileHealth();
         if (std::ifstream f(file_name_, std::ios::binary | std::ios::in); f)
         {
             f.seekg(0);
             std::vector<char> buffer(reference_size, '\0');
-            f.read(buffer.data(), std::streamsize(reference_size));
+            f.read(buffer.data(), static_cast<std::streamsize>(reference_size));
             return std::memcmp(reference, buffer.data(), reference_size) == 0;
         }
-        throw std::runtime_error("Could not open the ROM mapping file for verification");
+        throw Error("Could not open the ROM mapping file for verification");
     }
 
-    [[nodiscard]] auto read(const std::size_t offset, void* const out_data, const std::size_t size) const
+    [[nodiscard]] auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
         -> std::size_t override
     {
         read_count_++;
@@ -134,26 +150,24 @@ public:
         if (std::ifstream f(file_name_, std::ios::binary | std::ios::in); f)
         {
             f.seekg(static_cast<std::streamoff>(offset));
-            f.read(static_cast<char*>(out_data), static_cast<std::streamsize>(out));
+            f.read(reinterpret_cast<char*>(out_data),  // NOLINT NOSONAR reinterpret_cast
+                   static_cast<std::streamsize>(out));
             return out;
         }
-        throw std::runtime_error("Could not open the ROM emulation file for reading");
+        throw Error("Could not open the ROM emulation file for reading");
     }
 
     auto getReadCount() const { return read_count_; }
     auto getWriteCount() const { return write_count_; }
 
+    auto getSize() const { return rom_size_; }
+
 private:
     void checkFileHealth() const
     {
-        std::ifstream f(file_name_, std::ios::binary | std::ios::in | std::ios::ate);
-        if (!f)
+        if (std::filesystem::file_size(file_name_) != rom_size_)
         {
-            throw std::runtime_error("The ROM mapping file could not be open");
-        }
-        if (f.tellg() != rom_size_)
-        {
-            throw std::runtime_error("Invalid size of the ROM mapping file");
+            throw Error("Invalid size of the ROM mapping file");
         }
     }
 
@@ -166,7 +180,7 @@ private:
         }
         if (upgrade_in_progress_)
         {
-            throw std::runtime_error("Bad sequencing");
+            throw Error("Bad sequencing");
         }
         upgrade_in_progress_ = true;
         return true;
@@ -178,18 +192,18 @@ private:
         checkFileHealth();
         if (!upgrade_in_progress_)
         {
-            throw std::runtime_error("Bad sequencing");
+            throw Error("Bad sequencing");
         }
         upgrade_in_progress_ = false;
     }
 
-    [[nodiscard]] auto write(const std::size_t offset, const void* const data, const std::size_t size)
+    [[nodiscard]] auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
         -> std::optional<std::size_t> override
     {
         write_count_++;
         if (!upgrade_in_progress_)
         {
-            throw std::runtime_error("Bad sequencing");
+            throw Error("Bad sequencing");
         }
         checkFileHealth();
         if (trigger_failure_)
@@ -202,16 +216,17 @@ private:
         assert((out + offset) <= rom_size_);
         if (std::ofstream f(file_name_, std::ios::binary | std::ios::out | std::ios::in); f)
         {
-            f.seekp(std::streamoff(offset));
-            f.write(static_cast<const char*>(data), static_cast<std::streamsize>(out));
+            f.seekp(static_cast<std::streamoff>(offset));
+            f.write(reinterpret_cast<const char*>(data),  // NOLINT NOSONAR reinterpret_cast
+                    static_cast<std::streamsize>(out));
             f.flush();
             return out;
         }
-        throw std::runtime_error("Could not open the ROM emulation file for writing");
+        throw Error("Could not open the ROM emulation file for writing");
     }
 
-    const std::string   file_name_;
-    const std::uint32_t rom_size_;
+    const std::string file_name_;
+    const std::size_t rom_size_;
 
     mutable std::uint64_t read_count_          = 0;
     std::uint64_t         write_count_         = 0;

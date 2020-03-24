@@ -56,7 +56,7 @@ TEST_CASE("VolatileStorage")
     marshaller.store(Data());
     std::cout << util::makeHexDump(arena) << std::endl;
     REQUIRE(std::all_of(arena.begin(), arena.begin() + 12, [](auto x) { return x == 0U; }));          // Zero payload
-    REQUIRE(std::all_of(arena.begin() + sizeof(Data), arena.end(), [](auto x) { return x != 0U; }));  // CRC non-zero
+    REQUIRE(std::any_of(arena.begin() + sizeof(Data), arena.end(), [](auto x) { return x != 0U; }));  // CRC non-zero
 
     // Reading and making sure it's erased afterwards
     auto rd = marshaller.take();

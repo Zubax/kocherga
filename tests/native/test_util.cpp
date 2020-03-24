@@ -19,44 +19,50 @@ TEST_CASE("util::makeHexDump")
 
 TEST_CASE("util::FileROMBackend")
 {
-    util::FileROMBackend back("test_rom.bin.tmp", 1024);
+    (void) std::filesystem::remove("test_rom.bin.tmp");
 
-    const std::vector<std::uint8_t> ref(1024, 0xFF);
+    util::FileROMBackend back("test_rom.bin.tmp", 1024, 0xFFU);
+
+    const std::vector<std::byte> ref(1024, std::byte{0xFF});
     REQUIRE(back.isSameImage(ref.data(), ref.size()));
 
-    const std::vector<std::uint8_t> ref2(123, 0xFF);
+    const std::vector<std::byte> ref2(123, std::byte{0xFF});
     REQUIRE(back.isSameImage(ref2.data(), ref2.size()));
 
-    const std::vector<std::uint8_t> ref3(123, 0xAA);
+    const std::vector<std::byte> ref3(123, std::byte{0xAA});
     REQUIRE(!back.isSameImage(ref3.data(), ref3.size()));
+
+    util::FileROMBackend existing("test_rom.bin.tmp");
+    REQUIRE(existing.getSize() == 1024U);
+    REQUIRE(existing.isSameImage(ref.data(), ref.size()));
 
     kocherga::IROMBackend& interface = back;
 
-    std::array<std::uint8_t, 32768> buf1{};
+    std::array<std::byte, 32'768> buf1{};
 
     REQUIRE(0 == back.getReadCount());
     REQUIRE(0 == back.getWriteCount());
 
     // Reading
     REQUIRE(32 == interface.read(0, buf1.data(), 32));
-    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 32, [](auto x) { return x == 0xFF; }));
+    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 32, [](auto x) { return x == std::byte{0xFF}; }));
 
     REQUIRE(1024 == interface.read(0, buf1.data(), 1024));
-    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == 0xFF; }));
+    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == std::byte{0xFF}; }));
 
     REQUIRE(512 == interface.read(512, buf1.data(), 1024));
-    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 512, [](auto x) { return x == 0xFF; }));
+    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 512, [](auto x) { return x == std::byte{0xFF}; }));
 
     REQUIRE(128 == interface.read(512, buf1.data(), 128));
-    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == 0xFF; }));
+    REQUIRE(std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == std::byte{0xFF}; }));
 
     REQUIRE(0 == interface.read(1024, buf1.data(), 1));
 
     REQUIRE(1024 == interface.read(0, buf1.data(), 2000));
-    std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == 0xFF; });
-    REQUIRE(buf1[1024] == 0);
-    REQUIRE(buf1[1025] == 0);
-    REQUIRE(buf1[1026] == 0);
+    std::all_of(buf1.begin(), buf1.begin() + 1024, [](auto x) { return x == std::byte{0xFF}; });
+    REQUIRE(buf1[1024] == std::byte{0});
+    REQUIRE(buf1[1025] == std::byte{0});
+    REQUIRE(buf1[1026] == std::byte{0});
 
     REQUIRE(6 == back.getReadCount());
     REQUIRE(0 == back.getWriteCount());
@@ -66,15 +72,20 @@ TEST_CASE("util::FileROMBackend")
     REQUIRE_THROWS_AS(interface.onAfterLastWrite(true), std::runtime_error);
     REQUIRE_THROWS_AS(interface.onAfterLastWrite(false), std::runtime_error);
     REQUIRE(interface.onBeforeFirstWrite());
-    buf1.fill(0xAA);
+    buf1.fill(std::byte{0xAA});
     REQUIRE(128 == *interface.write(0, buf1.data(), 128));
     REQUIRE(128 == *interface.write(512, buf1.data(), 128));
     interface.onAfterLastWrite(true);
 
     REQUIRE(1024 == interface.read(0, buf1.data(), 2000));
-    REQUIRE(std::all_of(buf1.begin() + 0, buf1.begin() + 128, [](auto x) { return x == 0xAA; }));
-    REQUIRE(std::all_of(buf1.begin() + 128, buf1.begin() + 512, [](auto x) { return x == 0xFF; }));
-    REQUIRE(std::all_of(buf1.begin() + 512, buf1.begin() + 640, [](auto x) { return x == 0xAA; }));
+    REQUIRE(std::all_of(buf1.begin() + 0, buf1.begin() + 128, [](auto x) { return x == std::byte{0xAA}; }));
+    REQUIRE(std::all_of(buf1.begin() + 128, buf1.begin() + 512, [](auto x) { return x == std::byte{0xFF}; }));
+    REQUIRE(std::all_of(buf1.begin() + 512, buf1.begin() + 640, [](auto x) { return x == std::byte{0xAA}; }));
+
+    REQUIRE(1024 == static_cast<kocherga::IROMBackend&>(existing).read(0, buf1.data(), 2000));
+    REQUIRE(std::all_of(buf1.begin() + 0, buf1.begin() + 128, [](auto x) { return x == std::byte{0xAA}; }));
+    REQUIRE(std::all_of(buf1.begin() + 128, buf1.begin() + 512, [](auto x) { return x == std::byte{0xFF}; }));
+    REQUIRE(std::all_of(buf1.begin() + 512, buf1.begin() + 640, [](auto x) { return x == std::byte{0xAA}; }));
 
     REQUIRE(7 == back.getReadCount());
     REQUIRE(3 == back.getWriteCount());

@@ -103,11 +103,11 @@ public:
     virtual void onAfterLastWrite(const bool success) { (void) success; }
 
     /// @return Number of bytes written; a value less than size indicates an overflow; empty option indicates failure.
-    [[nodiscard]] virtual auto write(const std::size_t offset, const void* const data, const std::size_t size)
+    [[nodiscard]] virtual auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
         -> std::optional<std::size_t> = 0;
 
     /// @return Number of bytes read; a value less than size indicates an overrun. This operation cannot fail.
-    [[nodiscard]] virtual auto read(const std::size_t offset, void* const out_data, const std::size_t size) const
+    [[nodiscard]] virtual auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
         -> std::size_t = 0;
 };
 
@@ -157,7 +157,8 @@ public:
     {
         auto                           x = get();
         std::array<std::uint8_t, Size> out{};
-        for (auto it = std::rbegin(out); it != std::rend(out); ++it)
+        const auto                     rend = std::rend(out);
+        for (auto it = std::rbegin(out); it != rend; ++it)
         {
             *it = static_cast<std::uint8_t>(x);
             x >>= BitsPerByte;
@@ -193,7 +194,9 @@ public:
         for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
         {
             AppDescriptor desc;
-            if (sizeof(desc) == backend_.read(offset, &desc, sizeof(desc)))
+            if (sizeof(desc) == backend_.read(offset,
+                                              reinterpret_cast<std::byte*>(&desc),  // NOLINT NOSONAR reinterpret_cast
+                                              sizeof(desc)))
             {
                 if (desc.isValid(max_application_image_size_) &&
                     validateImageCRC(offset + AppDescriptor::CRCOffset,
@@ -228,7 +231,7 @@ private:
 
     private:
         /// The signature is also used for byte order detection. The value is obtained from a random number generator.
-        static constexpr std::uint64_t ReferenceSignature = 0x5E4415146FC0C4C7ULL;
+        static constexpr std::uint64_t ReferenceSignature = 0x5E44'1514'6FC0'C4C7ULL;
 
         alignas(SignatureSize) std::uint64_t signature{};
         alignas(SignatureSize) AppInfo app_info;
@@ -247,7 +250,9 @@ private:
         while (offset < crc_storage_offset)
         {
             const auto res =
-                backend_.read(offset, buffer.data(), std::min(std::size(buffer), crc_storage_offset - offset));
+                backend_.read(offset,
+                              reinterpret_cast<std::byte*>(buffer.data()),  // NOLINT NOSONAR reinterpret_cast
+                              std::min(std::size(buffer), crc_storage_offset - offset));
             if (res > 0)
             {
                 offset += res;
@@ -265,7 +270,10 @@ private:
         // Read the rest of the image in large chunks.
         while (offset < image_size)
         {
-            const auto res = backend_.read(offset, buffer.data(), std::min(std::size(buffer), image_size - offset));
+            const auto res =
+                backend_.read(offset,
+                              reinterpret_cast<std::byte*>(buffer.data()),  // NOLINT NOSONAR reinterpret_cast
+                              std::min(std::size(buffer), image_size - offset));
             if (res > 0)
             {
                 offset += res;
