@@ -98,12 +98,6 @@ struct Vector
 class IReactor
 {
 public:
-    virtual ~IReactor()        = default;
-    IReactor(const IReactor&)  = delete;
-    IReactor(const IReactor&&) = delete;
-    auto operator=(const IReactor&) -> IReactor& = delete;
-    auto operator=(const IReactor &&) -> IReactor& = delete;
-
     /// Invoked when the node receives a uavcan.node.ExecuteResponse request.
     using SerializedExecuteCommandResponse = std::array<std::byte, 1>;
     virtual void processExecuteCommandRequest(const std::byte* const            request,
@@ -118,6 +112,12 @@ public:
     /// Invoked when the node receives the response to a previously sent uavcan.file.Read request.
     /// This service is actually used for transferring the application image when upgrade is in progress.
     virtual void processFileReadResponse(const std::byte* const request, const std::size_t request_length) = 0;
+
+    virtual ~IReactor()        = default;
+    IReactor(const IReactor&)  = delete;
+    IReactor(const IReactor&&) = delete;
+    auto operator=(const IReactor&) -> IReactor& = delete;
+    auto operator=(const IReactor &&) -> IReactor& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -129,12 +129,6 @@ public:
 class INode
 {
 public:
-    virtual ~INode()     = default;
-    INode(const INode&)  = delete;
-    INode(const INode&&) = delete;
-    auto operator=(const INode&) -> INode& = delete;
-    auto operator=(const INode &&) -> INode& = delete;
-
     /// The bootloader invokes this method every tick to let the node run background activities such as
     /// processing incoming transfers. If a reaction is required (such as responding to a service request),
     /// it is delegated to the bootloader core via the IoC IReactor.
@@ -156,6 +150,12 @@ public:
     /// If an error occurred, it shall be ignored or reported using other means.
     /// It is the responsibility of the node implementation to manage the transfer-ID counter and priority selection.
     virtual void publishLogRecord(const std::byte* const payload, const std::size_t payload_length) = 0;
+
+    virtual ~INode()     = default;
+    INode(const INode&)  = delete;
+    INode(const INode&&) = delete;
+    auto operator=(const INode&) -> INode& = delete;
+    auto operator=(const INode &&) -> INode& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -276,21 +276,21 @@ private:
 class AppLocator
 {
 public:
-    AppLocator(const IROMBackend& backend, const std::uint32_t max_application_image_size) :
-        max_application_image_size_(max_application_image_size), backend_(backend)
+    AppLocator(const IROMBackend& backend, const std::uint32_t max_app_size) :
+        max_app_size_(max_app_size), backend_(backend)
     {}
 
-    /// Returns the AppInfo if the application is found and its integrity is intact. Otherwise, returns an empty option.
+    /// Returns the AppInfo if the app is found and its integrity is intact. Otherwise, returns an empty option.
     [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
     {
-        for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::MagicSize)
+        for (std::size_t offset = 0; offset < max_app_size_; offset += AppDescriptor::MagicSize)
         {
             AppDescriptor desc{};
             if (sizeof(desc) == backend_.read(offset,
                                               reinterpret_cast<std::byte*>(&desc),  // NOLINT NOSONAR reinterpret_cast
                                               sizeof(desc)))
             {
-                if (desc.isValid(max_application_image_size_) &&
+                if (desc.isValid(max_app_size_) &&
                     validateImageCRC(offset + AppDescriptor::CRCOffset,
                                      static_cast<std::size_t>(desc.getAppInfo().image_size),
                                      desc.getAppInfo().image_crc))
@@ -313,10 +313,10 @@ private:
         static constexpr std::size_t MagicSize = 8U;
         static constexpr std::size_t CRCOffset = MagicSize;
 
-        [[nodiscard]] auto isValid(const std::uint32_t max_application_image_size) const -> bool
+        [[nodiscard]] auto isValid(const std::uint32_t max_app_size) const -> bool
         {
-            return (magic == ReferenceMagic) && (app_info.image_size > 0) &&
-                   (app_info.image_size <= max_application_image_size) && ((app_info.image_size % MagicSize) == 0);
+            return (magic == ReferenceMagic) && (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
+                   ((app_info.image_size % MagicSize) == 0);
         }
 
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
@@ -377,7 +377,7 @@ private:
 
     static constexpr std::size_t ROMBufferSize = 256;
 
-    const std::uint32_t max_application_image_size_;
+    const std::uint32_t max_app_size_;
     const IROMBackend&  backend_;
 };
 
@@ -473,10 +473,10 @@ public:
     Bootloader(IROMBackend&                        rom_backend,
                const SystemInfo&                   system_info,
                const std::array<INode&, NumNodes>& nodes,
-               const std::size_t                   max_app_image_size,
+               const std::size_t                   max_app_size,
                const std::chrono::seconds          boot_delay = std::chrono::seconds(0)) :
         system_info_(system_info),
-        max_app_image_size_(max_app_image_size),
+        max_app_size_(max_app_size),
         boot_delay_(boot_delay),
         backend_(rom_backend),
         nodes_{nodes}
@@ -484,10 +484,25 @@ public:
 
     [[nodiscard]] auto poll(const std::chrono::microseconds current_time) -> State
     {
-        (void) current_time;
-        (void) &Bootloader::poll;
-        (void) max_app_image_size_;
-        (void) backend_;
+        if (!initialized_)
+        {
+            detail::AppLocator locator(backend_, max_app_size_);
+            app_info_      = locator.identifyApplication();
+            boot_deadline_ = current_time + boot_delay_;
+            state_         = app_info_ ? State::BootDelay : State::NoAppToBoot;
+            initialized_   = true;
+        }
+
+        for (auto& node : nodes_)
+        {
+            node.poll(*this, current_time);
+        }
+
+        if ((State::BootDelay == state_) && (current_time >= boot_deadline_))
+        {
+            state_ = State::ReadyToBoot;
+        }
+
         return state_;
     }
 
@@ -512,13 +527,14 @@ private:
     }
 
     const SystemInfo           system_info_;
-    const std::size_t          max_app_image_size_;
+    const std::size_t          max_app_size_;
     const std::chrono::seconds boot_delay_;
 
     IROMBackend&                 backend_;
     std::array<INode&, NumNodes> nodes_;
 
-    State                                    state_ = State::NoAppToBoot;
+    bool                                     initialized_ = false;
+    State                                    state_       = State::NoAppToBoot;
     std::optional<std::chrono::microseconds> boot_deadline_;
     std::optional<AppInfo>                   app_info_;
 };
