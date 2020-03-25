@@ -37,11 +37,10 @@ and 'firmware' are used interchangeably) contains a particular data structure ca
 The structure may be located anywhere within the image provided that its offset from the beginning is aligned at
 8 bytes. It is recommended to place it near the beginning of the image (i.e., at a lower offset) to reduce the
 boot-up time. The definition of the application descriptor data structure is given below in the DSDL notation.
-The byte order is native for the target platform; external tools can determine it by checking the value of the
-signature field.
+The byte order is native for the target platform; external tools can determine it by checking the value of the magic.
 If the image contains more than one descriptor, only that which is located at the lower offset will be used.
 
-    uint64 signature    # Constant value used for locating the descriptor and detecting the byte order.
+    uint64 magic        # Constant value used for locating the descriptor and detecting the byte order.
     uint64 image_crc    # Shall be set to zero when building the image.
     uint64 image_size   # Shall be set to zero when building the image.
     uint64 vcs_commit   # The version control system revision identifier, e.g., a git hash.
@@ -51,15 +50,15 @@ If the image contains more than one descriptor, only that which is located at th
     void14
     uint8[2] version_major_minor
 
-    uint64 SIGNATURE = 0x5E44_1514_6FC0_C4C7  # A random magic number. Used for byte order detection.
+    uint64 MAGIC = 0x5E44_1514_6FC0_C4C7  # A random magic number. Used for byte order detection.
 
 Every field except image size and image CRC can be set either at compile time or by this script. By default, the
 script only sets the size and the CRC, leaving all other fields at their original values; the user can specify which
 other fields to overwrite by setting the appropriate command-line options when invoking the script.
 
-The image size and image CRC shall be zeroed at compile time (this implies that the signature shall be followed by
+The image size and image CRC shall be zeroed at compile time (this implies that the magic shall be followed by
 16 zero bytes); the values will be assigned by this script always. Structures where these fields are non-zero are
-ignored by the script (considered invalid) in order to support the use case where images containing valid signatures
+ignored by the script (considered invalid) in order to support the use case where images containing valid magics
 are nested (e.g., when the application image contains a bootloader image).
 
 The script does not modify the source image file; instead, it copies the data into a new file which is named using
@@ -123,7 +122,7 @@ class Flags:
 class AppDescriptor:
     SIZE = 40
     ALIGNMENT = 8
-    SIGNATURE = 0x5E44_1514_6FC0_C4C7
+    MAGIC = 0x5E44_1514_6FC0_C4C7
 
     image_crc: int
     image_size: int
@@ -133,7 +132,7 @@ class AppDescriptor:
 
     def pack(self, byte_order: str) -> bytes:
         return self._get_marshaller(byte_order).pack(
-            self.SIGNATURE,
+            self.MAGIC,
             self.image_crc,
             self.image_size,
             self.vcs_commit,
@@ -146,7 +145,7 @@ class AppDescriptor:
                     byte_order: str,
                     offset: int = 0) -> typing.Optional['AppDescriptor']:
         try:
-            signature, image_crc, image_size, vcs_commit, flags, v_major, v_minor \
+            magic, image_crc, image_size, vcs_commit, flags, v_major, v_minor \
                 = AppDescriptor._get_marshaller(byte_order).unpack_from(image, offset)
         except struct.error:
             return None
@@ -156,7 +155,7 @@ class AppDescriptor:
             vcs_commit=vcs_commit,
             flags=Flags.unpack(flags),
             version=(v_major, v_minor),
-        ) if signature == AppDescriptor.SIGNATURE else None
+        ) if magic == AppDescriptor.MAGIC else None
 
     @staticmethod
     def get_search_prefix(byte_order: str, uninitialized_only: bool = False) -> bytes:
@@ -165,7 +164,7 @@ class AppDescriptor:
         If the uninitialized_only flag is set, the search prefix will match only unpopulated descriptors where
         the CRC and the size are zero. Otherwise, any descriptor will match.
         """
-        return AppDescriptor.SIGNATURE.to_bytes(8, byte_order) + (bytes(8) * 2 if uninitialized_only else b'')
+        return AppDescriptor.MAGIC.to_bytes(8, byte_order) + (bytes(8) * 2 if uninitialized_only else b'')
 
     @staticmethod
     def _get_marshaller(byte_order: str) -> struct.Struct:
@@ -491,7 +490,7 @@ def _test() -> None:
         flags=Flags.unpack(0),
         version=(0, 0),
     )
-    assert (AppDescriptor.SIGNATURE.to_bytes(8, 'little') +
+    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') +
             (0).to_bytes(8, 'little') +
             (0).to_bytes(8, 'little') +
             (0).to_bytes(8, 'little') +
@@ -503,14 +502,14 @@ def _test() -> None:
     desc.vcs_commit = 0x1122334455667788
     desc.flags.dirty = True
     desc.version = 42, 95
-    assert (AppDescriptor.SIGNATURE.to_bytes(8, 'little') +
+    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') +
             0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +
             0xaabbccdd.to_bytes(8, 'little') +
             0x1122334455667788.to_bytes(8, 'little') +
             bytes(4) +
             (2).to_bytes(2, 'little') +
             bytes([42, 95]) == desc.pack('little'))
-    assert (AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+    assert (AppDescriptor.MAGIC.to_bytes(8, 'big') +
             0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +
             0xaabbccdd.to_bytes(8, 'big') +
             0x1122334455667788.to_bytes(8, 'big') +
@@ -519,7 +518,7 @@ def _test() -> None:
             bytes([42, 95]) == desc.pack('big'))
 
     desc = AppDescriptor.unpack_from(
-        AppDescriptor.SIGNATURE.to_bytes(8, 'little') +
+        AppDescriptor.MAGIC.to_bytes(8, 'little') +
         0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +
         0xaabbccdd.to_bytes(8, 'little') +
         0x1122334455667788.to_bytes(8, 'little') +
@@ -536,7 +535,7 @@ def _test() -> None:
     assert desc.version == (42, 95)
 
     desc = AppDescriptor.unpack_from(
-        AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') +
         0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +
         0xaabbccdd.to_bytes(8, 'big') +
         0x1122334455667788.to_bytes(8, 'big') +
@@ -552,7 +551,7 @@ def _test() -> None:
     assert desc.flags.dirty
     assert desc.version == (42, 95)
 
-    assert not AppDescriptor.unpack_from(AppDescriptor.SIGNATURE.to_bytes(8, 'big'), 'big')
+    assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, 'big'), 'big')
 
     assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe,dirty'
     desc.flags.dirty = False
@@ -560,7 +559,7 @@ def _test() -> None:
 
     im = ImageModel.construct_from_image(
         b'BEFORE MODEL    ' +
-        AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') +
         (0).to_bytes(8, 'big') +  # CRC
         (0).to_bytes(8, 'big') +  # Size
         0x1122334455667788.to_bytes(8, 'big') +
@@ -573,7 +572,7 @@ def _test() -> None:
     assert im
     crc = CRCComputer().add(
         b'BEFORE MODEL    ' +
-        AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') +
         (0).to_bytes(8, 'big') +  # CRC
         (72).to_bytes(8, 'big') +  # Size
         0x1122334455667788.to_bytes(8, 'big') +
@@ -602,7 +601,7 @@ def _test() -> None:
         version=(42, 95),
     )
     assert (b'BEFORE MODEL    ' +
-            AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+            AppDescriptor.MAGIC.to_bytes(8, 'big') +
             crc.to_bytes(8, 'big') +  # CRC
             (72).to_bytes(8, 'big') +  # Size
             0x1122334455667788.to_bytes(8, 'big') +
@@ -619,7 +618,7 @@ def _test() -> None:
     assert im.validate_app_descriptor()
     crc = CRCComputer().add(
         b'BEFORE MODEL    ' +
-        AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') +
         (0).to_bytes(8, 'big') +  # CRC
         (72).to_bytes(8, 'big') +  # Size
         0x1122334455667788.to_bytes(8, 'big') +
@@ -629,7 +628,7 @@ def _test() -> None:
         b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5
     ).value
     assert (b'BEFORE MODEL    ' +
-            AppDescriptor.SIGNATURE.to_bytes(8, 'big') +
+            AppDescriptor.MAGIC.to_bytes(8, 'big') +
             crc.to_bytes(8, 'big') +  # CRC
             (72).to_bytes(8, 'big') +  # Size
             0x1122334455667788.to_bytes(8, 'big') +

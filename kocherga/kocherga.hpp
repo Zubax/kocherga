@@ -23,17 +23,8 @@ using SemanticVersion = std::array<std::uint8_t, 2>;
 /// Version of the library, major and minor.
 static constexpr SemanticVersion Version{{1, 0}};
 
-/// Error codes.  These are returned from functions in negated form, e.g., -100 means error code 100.
-static constexpr std::int8_t ErrInvalidParams    = 2;
-static constexpr std::int8_t ErrROMWriteFailure  = 3;
-static constexpr std::int8_t ErrAppImageTooLarge = 4;
-
-// --------------------------------------------------------------------------------------------------------------------
-
-/// The transport-specific node abstraction interface. Kocherga runs a separate node per transport interface.
-/// If redundant transports are desired, they should be implemented in a custom implementation of INode.
-class INode
-{};
+/// Version of the UAVCAN specification implemented by this library, major and minor.
+static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -64,19 +55,107 @@ static_assert(AppInfo::Size == sizeof(AppInfo), "Check your compiler.");
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// Target platform services.
-class IPlatform
+/// This information is provided by the bootloader host system during initialization. It does not change at runtime.
+/// For documentation, please refer to uavcan.node.GetInfo.Response.
+struct SystemInfo
+{
+    SemanticVersion hardware_version{};
+
+    static constexpr std::size_t          UIDCapacity = 16;
+    std::array<std::uint8_t, UIDCapacity> unique_id{};
+
+    const char* node_name = "";
+
+    static constexpr std::size_t          CoACapacity = 222;
+    std::uint8_t                          coa_length  = 0;
+    std::array<std::uint8_t, CoACapacity> coa{};
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// A simple generic container for variable-length entities. This is done to avoid reliance on the heap.
+template <typename Element, std::size_t Capacity>
+struct Vector
+{
+    using SizeType =
+        std::conditional_t<(Capacity > std::numeric_limits<std::uint8_t>::max()), std::uint16_t, std::uint8_t>;
+    static_assert(std::numeric_limits<SizeType>::max() >= Capacity, "The capacity is too large");
+
+    SizeType                      size = 0;
+    std::array<Element, Capacity> storage{};
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// A standard IoC delegate for handling protocol events in the node.
+/// A reference to the reactor is supplied to INode implementations to let them delegate application-level activities
+/// back to the bootloader core.
+/// The methods accept raw serialized representation and return one as well.
+/// Serialization/deserialization is done by the bootloader core because DSDL is transport-agnostic.
+/// All methods are non-blocking and return immediately.
+/// Implementations utilizing just a single transport should not incur any polymorphism-induced overhead because decent
+/// C++ compilers are quite good at devirtualization.
+class IReactor
 {
 public:
-    IPlatform(const IPlatform&) = delete;
-    IPlatform(IPlatform&&)      = delete;
-    auto operator=(const IPlatform&) -> IPlatform& = delete;
-    auto operator=(IPlatform &&) -> IPlatform& = delete;
+    virtual ~IReactor()        = default;
+    IReactor(const IReactor&)  = delete;
+    IReactor(const IReactor&&) = delete;
+    auto operator=(const IReactor&) -> IReactor& = delete;
+    auto operator=(const IReactor &&) -> IReactor& = delete;
 
-    virtual ~IPlatform() = default;
+    /// Invoked when the node receives a uavcan.node.ExecuteResponse request.
+    using SerializedExecuteCommandResponse = std::array<std::byte, 1>;
+    virtual void processExecuteCommandRequest(const std::byte* const            request,
+                                              const std::size_t                 request_length,
+                                              SerializedExecuteCommandResponse& out_response) = 0;
 
-    /// Returns the time since boot as a monotonic (i.e., steady) clock. The clock shall never overflow.
-    [[nodiscard]] virtual auto getMonotonicUptime() const -> std::chrono::microseconds = 0;
+    /// Invoked when the node receives a uavcan.node.GetInfo request. The request does not have any useful payload.
+    static constexpr std::size_t NodeInfoResponseSerializedRepresentationCapacity = 313;
+    using SerializedNodeInfoResponse = Vector<std::byte, NodeInfoResponseSerializedRepresentationCapacity>;
+    virtual void processNodeInfoRequest(SerializedNodeInfoResponse& out_response) const = 0;
+
+    /// Invoked when the node receives the response to a previously sent uavcan.file.Read request.
+    /// This service is actually used for transferring the application image when upgrade is in progress.
+    virtual void processFileReadResponse(const std::byte* const request, const std::size_t request_length) = 0;
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// The transport-specific node abstraction interface. Kocherga runs a separate node per transport interface.
+/// If redundant transports are desired, they should be implemented in a custom implementation of INode.
+/// If the node implementation is unable to perform the requested action (for example, because a node-ID allocation
+/// is still in progress), it shall ignore the commanded action or return an error if such possibility is provided.
+class INode
+{
+public:
+    virtual ~INode()     = default;
+    INode(const INode&)  = delete;
+    INode(const INode&&) = delete;
+    auto operator=(const INode&) -> INode& = delete;
+    auto operator=(const INode &&) -> INode& = delete;
+
+    /// The bootloader invokes this method every tick to let the node run background activities such as
+    /// processing incoming transfers. If a reaction is required (such as responding to a service request),
+    /// it is delegated to the bootloader core via the IoC IReactor.
+    virtual void poll(IReactor& reactor, const std::chrono::microseconds current_time) = 0;
+
+    /// Send a request uavcan.file.Read.
+    /// The response will be delivered later asynchronously via IReactor.
+    /// The return value is True on success and False if the request could not be sent (aborts the upgrade process).
+    /// It is the responsibility of the node implementation to manage the transfer-ID counter and priority selection.
+    virtual auto requestFileRead(const std::byte* const payload, const std::size_t payload_length) -> bool = 0;
+
+    /// Publish a message uavcan.node.Heartbeat.
+    /// If an error occurred, it shall be ignored or reported using other means.
+    /// Such lax error handling policy is implemented because the bootloader need not react to transient failures.
+    /// It is the responsibility of the node implementation to manage the transfer-ID counter and priority selection.
+    virtual void publishHeartbeat(const std::byte* const payload, const std::size_t payload_length) = 0;
+
+    /// Publish a message uavcan.diagnostic.Record.
+    /// If an error occurred, it shall be ignored or reported using other means.
+    /// It is the responsibility of the node implementation to manage the transfer-ID counter and priority selection.
+    virtual void publishLogRecord(const std::byte* const payload, const std::size_t payload_length) = 0;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -204,7 +283,7 @@ public:
     /// Returns the AppInfo if the application is found and its integrity is intact. Otherwise, returns an empty option.
     [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
     {
-        for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::SignatureSize)
+        for (std::size_t offset = 0; offset < max_application_image_size_; offset += AppDescriptor::MagicSize)
         {
             AppDescriptor desc{};
             if (sizeof(desc) == backend_.read(offset,
@@ -231,27 +310,27 @@ private:
     class AppDescriptor
     {
     public:
-        static constexpr std::size_t SignatureSize = 8U;
-        static constexpr std::size_t CRCOffset     = SignatureSize;
+        static constexpr std::size_t MagicSize = 8U;
+        static constexpr std::size_t CRCOffset = MagicSize;
 
         [[nodiscard]] auto isValid(const std::uint32_t max_application_image_size) const -> bool
         {
-            return (signature == ReferenceSignature) && (app_info.image_size > 0) &&
-                   (app_info.image_size <= max_application_image_size) && ((app_info.image_size % SignatureSize) == 0);
+            return (magic == ReferenceMagic) && (app_info.image_size > 0) &&
+                   (app_info.image_size <= max_application_image_size) && ((app_info.image_size % MagicSize) == 0);
         }
 
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
 
     private:
-        /// The signature is also used for byte order detection.
-        /// The value of the signature was obtained from a random number generator, it does not mean anything.
-        static constexpr std::uint64_t ReferenceSignature = 0x5E44'1514'6FC0'C4C7ULL;
+        /// The magic is also used for byte order detection.
+        /// The value of the magic was obtained from a random number generator, it does not mean anything.
+        static constexpr std::uint64_t ReferenceMagic = 0x5E44'1514'6FC0'C4C7ULL;
 
-        std::uint64_t signature;
+        std::uint64_t magic;
         AppInfo       app_info;
     };
     static_assert(std::is_trivial_v<AppDescriptor>, "Check your compiler");
-    static_assert((AppInfo::Size + AppDescriptor::SignatureSize) == sizeof(AppDescriptor), "Check your compiler");
+    static_assert((AppInfo::Size + AppDescriptor::MagicSize) == sizeof(AppDescriptor), "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
                                         const std::size_t   image_size,
@@ -302,41 +381,146 @@ private:
     const IROMBackend&  backend_;
 };
 
+/// These DSDL-derived definitions substitute for the lack of code generation.
+namespace dsdl
+{
+struct Heartbeat
+{
+    enum class Health : std::uint8_t
+    {
+        Nominal  = 0,
+        Advisory = 1,
+        Caution  = 2,
+        Warning  = 3,
+    };
+};
+
+struct ExecuteCommand
+{
+    enum class Command : std::uint16_t
+    {
+        Restart             = 65535,
+        BeginSoftwareUpdate = 65533,
+    };
+
+    enum class Status : std::uint8_t
+    {
+        Success       = 0,
+        BadCommand    = 3,
+        BadState      = 5,
+        InternalError = 6,
+    };
+};
+
+}  // namespace dsdl
+
 }  // namespace detail
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// The bootloader logic.
-/// Larger buffer enables faster CRC verification, which is important, especially with large firmwares.
-class Bootloader
+/// Bootloader controller states.
+/// The state ReadyToBoot indicates that the application should be started.
+///
+/// The following state transition diagram illustrates the operating principles of the bootloader:
+///
+///     No valid application found ###################### Valid application found
+///               /----------------# Bootloader started #----------+ /-------------------------------------------+
+///               |                ######################          | |                                           |
+///               v                                                v v  Boot delay expired                       |
+///         +-------------+                               +-----------+  (typically zero)  +-------------+       |
+///     /-->| NoAppToBoot |        /----------------------| BootDelay |------------------->| ReadyToBoot |       |
+///     |   +-------------+       /                       +-----------+                    +-------------+       |
+///     |          |             /                          |Boot cancelled,                  |ReadyToBoot is    |
+///     |Upgrade   |<-----------/                           |e.g., received a state transition|an auxiliary      /
+///     |failed,   |Upgrade requested,                      |request to BootCancelled.        |state, it is     /
+///     |no valid  |e.g., received a state transition       v                                 |left automati-  /
+///     |image is  |request to AppUpgradeInProgress. +---------------+                        |cally ASAP.    /
+///     |now ava-  |<--------------------------------| BootCancelled |                        v              /
+///     |ilable    |                                 +---------------+                ###############       /
+///     |          v                                        ^                         # Booting the #      /
+///     | +----------------------+ Upgrade failed, but the  |                         # application #     /
+///     +-| AppUpgradeInProgress |--------------------------/                         ###############    /
+///       +----------------------+ existing valid image was not                                         /
+///                |               altered and remains valid.                                          /
+///                |                                                                                  /
+///                | Upgrade successful, received image is valid.                                    /
+///                +--------------------------------------------------------------------------------/
+enum class State
+{
+    NoAppToBoot,
+    BootDelay,
+    BootCancelled,
+    AppUpgradeInProgress,
+    ReadyToBoot,
+};
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// The bootloader core.
+///
+/// The bootloader may run multiple nodes on different transports concurrently to support multi-transport functionality.
+/// For example, a device may provide the firmware upgrade capability via CAN and a serial port.
+template <std::uint8_t NumNodes>
+class Bootloader : private IReactor
 {
 public:
     /// The max application image size parameter is very important for performance reasons;
     /// without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
-    /// valid app descriptor (by virtue of having the same signature, which is only 64 bit long),
+    /// valid app descriptor (by virtue of having the same magic, which is only 64 bit long),
     /// and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
     /// Having an upper size limit for the application image allows the bootloader to weed out too large
     /// values early, greatly improving the worst case boot time.
-    Bootloader(IPlatform& platform, IROMBackend& rom_backend, const std::uint32_t max_application_image_size) :
-        max_application_image_size_(max_application_image_size), platform_(platform), backend_(rom_backend)
+    Bootloader(IROMBackend&                        rom_backend,
+               const SystemInfo&                   system_info,
+               const std::array<INode&, NumNodes>& nodes,
+               const std::size_t                   max_app_image_size,
+               const std::chrono::seconds          boot_delay = std::chrono::seconds(0)) :
+        system_info_(system_info),
+        max_app_image_size_(max_app_image_size),
+        boot_delay_(boot_delay),
+        backend_(rom_backend),
+        nodes_{nodes}
     {}
 
-    [[nodiscard]] auto run(const std::chrono::microseconds boot_delay = std::chrono::microseconds(0))
-        -> std::optional<AppInfo>
+    [[nodiscard]] auto poll(const std::chrono::microseconds current_time) -> State
     {
-        detail::AppLocator locator(backend_, max_application_image_size_);
-        auto               app_info = locator.identifyApplication();
-
-        const std::chrono::microseconds boot_deadline = platform_.getMonotonicUptime() + boot_delay;
-        (void) boot_deadline;
-        (void) &Bootloader::run;
-        return app_info;
+        (void) current_time;
+        (void) &Bootloader::poll;
+        (void) max_app_image_size_;
+        (void) backend_;
+        return state_;
     }
 
+    [[nodiscard]] auto getAppInfo() const { return app_info_; }
+
 private:
-    const std::uint32_t max_application_image_size_;
-    IPlatform&          platform_;
-    IROMBackend&        backend_;
+    void processExecuteCommandRequest(const std::byte* const            request,
+                                      const std::size_t                 request_length,
+                                      SerializedExecuteCommandResponse& out_response) override
+    {
+        (void) request;
+        (void) request_length;
+        (void) out_response;
+    }
+
+    void processNodeInfoRequest(SerializedNodeInfoResponse& out_response) const override { (void) out_response; }
+
+    void processFileReadResponse(const std::byte* const request, const std::size_t request_length) override
+    {
+        (void) request;
+        (void) request_length;
+    }
+
+    const SystemInfo           system_info_;
+    const std::size_t          max_app_image_size_;
+    const std::chrono::seconds boot_delay_;
+
+    IROMBackend&                 backend_;
+    std::array<INode&, NumNodes> nodes_;
+
+    State                                    state_ = State::NoAppToBoot;
+    std::optional<std::chrono::microseconds> boot_deadline_;
+    std::optional<AppInfo>                   app_info_;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
