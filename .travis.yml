@@ -15,7 +15,6 @@ matrix:
   include:
     # -------------------- GCC + SonarCloud --------------------
     - language: cpp
-      python: '3.7'
       addons:
         sonarcloud:
           organization: uavcan
@@ -57,9 +56,6 @@ matrix:
         - cmake tests/native -DCMAKE_BUILD_TYPE=Release -DNO_STATIC_ANALYSIS=1
         - make all VERBOSE=1 && make test
         - make clean
-
-        # Tools
-        - ./tests/tools/test.sh
 
     # -------------------- Clang 9 --------------------
     - language: cpp
@@ -104,6 +100,13 @@ matrix:
         - make format VERBOSE=1
         - 'modified="$(git status --porcelain --untracked-files=no)"'
         - 'if [ -n "$modified" ]; then echo "Run make format to reformat the code properly."; exit 1; fi'
+
+    # -------------------- Python tooling --------------------
+    - language: python
+      python: '3.7'
+      script:
+        - python3 --version
+        - ./tests/tools/test.sh
 
 git:
   depth: false  # Disable shallow clone because it is incompatible with SonarCloud
