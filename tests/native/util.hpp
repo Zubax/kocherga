@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kocherga.hpp"
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
