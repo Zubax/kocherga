@@ -166,7 +166,7 @@ public:
     /// The bootloader invokes this method every tick to let the node run background activities such as
     /// processing incoming transfers. If a reaction is required (such as responding to a service request),
     /// it is delegated to the bootloader core via the IoC IReactor.
-    virtual void poll(IReactor& reactor, const std::chrono::microseconds current_time) = 0;
+    virtual void poll(IReactor& reactor, const std::chrono::microseconds uptime) = 0;
 
     /// Send a request uavcan.file.Read.
     /// The response will be delivered later asynchronously via IReactor.
@@ -455,7 +455,7 @@ struct Diagnostic
         Critical = 6,
     };
 
-    static constexpr std::size_t RecordSize = 114;
+    static constexpr std::size_t RecordSize = 121;
 };
 
 struct File
@@ -510,33 +510,27 @@ public:
         system_info_(system_info), nodes_{nodes}, controller_(controller)
     {}
 
-    void poll(const std::chrono::microseconds current_time)
+    void poll(const std::chrono::microseconds uptime)
     {
-        last_poll_at_ = current_time;
-
-        if (!boot_timestamp_)
-        {
-            boot_timestamp_          = current_time;
-            next_heartbeat_deadline_ = current_time;
-        }
+        last_poll_at_ = uptime;
 
         current_node_index_ = 0;
-        for (auto& node : nodes_)
+        for (INode* node : nodes_)
         {
-            node.poll(*this, current_time);
+            node->poll(*this, uptime);
             ++current_node_index_;
         }
 
-        if (current_time >= next_heartbeat_deadline_)
+        if (uptime >= next_heartbeat_deadline_)
         {
             next_heartbeat_deadline_ += HeartbeatPeriod;
-            publishHeartbeat();
+            publishHeartbeat(uptime);
         }
 
         if (file_loc_spec_)
         {
             FileLocationSpecifier& fls = *file_loc_spec_;
-            if (fls.response_deadline_ && (current_time > *fls.response_deadline_))
+            if (fls.response_deadline_ && (uptime > *fls.response_deadline_))
             {
                 fls.response_deadline_.reset();
                 controller_.handleFileReadResult({});
@@ -547,14 +541,13 @@ public:
     void setNodeHealth(const dsdl::Heartbeat::Health value) { node_health_ = value; }
 
     /// The timeout will be managed by the presenter automatically.
-    [[nodiscard]] auto requestFileRead(const std::uint64_t offset, const char* const path) -> bool
+    [[nodiscard]] auto requestFileRead(const std::uint64_t offset) -> bool
     {
         if (file_loc_spec_)
         {
-            FileLocationSpecifier& fls         = *file_loc_spec_;
-            std::uint8_t           path_length = 0;
-            const char*            ch          = path;
-            fls.response_deadline_             = last_poll_at_ + ServiceResponseTimeout;
+            static constexpr auto  length_minus_path = 6U;
+            FileLocationSpecifier& fls               = *file_loc_spec_;
+            fls.response_deadline_                   = last_poll_at_ + ServiceResponseTimeout;
             std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{{
                 static_cast<std::uint8_t>(offset >> ByteShiftFirst),
                 static_cast<std::uint8_t>(offset >> ByteShiftSecond),
@@ -562,19 +555,13 @@ public:
                 static_cast<std::uint8_t>(offset >> ByteShiftFourth),
                 static_cast<std::uint8_t>(offset >> ByteShiftFifth),
             }};
-            static constexpr auto                                     length_minus_path = 6;
-            for (auto it = std::begin(buf) + length_minus_path; (it != std::end(buf)) && (*ch != '\0'); ++it)
-            {
-                *it = static_cast<std::uint8_t>(*ch);
-                ++ch;
-                ++path_length;
-            }
-            buf[5]         = path_length;
+            buf.at(length_minus_path - 1U) = fls.path_length;
+            (void) std::memmove(&buf.at(length_minus_path), fls.path.data(), fls.path_length);
             const bool out = nodes_.at(fls.local_node_index)
-                                 .requestFileRead(fls.server_node_id,
-                                                  fls.read_transfer_id,
-                                                  path_length + length_minus_path,
-                                                  reinterpret_cast<const std::byte*>(buf.data()));
+                                 ->requestFileRead(fls.server_node_id,
+                                                   fls.read_transfer_id,
+                                                   fls.path_length + length_minus_path,
+                                                   reinterpret_cast<const std::byte*>(buf.data()));
             fls.read_transfer_id++;
             return out;
         }
@@ -584,19 +571,19 @@ public:
     void publishLogRecord(const dsdl::Diagnostic::Severity severity, const char* const text)
     {
         std::array<std::uint8_t, dsdl::Diagnostic::RecordSize> buf{};
-        buf[0]                   = static_cast<std::uint8_t>(severity);
+        buf[7]                   = static_cast<std::uint8_t>(severity);
         std::uint8_t text_length = 0;
         const char*  ch          = text;
-        for (auto it = std::begin(buf) + 2; (it != std::end(buf)) && (*ch != '\0'); ++it)
+        for (auto it = std::begin(buf) + 9; (it != std::end(buf)) && (*ch != '\0'); ++it)
         {
             *it = static_cast<std::uint8_t>(*ch);
             ++ch;
             ++text_length;
         }
-        buf[1] = text_length;
+        buf[8] = text_length;
         for (INode* node : nodes_)
         {
-            node->publishLogRecord(tid_log_record_, text_length + 2, reinterpret_cast<const std::byte*>(buf.data()));
+            node->publishLogRecord(tid_log_record_, text_length + 9U, reinterpret_cast<const std::byte*>(buf.data()));
         }
         ++tid_log_record_;
     }
@@ -625,7 +612,8 @@ private:
                 FileLocationSpecifier fls{};
                 fls.local_node_index = current_node_index_;
                 fls.server_node_id   = client_node_id;
-                fls.path_length      = std::min(static_cast<std::size_t>(*ptr++), std::size(fls.path));
+                fls.path_length =
+                    static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr++), std::size(fls.path)));
                 (void) std::memmove(fls.path.data(), ptr, fls.path_length);
                 file_loc_spec_ = fls;
                 if (controller_.beginUpdate())
@@ -728,15 +716,14 @@ private:
         }
     }
 
-    void publishHeartbeat(const std::chrono::microseconds current_time)
+    void publishHeartbeat(const std::chrono::microseconds uptime)
     {
-        const auto uptime = static_cast<std::uint32_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(current_time - *boot_timestamp_).count());
+        const auto ut = static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(uptime).count());
         std::array<std::uint8_t, INode::HeartbeatLength> buf{{
-            static_cast<std::uint8_t>(uptime >> ByteShiftFirst),
-            static_cast<std::uint8_t>(uptime >> ByteShiftSecond),
-            static_cast<std::uint8_t>(uptime >> ByteShiftThird),
-            static_cast<std::uint8_t>(uptime >> ByteShiftFourth),
+            static_cast<std::uint8_t>(ut >> ByteShiftFirst),
+            static_cast<std::uint8_t>(ut >> ByteShiftSecond),
+            static_cast<std::uint8_t>(ut >> ByteShiftThird),
+            static_cast<std::uint8_t>(ut >> ByteShiftFourth),
             static_cast<std::uint8_t>(static_cast<std::uint8_t>(NodeModeSoftwareUpdate << 2U) |
                                       static_cast<std::uint8_t>(node_health_)),
         }};
@@ -752,7 +739,7 @@ private:
         std::uint8_t                                       local_node_index{};
         NodeID                                             server_node_id{};
         TransferID                                         read_transfer_id{};
-        std::size_t                                        path_length{};
+        std::uint8_t                                       path_length{};
         std::array<std::uint8_t, dsdl::File::PathCapacity> path{};
         std::optional<std::chrono::microseconds>           response_deadline_{};
     };
@@ -761,9 +748,7 @@ private:
     const std::array<INode*, NumNodes> nodes_;
     IController&                       controller_;
 
-    std::chrono::microseconds                last_poll_at_{};
-    std::chrono::microseconds                next_heartbeat_deadline_{};
-    std::optional<std::chrono::microseconds> boot_timestamp_;
+    std::chrono::microseconds last_poll_at_{};
 
     std::uint8_t current_node_index_ = 0;
 
@@ -774,6 +759,7 @@ private:
 
     static constexpr std::uint8_t         NodeModeSoftwareUpdate = 3;
     static constexpr std::chrono::seconds HeartbeatPeriod{1};
+    std::chrono::microseconds             next_heartbeat_deadline_{HeartbeatPeriod};
     dsdl::Heartbeat::Health               node_health_ = dsdl::Heartbeat::Health::Nominal;
 
     static constexpr std::uint8_t ByteShiftFirst  = 0;
@@ -812,20 +798,20 @@ public:
         presentation_(system_info, nodes, *this)
     {}
 
-    [[nodiscard]] auto poll(const std::chrono::microseconds current_time) -> State
+    [[nodiscard]] auto poll(const std::chrono::microseconds uptime) -> State
     {
         if (!initialized_)
         {
             detail::AppLocator locator(backend_, max_app_size_);
             app_info_      = locator.identifyApplication();
-            boot_deadline_ = current_time + boot_delay_;
+            boot_deadline_ = uptime + boot_delay_;
             state_         = app_info_ ? State::BootDelay : State::NoAppToBoot;
             initialized_   = true;
         }
 
-        presentation_.poll(current_time);
+        presentation_.poll(uptime);
 
-        if ((State::BootDelay == state_) && (current_time >= boot_deadline_))
+        if ((State::BootDelay == state_) && (uptime >= boot_deadline_))
         {
             state_ = State::ReadyToBoot;
         }

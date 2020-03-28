@@ -4,10 +4,22 @@
 
 #include "kocherga.hpp"  // NOLINT include order: include Kocherga first to ensure no headers are missed.
 #include "catch.hpp"
+#include "util.hpp"
 #include <algorithm>
+#include <iostream>
 #include <map>
 #include <vector>
 
+/// GENERATION OF REFERENCE SERIALIZED REPRESENTATIONS.
+/// Prepare the DSDL-generated packages:
+///     $ pyuavcan -vv dsdl-gen-pkg https://github.com/UAVCAN/public_regulated_data_types/archive/master.zip
+/// Run PyUAVCAN:
+///     >>> import pyuavcan, uavcan.node, uavcan.diagnostic, uavcan.file
+///     >>> list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.Heartbeat_1_0(
+///             mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE,
+///             health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY,
+///             uptime=1))))
+///     [1, 0, 0, 0, 13, 0, 0]
 namespace
 {
 struct Transfer
@@ -23,12 +35,32 @@ struct Transfer
         remote_node_id(arg_remote_node_id), transfer_id(arg_transfer_id), payload(std::move(arg_payload))
     {}
     Transfer(const kocherga::TransferID      arg_transfer_id,
+             std::vector<std::uint8_t>       arg_payload,
+             std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
+        Transfer(arg_transfer_id,
+                 arg_payload.size(),
+                 reinterpret_cast<std::byte*>(arg_payload.data()),
+                 arg_remote_node_id)
+    {}
+    Transfer(const kocherga::TransferID      arg_transfer_id,
              const std::size_t               arg_payload_length,
              const std::byte* const          arg_payload,
              std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
         remote_node_id(arg_remote_node_id), transfer_id(arg_transfer_id)
     {
         (void) std::copy_n(arg_payload, arg_payload_length, std::back_inserter(payload));
+    }
+
+    [[nodiscard]] auto toString() const -> std::string
+    {
+        return "remote_nid=" + (remote_node_id ? std::to_string(static_cast<std::uint64_t>(*remote_node_id)) : "?") +
+               " tid=" + std::to_string(transfer_id) + " payload:\n" + util::makeHexDump(payload) + "\n";
+    }
+
+    auto operator==(const Transfer& rhs) const -> bool
+    {
+        return (remote_node_id == rhs.remote_node_id) && (transfer_id == rhs.transfer_id) &&
+               std::equal(std::begin(payload), std::end(payload), std::begin(rhs.payload), std::end(rhs.payload));
     }
 };
 
@@ -78,9 +110,9 @@ public:
     }
 
 private:
-    void poll(kocherga::IReactor& reactor, const std::chrono::microseconds current_time) override
+    void poll(kocherga::IReactor& reactor, const std::chrono::microseconds uptime) override
     {
-        last_poll_at_ = current_time;
+        last_poll_at_ = uptime;
         for (auto [key, tr] : inputs_)
         {
             switch (key)
@@ -209,14 +241,88 @@ TEST_CASE("Presenter")
         kocherga::SemanticVersion{33, 11},
         {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
         "com.zubax.kocherga.test.presenter",
-        12,
+        222,
         coa.data(),
     };
 
-    MockController controller;
+    MockController                 controller;
+    std::array<MockNode, 2>        nodes;
+    kocherga::detail::Presenter<2> pres(sys_info, {&nodes.at(0), &nodes.at(1)}, controller);
 
-    MockNode node_a;
-    MockNode node_b;
+    auto ts = std::chrono::microseconds{500'000};
+    pres.poll(ts);
+    for (auto& n : nodes)
+    {
+        REQUIRE(n.getLastPollTime() == ts);
+    }
 
-    kocherga::detail::Presenter<2> pres(sys_info, {&node_a, &node_b}, controller);
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.Heartbeat_1_0(
+    //      mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE,
+    //      health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY, uptime=1))))
+    pres.setNodeHealth(kocherga::detail::dsdl::Heartbeat::Health::Advisory);
+    ts = std::chrono::microseconds{1'500'000};
+    pres.poll(ts);
+    for (auto& n : nodes)
+    {
+        REQUIRE(n.getLastPollTime() == ts);
+        auto tr = *n.popOutput(MockNode::Output::HeartbeatMessage);
+        std::cout << tr.toString() << std::endl;
+        REQUIRE(tr == Transfer(0, {1, 0, 0, 0, 13, 0, 0}));
+    }
+
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_0(
+    //      severity=uavcan.diagnostic.Severity_1_0(uavcan.diagnostic.Severity_1_0.NOTICE),
+    //      text='Hello world!'))))
+    pres.publishLogRecord(kocherga::detail::dsdl::Diagnostic::Severity::Notice, "Hello world!");
+    for (auto& n : nodes)
+    {
+        auto tr = *n.popOutput(MockNode::Output::LogRecordMessage);
+        std::cout << tr.toString() << std::endl;
+        REQUIRE(tr ==
+                Transfer(0, {0, 0, 0, 0, 0, 0, 0, 3, 12, 72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 33}));
+    }
+
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_0(
+    //      severity=uavcan.diagnostic.Severity_1_0(uavcan.diagnostic.Severity_1_0.CRITICAL),
+    //      text='We are going to die :)'))))
+    pres.publishLogRecord(kocherga::detail::dsdl::Diagnostic::Severity::Critical, "We are going to die :)");
+    for (auto& n : nodes)
+    {
+        auto tr = *n.popOutput(MockNode::Output::LogRecordMessage);
+        std::cout << tr.toString() << std::endl;
+        REQUIRE(tr == Transfer(1, {0,   0,   0,   0,   0,   0,  0,   6,   22, 87,  101, 32,  97, 114, 101, 32,
+                                   103, 111, 105, 110, 103, 32, 116, 111, 32, 100, 105, 101, 32, 58,  41}));
+    }
+
+    // Fails because the remote node-ID is not yet known.
+    REQUIRE(!pres.requestFileRead(0xBAD'BAD'BADULL));
+
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
+    //      uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, '/foo/bar/baz.app.bin'))))
+    nodes.at(1).pushInput(MockNode::Input::ExecuteCommandRequest,
+                          Transfer(123,
+                                   {253, 255, 20,  47, 102, 111, 111, 47, 98, 97,  114, 47,
+                                    98,  97,  122, 46, 97,  112, 112, 46, 98, 105, 110},
+                                   3210));
+    ts = std::chrono::microseconds{1'600'000};
+    pres.poll(ts);
+    for (auto& n : nodes)
+    {
+        REQUIRE(n.getLastPollTime() == ts);
+    }
+    REQUIRE(controller.popUpdateRequestedFlag());
+    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::ExecuteCommandResponse));
+    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::ExecuteCommandResponse)) ==
+            Transfer(123, {0, 0, 0, 0, 0, 0, 0}, 3210));
+
+    // The file location is known now.
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0xbadbadbad,
+    //      uavcan.file.Path_1_0('/foo/bar/baz.app.bin')))))
+    REQUIRE(pres.requestFileRead(0xBAD'BAD'BADULL));
+    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::FileReadRequest));
+    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::FileReadRequest)) ==
+            Transfer(0,
+                     {173, 219, 186, 173, 11,  20, 47, 102, 111, 111, 47, 98,  97,
+                      114, 47,  98,  97,  122, 46, 97, 112, 112, 46,  98, 105, 110},
+                     3210));
 }
