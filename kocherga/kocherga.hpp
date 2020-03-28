@@ -115,6 +115,7 @@ struct SystemInfo
 // --------------------------------------------------------------------------------------------------------------------
 
 /// A standard IoC delegate for handling protocol events in the node.
+/// The user code will INVOKE this interface, not implement it.
 /// A reference to the reactor is supplied to INode implementations to let them delegate application-level activities
 /// back to the bootloader core.
 /// The methods accept raw serialized representation and return one as well.
@@ -144,6 +145,7 @@ public:
     virtual void processFileReadResponse(const std::size_t response_length, const std::byte* const response) = 0;
 
     virtual ~IReactor()        = default;
+    IReactor()                 = default;
     IReactor(const IReactor&)  = delete;
     IReactor(const IReactor&&) = delete;
     auto operator=(const IReactor&) -> IReactor& = delete;
@@ -169,10 +171,10 @@ public:
     /// Send a request uavcan.file.Read.
     /// The response will be delivered later asynchronously via IReactor.
     /// The return value is True on success and False if the request could not be sent (aborts the update process).
-    virtual auto requestFileRead(const NodeID           server_node_id,
-                                 const TransferID       transfer_id,
-                                 const std::size_t      payload_length,
-                                 const std::byte* const payload) -> bool = 0;
+    [[nodiscard]] virtual auto requestFileRead(const NodeID           server_node_id,
+                                               const TransferID       transfer_id,
+                                               const std::size_t      payload_length,
+                                               const std::byte* const payload) -> bool = 0;
 
     /// Publish a message uavcan.node.Heartbeat. Observe that the size of the payload is fixed so it is not passed.
     /// If an error occurred, it shall be ignored or reported using other means.
@@ -186,6 +188,7 @@ public:
                                   const std::byte* const payload) = 0;
 
     virtual ~INode()     = default;
+    INode()              = default;
     INode(const INode&)  = delete;
     INode(const INode&&) = delete;
     auto operator=(const INode&) -> INode& = delete;
@@ -207,17 +210,7 @@ public:
 /// The zero offset shall point to the beginning of the ROM segment dedicated to the application.
 class IROMBackend
 {
-protected:
-    IROMBackend() = default;
-
 public:
-    IROMBackend(const IROMBackend&) = delete;
-    IROMBackend(IROMBackend&&)      = delete;
-    auto operator=(const IROMBackend&) -> IROMBackend& = delete;
-    auto operator=(IROMBackend &&) -> IROMBackend& = delete;
-
-    virtual ~IROMBackend() = default;
-
     /// This hook allows the ROM driver to enable write operations, erase ROM, etc, depending on the hardware.
     /// False may be returned to indicate failure, the update is aborted in this case.
     /// @return True on success, False on error.
@@ -234,6 +227,13 @@ public:
     /// @return Number of bytes read; a value less than size indicates an overrun. This operation cannot fail.
     [[nodiscard]] virtual auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
         -> std::size_t = 0;
+
+    virtual ~IROMBackend()          = default;
+    IROMBackend()                   = default;
+    IROMBackend(const IROMBackend&) = delete;
+    IROMBackend(IROMBackend&&)      = delete;
+    auto operator=(const IROMBackend&) -> IROMBackend& = delete;
+    auto operator=(IROMBackend &&) -> IROMBackend& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -494,6 +494,7 @@ public:
     [[nodiscard]] virtual auto getAppInfo() const -> std::optional<AppInfo> = 0;
 
     virtual ~IController()           = default;
+    IController()                    = default;
     IController(const IController&)  = delete;
     IController(const IController&&) = delete;
     auto operator=(const IController&) -> IController& = delete;
@@ -505,7 +506,7 @@ template <std::uint8_t NumNodes>
 class Presenter final : private IReactor
 {
 public:
-    Presenter(const SystemInfo& system_info, const std::array<INode&, NumNodes>& nodes, IController& controller) :
+    Presenter(const SystemInfo& system_info, const std::array<INode*, NumNodes>& nodes, IController& controller) :
         system_info_(system_info), nodes_{nodes}, controller_(controller)
     {}
 
@@ -593,9 +594,9 @@ public:
             ++text_length;
         }
         buf[1] = text_length;
-        for (INode& node : nodes_)
+        for (INode* node : nodes_)
         {
-            node.publishLogRecord(tid_log_record_, text_length + 2, reinterpret_cast<const std::byte*>(buf.data()));
+            node->publishLogRecord(tid_log_record_, text_length + 2, reinterpret_cast<const std::byte*>(buf.data()));
         }
         ++tid_log_record_;
     }
@@ -611,7 +612,8 @@ private:
         {
             auto ptr     = request;
             auto command = static_cast<std::uint16_t>(*ptr++);
-            command |= static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr++) << ByteShiftSecond);
+            command      = static_cast<std::uint16_t>(
+                command | static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr++) << ByteShiftSecond));
             if ((command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::EmergencyStop)) ||
                 (command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::Restart)))
             {
@@ -623,7 +625,7 @@ private:
                 FileLocationSpecifier fls{};
                 fls.local_node_index = current_node_index_;
                 fls.server_node_id   = client_node_id;
-                fls.path_length      = std::min(static_cast<std::uint8_t>(*ptr++), std::size(fls.path));
+                fls.path_length      = std::min(static_cast<std::size_t>(*ptr++), std::size(fls.path));
                 (void) std::memmove(fls.path.data(), ptr, fls.path_length);
                 file_loc_spec_ = fls;
                 if (controller_.beginUpdate())
@@ -696,7 +698,7 @@ private:
         *ptr++ = system_info_.certificate_of_authenticity_length;
         for (auto i = 0U; i < system_info_.certificate_of_authenticity_length; i++)
         {
-            *ptr++ = system_info_.certificate_of_authenticity[i];
+            *ptr++ = static_cast<std::uint8_t>(system_info_.certificate_of_authenticity[i]);
         }
         return static_cast<std::size_t>(ptr - base_ptr);
     }
@@ -738,9 +740,9 @@ private:
             static_cast<std::uint8_t>(static_cast<std::uint8_t>(NodeModeSoftwareUpdate << 2U) |
                                       static_cast<std::uint8_t>(node_health_)),
         }};
-        for (INode& node : nodes_)
+        for (INode* node : nodes_)
         {
-            node.publishHeartbeat(tid_heartbeat_, reinterpret_cast<std::byte*>(buf.data()));
+            node->publishHeartbeat(tid_heartbeat_, reinterpret_cast<std::byte*>(buf.data()));
         }
         ++tid_heartbeat_;
     }
@@ -755,9 +757,9 @@ private:
         std::optional<std::chrono::microseconds>           response_deadline_{};
     };
 
-    const SystemInfo             system_info_;
-    std::array<INode&, NumNodes> nodes_;
-    IController&                 controller_;
+    const SystemInfo                   system_info_;
+    const std::array<INode*, NumNodes> nodes_;
+    IController&                       controller_;
 
     std::chrono::microseconds                last_poll_at_{};
     std::chrono::microseconds                next_heartbeat_deadline_{};
@@ -801,7 +803,7 @@ public:
     /// values early, greatly improving the worst case boot time.
     Bootloader(IROMBackend&                        rom_backend,
                const SystemInfo&                   system_info,
-               const std::array<INode&, NumNodes>& nodes,
+               const std::array<INode*, NumNodes>& nodes,
                const std::size_t                   max_app_size,
                const std::chrono::seconds          boot_delay = std::chrono::seconds(0)) :
         max_app_size_(max_app_size),
