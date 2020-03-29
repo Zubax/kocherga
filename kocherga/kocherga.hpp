@@ -31,44 +31,6 @@ static constexpr std::chrono::seconds ServiceResponseTimeout{3};
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// Bootloader controller states.
-/// The state ReadyToBoot indicates that the application should be started.
-///
-/// The following state transition diagram illustrates the operating principles of the bootloader:
-///
-///     No valid application found ###################### Valid application found
-///               /----------------# Bootloader started #----------+ /-------------------------------------------+
-///               |                ######################          | |                                           |
-///               v                                                v v  Boot delay expired                       |
-///         +-------------+                               +-----------+  (typically zero)  +-------------+       |
-///     /-->| NoAppToBoot |        /----------------------| BootDelay |------------------->| ReadyToBoot |       |
-///     |   +-------------+       /                       +-----------+                    +-------------+       |
-///     |          |             /                          |Boot cancelled,                  |ReadyToBoot is    |
-///     |Update    |<-----------/                           |e.g., received a state transition|an auxiliary      /
-///     |failed,   |Update requested,                       |request to BootCancelled.        |state, it is     /
-///     |no valid  |e.g., received a state transition       v                                 |left automati-  /
-///     |image is  |request to AppUpdateInProgress.  +---------------+                        |cally ASAP.    /
-///     |now ava-  |<--------------------------------| BootCancelled |                        v              /
-///     |ilable    |                                 +---------------+                ###############       /
-///     |          v                                        ^                         # Booting the #      /
-///     | +----------------------+ Update failed, but the   |                         # application #     /
-///     +-| AppUpdateInProgress  |--------------------------/                         ###############    /
-///       +----------------------+ existing valid image was not                                         /
-///                |               altered and remains valid.                                          /
-///                |                                                                                  /
-///                | Update successful, received image is valid.                                     /
-///                +--------------------------------------------------------------------------------/
-enum class State
-{
-    NoAppToBoot,
-    BootDelay,
-    BootCancelled,
-    AppUpdateInProgress,
-    ReadyToBoot,
-};
-
-// --------------------------------------------------------------------------------------------------------------------
-
 /// The structure is mapped to the ROM.
 struct AppInfo
 {
@@ -108,8 +70,8 @@ struct SystemInfo
     const char* node_name = "";
 
     /// CoA normally points into a specific region of ROM, but this is not required. Set 0/nullptr if not available.
-    std::uint8_t     certificate_of_authenticity_length = 0;
-    const std::byte* certificate_of_authenticity        = nullptr;
+    std::uint8_t     certificate_of_authenticity_len = 0;
+    const std::byte* certificate_of_authenticity     = nullptr;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -434,9 +396,9 @@ struct ExecuteCommand
 
     enum class Command : std::uint16_t
     {
-        Restart             = 65535,
-        BeginSoftwareUpdate = 65533,
-        EmergencyStop       = 65531,
+        Restart             = 65'535,
+        BeginSoftwareUpdate = 65'533,
+        EmergencyStop       = 65'531,
     };
 
     enum class Status : std::uint8_t
@@ -503,7 +465,7 @@ public:
 
 /// Unifies multiple INode and performs DSDL serialization. Manages the network at the presentation layer.
 template <std::uint8_t NumNodes>
-class Presenter final : private IReactor
+class Presenter final : public IReactor
 {
 public:
     Presenter(const SystemInfo& system_info, const std::array<INode*, NumNodes>& nodes, IController& controller) :
@@ -515,7 +477,7 @@ public:
         last_poll_at_ = uptime;
 
         current_node_index_ = 0;
-        for (INode* node : nodes_)
+        for (INode* const node : nodes_)
         {
             node->poll(*this, uptime);
             ++current_node_index_;
@@ -545,13 +507,12 @@ public:
     {
         if (file_loc_spec_)
         {
-            std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{{
-                static_cast<std::uint8_t>(offset >> ByteShiftFirst),
-                static_cast<std::uint8_t>(offset >> ByteShiftSecond),
-                static_cast<std::uint8_t>(offset >> ByteShiftThird),
-                static_cast<std::uint8_t>(offset >> ByteShiftFourth),
-                static_cast<std::uint8_t>(offset >> ByteShiftFifth),
-            }};
+            std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{};
+            buf[0] = static_cast<std::uint8_t>(offset >> ByteShiftFirst);
+            buf[1] = static_cast<std::uint8_t>(offset >> ByteShiftSecond);
+            buf[2] = static_cast<std::uint8_t>(offset >> ByteShiftThird);
+            buf[3] = static_cast<std::uint8_t>(offset >> ByteShiftFourth);
+            buf[4] = static_cast<std::uint8_t>(offset >> ByteShiftFifth);
 
             static constexpr auto  length_minus_path = 6U;
             FileLocationSpecifier& fls               = *file_loc_spec_;
@@ -579,14 +540,14 @@ public:
         buf[7]                   = static_cast<std::uint8_t>(severity);
         std::uint8_t text_length = 0;
         const char*  ch          = text;
-        for (auto it = std::begin(buf) + 9; (it != std::end(buf)) && (*ch != '\0'); ++it)
+        const auto   buf_end     = std::end(buf);
+        for (auto it = std::begin(buf) + 9; (it != buf_end) && (*ch != '\0'); ++it, ++ch)
         {
             *it = static_cast<std::uint8_t>(*ch);
-            ++ch;
             ++text_length;
         }
         buf[8] = text_length;
-        for (INode* node : nodes_)
+        for (INode* const node : nodes_)
         {
             node->publishLogRecord(tid_log_record_, text_length + 9U, reinterpret_cast<const std::byte*>(buf.data()));
         }
@@ -603,9 +564,11 @@ private:
         if (request_length >= dsdl::ExecuteCommand::RequestSizeMin)
         {
             auto ptr     = request;
-            auto command = static_cast<std::uint16_t>(*ptr++);
-            command      = static_cast<std::uint16_t>(
-                command | static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr++) << ByteShiftSecond));
+            auto command = static_cast<std::uint16_t>(*ptr);
+            ++ptr;
+            command = static_cast<std::uint16_t>(
+                command | static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr) << ByteShiftSecond));
+            ++ptr;
             if ((command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::EmergencyStop)) ||
                 (command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::Restart)))
             {
@@ -620,7 +583,8 @@ private:
                     fls.local_node_index = current_node_index_;
                     fls.server_node_id   = client_node_id;
                     fls.path_length =
-                        static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr++), std::size(fls.path)));
+                        static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr), std::size(fls.path)));
+                    ++ptr;
                     (void) std::memmove(fls.path.data(), ptr, fls.path_length);
                     file_loc_spec_ = fls;
                     result         = dsdl::ExecuteCommand::Status::Success;
@@ -648,7 +612,7 @@ private:
             *ptr++                   = app_info->version.at(0);
             *ptr++                   = app_info->version.at(1);
             std::uint64_t vcs_commit = app_info->vcs_commit;
-            for (auto i = 0U; i < sizeof(vcs_commit); i++)
+            for (auto i = 0U; i < sizeof(std::uint64_t); i++)
             {
                 *ptr++ = static_cast<std::uint8_t>(vcs_commit);
                 vcs_commit >>= ByteShiftSecond;
@@ -669,16 +633,16 @@ private:
         }
         auto&       name_length = *ptr++;
         const char* ch          = system_info_.node_name;
-        for (auto i = 0U; (i < dsdl::NameCapacity) && (*ch != '\0'); i++)
+        for (auto i = 0U; (i < dsdl::NameCapacity) && (*ch != '\0'); i++, ch++)
         {
             name_length++;
-            *ptr++ = static_cast<std::uint8_t>(*ch++);
+            *ptr++ = static_cast<std::uint8_t>(*ch);
         }
         if (app_info)
         {
             *ptr++            = 1;
             std::uint64_t crc = app_info->image_crc;
-            for (auto i = 0U; i < sizeof(crc); i++)
+            for (auto i = 0U; i < sizeof(std::uint64_t); i++)
             {
                 *ptr++ = static_cast<std::uint8_t>(crc);
                 crc >>= ByteShiftSecond;
@@ -688,8 +652,8 @@ private:
         {
             *ptr++ = 0;
         }
-        *ptr++ = system_info_.certificate_of_authenticity_length;
-        for (auto i = 0U; i < system_info_.certificate_of_authenticity_length; i++)
+        *ptr++ = system_info_.certificate_of_authenticity_len;
+        for (auto i = 0U; i < system_info_.certificate_of_authenticity_len; i++)
         {
             *ptr++ = static_cast<std::uint8_t>(system_info_.certificate_of_authenticity[i]);
         }
@@ -708,16 +672,16 @@ private:
                 std::optional<dsdl::File::ReadResponse> argument;
                 if (std::equal(std::begin(zero_error), std::end(zero_error), response))  // Error = OK
                 {
-                    const dsdl::File::ReadResponse obj{
+                    argument = dsdl::File::ReadResponse{
                         static_cast<std::uint16_t>(
                             static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[2]) << ByteShiftFirst) |
                             static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[3]) << ByteShiftSecond)),
                         &response[4],
                     };
-                    if (obj.data_length <= dsdl::File::ReadResponseDataCapacity)
-                    {
-                        argument = obj;
-                    }
+                }
+                if (argument && (argument->data_length > dsdl::File::ReadResponseDataCapacity))
+                {
+                    argument.reset();
                 }
                 controller_.handleFileReadResult(argument);
             }
@@ -734,8 +698,10 @@ private:
             static_cast<std::uint8_t>(ut >> ByteShiftFourth),
             static_cast<std::uint8_t>(static_cast<std::uint8_t>(NodeModeSoftwareUpdate << 2U) |
                                       static_cast<std::uint8_t>(node_health_)),
+            0,
+            0,
         }};
-        for (INode* node : nodes_)
+        for (INode* const node : nodes_)
         {
             node->publishHeartbeat(tid_heartbeat_, reinterpret_cast<std::byte*>(buf.data()));
         }
@@ -786,9 +752,48 @@ private:
 /// The bootloader may run multiple nodes on different transports concurrently to support multi-transport functionality.
 /// For example, a device may provide the firmware update capability via CAN and a serial port.
 template <std::uint8_t NumNodes>
-class Bootloader : private detail::IController
+class Bootloader : public detail::IController
 {
 public:
+    /// The following state transition diagram illustrates the operating principles of the bootloader.
+    ///
+    ///                                ######################
+    ///               /----------------# Bootloader started #-------+ Valid
+    ///               | No valid       ######################       | application found.
+    ///               v application found.                          v
+    ///         +-------------+                               +-----------+ Boot delay expired. ###############
+    ///     /-->| NoAppToBoot |        /----------------------| BootDelay |--------------------># Booting the #
+    ///     |   +-------------+       /                       +-----------+  (default delay 0)  # application #
+    ///     |          |             /                     Boot |       ^                       ###############
+    ///     |Update    |<-----------/                  canceled.|       |
+    ///     |failed,   |Update requested.                       |       |
+    ///     |no valid  |                                        v       |
+    ///     |image is  |                           +---------------+    |
+    ///     |now ava-  |<--------------------------| BootCancelled |    |
+    ///     |ilable.   |                           +---------------+    |
+    ///     |          v                                       ^        |
+    ///     | +----------------------+ Update failed, but the  |        |Update successful,
+    ///     +-| AppUpdateInProgress  |-------------------------/        |the received image
+    ///       +----------------------+ existing valid image was not     |is valid.
+    ///                |               altered and remains valid.       |
+    ///                |                                               /
+    ///                +----------------------------------------------/
+    enum class State
+    {
+        NoAppToBoot,    ///< Initial state if no valid application exists. Also entered after a failed update.
+        BootDelay,      ///< Initial state if a valid application exists. Also the only terminal state.
+        BootCancelled,  ///< Entered by request from the outer bootloader logic or from the application.
+        AppUpdateInProgress,
+    };
+
+    /// The bootloader instructs the outer logic what action needs to be taken when its execution has completed.
+    /// Once the final action is returned, the bootloader has terminated itself and need not be run anymore.
+    enum class Final
+    {
+        BootApp,  ///< Jump to the application image. The bootloader has verified its correctness.
+        Restart,  ///< Restart the bootloader itself.
+    };
+
     /// The max application image size parameter is very important for performance reasons;
     /// without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
     /// valid app descriptor (by virtue of having the same magic, which is only 64 bit long),
@@ -806,34 +811,52 @@ public:
         presentation_(system_info, nodes, *this)
     {}
 
-    [[nodiscard]] auto poll(const std::chrono::microseconds uptime) -> State
+    [[nodiscard]] auto poll(const std::chrono::microseconds uptime) -> std::optional<Final>
     {
-        if (!initialized_)
+        if (!inited_)
         {
-            detail::AppLocator locator(backend_, max_app_size_);
-            app_info_      = locator.identifyApplication();
-            boot_deadline_ = uptime + boot_delay_;
-            state_         = app_info_ ? State::BootDelay : State::NoAppToBoot;
-            initialized_   = true;
+            reset(uptime);
+            inited_ = true;
         }
-
-        presentation_.poll(uptime);
 
         if ((State::BootDelay == state_) && (uptime >= boot_deadline_))
         {
-            state_ = State::ReadyToBoot;
+            final_ = Final::BootApp;
+        }
+        else
+        {
+            // If the application is valid and the boot delay is zero, the nodes will never be polled by design.
+            // This avoids unnecessary delays at startup. In many embedded systems fast boot-up is critical.
+            presentation_.poll(uptime);
         }
 
-        return state_;
+        return final_;
+    }
+
+    void loiter()
+    {
+        final_.reset();
+        if (State::BootDelay == state_)
+        {
+            state_ = State::BootCancelled;
+        }
     }
 
     [[nodiscard]] auto getAppInfo() const override { return app_info_; }
 
+    [[nodiscard]] auto getState() const { return state_; }
+
 private:
-    void reboot() override
+    void reset(const std::chrono::microseconds uptime)
     {
-        // TODO
+        detail::AppLocator locator(backend_, max_app_size_);
+        app_info_      = locator.identifyApplication();
+        boot_deadline_ = uptime + boot_delay_;
+        state_         = app_info_ ? State::BootDelay : State::NoAppToBoot;
+        final_.reset();
     }
+
+    void reboot() override { final_ = Final::Restart; }
 
     [[nodiscard]] auto beginUpdate() -> bool override
     {
@@ -851,10 +874,11 @@ private:
     IROMBackend&                backend_;
     detail::Presenter<NumNodes> presentation_;
 
-    bool                                     initialized_ = false;
-    State                                    state_       = State::NoAppToBoot;
-    std::optional<std::chrono::microseconds> boot_deadline_;
-    std::optional<AppInfo>                   app_info_;
+    bool                      inited_ = false;
+    State                     state_  = State::NoAppToBoot;
+    std::optional<Final>      final_;
+    std::chrono::microseconds boot_deadline_{};
+    std::optional<AppInfo>    app_info_;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
