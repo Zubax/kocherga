@@ -486,7 +486,7 @@ public:
 
     /// Begin software update.
     /// The remote node and path are stored in the presenter so that the controller does not need to manage that.
-    virtual auto beginUpdate() -> bool = 0;
+    [[nodiscard]] virtual auto beginUpdate() -> bool = 0;
 
     /// Response from the file server received or timed out. In case of timeout, the argument is an empty option.
     virtual void handleFileReadResult(const std::optional<dsdl::File::ReadResponse> response) = 0;
@@ -545,9 +545,6 @@ public:
     {
         if (file_loc_spec_)
         {
-            static constexpr auto  length_minus_path = 6U;
-            FileLocationSpecifier& fls               = *file_loc_spec_;
-            fls.response_deadline_                   = last_poll_at_ + ServiceResponseTimeout;
             std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{{
                 static_cast<std::uint8_t>(offset >> ByteShiftFirst),
                 static_cast<std::uint8_t>(offset >> ByteShiftSecond),
@@ -555,14 +552,22 @@ public:
                 static_cast<std::uint8_t>(offset >> ByteShiftFourth),
                 static_cast<std::uint8_t>(offset >> ByteShiftFifth),
             }};
-            buf.at(length_minus_path - 1U) = fls.path_length;
+
+            static constexpr auto  length_minus_path = 6U;
+            FileLocationSpecifier& fls               = *file_loc_spec_;
+            buf.at(length_minus_path - 1U)           = fls.path_length;
             (void) std::memmove(&buf.at(length_minus_path), fls.path.data(), fls.path_length);
-            const bool out = nodes_.at(fls.local_node_index)
-                                 ->requestFileRead(fls.server_node_id,
+            INode* const node = nodes_.at(fls.local_node_index);
+
+            const bool out = node->requestFileRead(fls.server_node_id,
                                                    fls.read_transfer_id,
                                                    fls.path_length + length_minus_path,
                                                    reinterpret_cast<const std::byte*>(buf.data()));
             fls.read_transfer_id++;
+            if (out)
+            {
+                fls.response_deadline_ = last_poll_at_ + ServiceResponseTimeout;
+            }
             return out;
         }
         return false;
@@ -609,16 +614,16 @@ private:
             }
             else if (command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::BeginSoftwareUpdate))
             {
-                FileLocationSpecifier fls{};
-                fls.local_node_index = current_node_index_;
-                fls.server_node_id   = client_node_id;
-                fls.path_length =
-                    static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr++), std::size(fls.path)));
-                (void) std::memmove(fls.path.data(), ptr, fls.path_length);
-                file_loc_spec_ = fls;
-                if (controller_.beginUpdate())
+                if (controller_.beginUpdate())  // Do not update the file location specifier on failure.
                 {
-                    result = dsdl::ExecuteCommand::Status::Success;
+                    FileLocationSpecifier fls{};
+                    fls.local_node_index = current_node_index_;
+                    fls.server_node_id   = client_node_id;
+                    fls.path_length =
+                        static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr++), std::size(fls.path)));
+                    (void) std::memmove(fls.path.data(), ptr, fls.path_length);
+                    file_loc_spec_ = fls;
+                    result         = dsdl::ExecuteCommand::Status::Success;
                 }
             }
             else
@@ -699,19 +704,22 @@ private:
             if (fls.response_deadline_ && (fls.local_node_index == current_node_index_))
             {
                 fls.response_deadline_.reset();
-                static const std::array<std::byte, 2> zero_error{};
-                dsdl::File::ReadResponse              obj{};
+                static const std::array<std::byte, 2>   zero_error{};
+                std::optional<dsdl::File::ReadResponse> argument;
                 if (std::equal(std::begin(zero_error), std::end(zero_error), response))  // Error = OK
                 {
-                    obj.data_length =
-                        static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[2]) << ByteShiftFirst) |
-                        static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[3]) << ByteShiftSecond);
-                    obj.data = &response[4];
+                    const dsdl::File::ReadResponse obj{
+                        static_cast<std::uint16_t>(
+                            static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[2]) << ByteShiftFirst) |
+                            static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[3]) << ByteShiftSecond)),
+                        &response[4],
+                    };
+                    if (obj.data_length <= dsdl::File::ReadResponseDataCapacity)
+                    {
+                        argument = obj;
+                    }
                 }
-                if (obj.data_length <= dsdl::File::ReadResponseDataCapacity)
-                {
-                    controller_.handleFileReadResult(obj);
-                }
+                controller_.handleFileReadResult(argument);
             }
         }
     }
@@ -822,6 +830,21 @@ public:
     [[nodiscard]] auto getAppInfo() const override { return app_info_; }
 
 private:
+    void reboot() override
+    {
+        // TODO
+    }
+
+    [[nodiscard]] auto beginUpdate() -> bool override
+    {
+        return true;  // TODO
+    }
+
+    void handleFileReadResult(const std::optional<detail::dsdl::File::ReadResponse> response) override
+    {
+        (void) response;  // TODO
+    }
+
     const std::size_t          max_app_size_;
     const std::chrono::seconds boot_delay_;
 
