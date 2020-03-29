@@ -403,7 +403,7 @@ TEST_CASE("Presenter")
     //      software_image_crc=[0xBADC0FFEE0DDF00D], certificate_of_authenticity=bytes(range(1, 223)[::-1])))))
     controller.setAppInfo(kocherga::AppInfo{
         0xBADC'0FFE'E0DD'F00DULL,
-        0xDE'AD'BULL,
+        0xDE'ADBULL,
         0xDEAD'DEAD'DEAD'DEADULL,
         0,
         2,

@@ -541,9 +541,13 @@ public:
         std::uint8_t text_length = 0;
         const char*  ch          = text;
         const auto   buf_end     = std::end(buf);
-        for (auto it = std::begin(buf) + 9; (it != buf_end) && (*ch != '\0'); ++it, ++ch)
+        for (auto it = std::begin(buf) + 9; it != buf_end; ++it)
         {
-            *it = static_cast<std::uint8_t>(*ch);
+            if ('\0' == *ch)
+            {
+                break;
+            }
+            *it = static_cast<std::uint8_t>(*ch++);
             ++text_length;
         }
         buf[8] = text_length;
@@ -633,10 +637,14 @@ private:
         }
         auto&       name_length = *ptr++;
         const char* ch          = system_info_.node_name;
-        for (auto i = 0U; (i < dsdl::NameCapacity) && (*ch != '\0'); i++, ch++)
+        for (auto i = 0U; i < dsdl::NameCapacity; i++)
         {
+            if ('\0' == *ch)
+            {
+                break;
+            }
             name_length++;
-            *ptr++ = static_cast<std::uint8_t>(*ch);
+            *ptr++ = static_cast<std::uint8_t>(*ch++);
         }
         if (app_info)
         {
