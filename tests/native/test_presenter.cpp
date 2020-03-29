@@ -4,10 +4,8 @@
 
 #include "kocherga.hpp"  // NOLINT include order: include Kocherga first to ensure no headers are missed.
 #include "catch.hpp"
-#include "util.hpp"
-#include <algorithm>
+#include "mock.hpp"
 #include <iostream>
-#include <map>
 #include <vector>
 
 /// GENERATION OF REFERENCE SERIALIZED REPRESENTATIONS.
@@ -22,166 +20,6 @@
 ///     [1, 0, 0, 0, 13, 0, 0]
 namespace
 {
-struct Transfer
-{
-    std::optional<kocherga::NodeID> remote_node_id;
-    kocherga::TransferID            transfer_id{};
-    std::vector<std::byte>          payload;
-
-    Transfer() = default;
-    Transfer(const kocherga::TransferID            arg_transfer_id,
-             const std::vector<std::byte>&         arg_payload,
-             const std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
-        remote_node_id(arg_remote_node_id), transfer_id(arg_transfer_id), payload(arg_payload)
-    {}
-    Transfer(const kocherga::TransferID            arg_transfer_id,
-             const std::vector<std::uint8_t>&      arg_payload,
-             const std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
-        Transfer(arg_transfer_id,
-                 arg_payload.size(),
-                 reinterpret_cast<const std::byte*>(arg_payload.data()),
-                 arg_remote_node_id)
-    {}
-    Transfer(const kocherga::TransferID            arg_transfer_id,
-             const std::size_t                     arg_payload_length,
-             const std::byte* const                arg_payload,
-             const std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
-        remote_node_id(arg_remote_node_id), transfer_id(arg_transfer_id)
-    {
-        (void) std::copy_n(arg_payload, arg_payload_length, std::back_inserter(payload));
-    }
-
-    [[nodiscard]] auto toString() const -> std::string
-    {
-        return "remote_nid=" + (remote_node_id ? std::to_string(static_cast<std::uint64_t>(*remote_node_id)) : "?") +
-               " tid=" + std::to_string(transfer_id) + " payload:\n" + util::makeHexDump(payload) + "\n";
-    }
-
-    auto operator==(const Transfer& rhs) const -> bool
-    {
-        return (remote_node_id == rhs.remote_node_id) && (transfer_id == rhs.transfer_id) &&
-               std::equal(std::begin(payload), std::end(payload), std::begin(rhs.payload), std::end(rhs.payload));
-    }
-};
-
-class MockNode : public kocherga::INode
-{
-public:
-    enum class Output
-    {
-        ExecuteCommandResponse,
-        NodeInfoResponse,
-        FileReadRequest,
-        HeartbeatMessage,
-        LogRecordMessage,
-    };
-
-    enum class Input
-    {
-        ExecuteCommandRequest,
-        NodeInfoRequest,
-        FileReadResponse,
-    };
-
-    [[nodiscard]] auto getLastPollTime() const { return last_poll_at_; }
-
-    void setFileReadResult(const bool value) { file_read_result_ = value; }
-
-    /// Retrieve a previously received transfer under the specified session.
-    /// Return an empty option if no such transfer was received since the last retrieval.
-    /// The read is destructive -- the transfer is removed afterwards.
-    [[nodiscard]] auto popOutput(const Output ses) -> std::optional<Transfer>
-    {
-        if (const auto it = outputs_.find(ses); it != std::end(outputs_))
-        {
-            const Transfer ret = it->second;
-            outputs_.erase(it);
-            return ret;
-        }
-        return {};
-    }
-
-    /// Store the transfer for reception when the next poll() is invoked.
-    /// The invocation fails if such transfer is already pending.
-    void pushInput(const Input ses, const Transfer& tr)
-    {
-        REQUIRE(inputs_.find(ses) == std::end(inputs_));
-        inputs_[ses] = tr;
-    }
-
-private:
-    void poll(kocherga::IReactor& reactor, const std::chrono::microseconds uptime) override
-    {
-        last_poll_at_ = uptime;
-        for (auto [key, tr] : inputs_)
-        {
-            switch (key)
-            {
-            case Input::ExecuteCommandRequest:
-            {
-                std::vector<std::byte> buffer(kocherga::IReactor::ExecuteCommandResponseLength);
-                reactor.processExecuteCommandRequest(*tr.remote_node_id,
-                                                     tr.payload.size(),
-                                                     tr.payload.data(),
-                                                     buffer.data());
-                store(Output::ExecuteCommandResponse, Transfer(tr.transfer_id, buffer, *tr.remote_node_id));
-                break;
-            }
-            case Input::NodeInfoRequest:
-            {
-                std::vector<std::byte> buffer(kocherga::IReactor::NodeInfoResponseMaxLength);
-                const auto             size = reactor.processNodeInfoRequest(buffer.data());
-                buffer.resize(size);
-                store(Output::NodeInfoResponse, Transfer(tr.transfer_id, buffer, *tr.remote_node_id));
-                break;
-            }
-            case Input::FileReadResponse:
-            {
-                reactor.processFileReadResponse(std::size(tr.payload), tr.payload.data());
-                break;
-            }
-            default:
-            {
-                FAIL("UNHANDLED CASE");
-            }
-            }
-        }
-        inputs_.clear();
-    }
-
-    [[nodiscard]] auto requestFileRead(const kocherga::NodeID     server_node_id,
-                                       const kocherga::TransferID transfer_id,
-                                       const std::size_t          payload_length,
-                                       const std::byte* const     payload) -> bool override
-    {
-        store(Output::FileReadRequest, Transfer(transfer_id, payload_length, payload, server_node_id));
-        return file_read_result_;
-    }
-
-    void publishHeartbeat(const kocherga::TransferID transfer_id, const std::byte* const payload) override
-    {
-        store(Output::HeartbeatMessage, Transfer(transfer_id, HeartbeatLength, payload));
-    }
-
-    void publishLogRecord(const kocherga::TransferID transfer_id,
-                          const std::size_t          payload_length,
-                          const std::byte* const     payload) override
-    {
-        store(Output::LogRecordMessage, Transfer(transfer_id, payload_length, payload));
-    }
-
-    void store(const Output ses, const Transfer& tr)
-    {
-        REQUIRE(outputs_.find(ses) == std::end(outputs_));
-        outputs_[ses] = tr;
-    }
-
-    std::chrono::microseconds  last_poll_at_{};
-    bool                       file_read_result_ = true;
-    std::map<Output, Transfer> outputs_;
-    std::map<Input, Transfer>  inputs_;
-};
-
 class MockController : public kocherga::detail::IController
 {
 public:
@@ -231,6 +69,9 @@ private:
 
 TEST_CASE("Presenter")
 {
+    using mock::Node;
+    using mock::Transfer;
+
     static constexpr auto               coa_capacity = 222U;
     std::array<std::byte, coa_capacity> coa{};
     for (auto i = 0U; i < coa_capacity; i++)
@@ -247,7 +88,7 @@ TEST_CASE("Presenter")
     };
 
     MockController                 controller;
-    std::array<MockNode, 2>        nodes;
+    std::array<Node, 2>            nodes;
     kocherga::detail::Presenter<2> pres(sys_info, {&nodes.at(0), &nodes.at(1)}, controller);
 
     auto ts = std::chrono::microseconds{500'000};
@@ -266,7 +107,7 @@ TEST_CASE("Presenter")
     for (auto& n : nodes)
     {
         REQUIRE(n.getLastPollTime() == ts);
-        const auto tr = *n.popOutput(MockNode::Output::HeartbeatMessage);
+        const auto tr = *n.popOutput(Node::Output::HeartbeatMessage);
         std::cout << tr.toString() << std::endl;
         REQUIRE(tr == Transfer(0, {1, 0, 0, 0, 13, 0, 0}));
     }
@@ -277,7 +118,7 @@ TEST_CASE("Presenter")
     pres.publishLogRecord(kocherga::detail::dsdl::Diagnostic::Severity::Notice, "Hello world!");
     for (auto& n : nodes)
     {
-        const auto tr = *n.popOutput(MockNode::Output::LogRecordMessage);
+        const auto tr = *n.popOutput(Node::Output::LogRecordMessage);
         std::cout << tr.toString() << std::endl;
         REQUIRE(tr ==
                 Transfer(0, {0, 0, 0, 0, 0, 0, 0, 3, 12, 72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 33}));
@@ -289,7 +130,7 @@ TEST_CASE("Presenter")
     pres.publishLogRecord(kocherga::detail::dsdl::Diagnostic::Severity::Critical, "We are going to die :)");
     for (auto& n : nodes)
     {
-        const auto tr = *n.popOutput(MockNode::Output::LogRecordMessage);
+        const auto tr = *n.popOutput(Node::Output::LogRecordMessage);
         std::cout << tr.toString() << std::endl;
         REQUIRE(tr == Transfer(1, {0,   0,   0,   0,   0,   0,  0,   6,   22, 87,  101, 32,  97, 114, 101, 32,
                                    103, 111, 105, 110, 103, 32, 116, 111, 32, 100, 105, 101, 32, 58,  41}));
@@ -300,7 +141,7 @@ TEST_CASE("Presenter")
 
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
     //      uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, '/foo/bar/baz.app.bin'))))
-    nodes.at(1).pushInput(MockNode::Input::ExecuteCommandRequest,
+    nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(123,
                                    {253, 255, 20,  47, 102, 111, 111, 47, 98, 97,  114, 47,
                                     98,  97,  122, 46, 97,  112, 112, 46, 98, 105, 110},
@@ -312,23 +153,23 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
     }
     REQUIRE(controller.popUpdateRequestedFlag());
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::ExecuteCommandResponse));
-    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::ExecuteCommandResponse)) ==
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse));
+    REQUIRE((*nodes.at(1).popOutput(Node::Output::ExecuteCommandResponse)) ==
             Transfer(123, {0, 0, 0, 0, 0, 0, 0}, 3210));
 
     // The file location is known now.
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0xbadbadbad,
     //      uavcan.file.Path_1_0('/foo/bar/baz.app.bin')))))
     REQUIRE(pres.requestFileRead(0xB'ADBA'DBADULL));
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::FileReadRequest));
-    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::FileReadRequest)) ==
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
             Transfer(0,
                      {173, 219, 186, 173, 11,  20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98,  97,  122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
 
     // Invalid request serialization. File location specifier not updated.
-    nodes.at(0).pushInput(MockNode::Input::ExecuteCommandRequest, Transfer(333, std::vector<std::byte>(), 3210));
+    nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest, Transfer(333, std::vector<std::byte>(), 3210));
     ts = std::chrono::microseconds{1'700'000};
     pres.poll(ts);
     for (const auto& n : nodes)
@@ -336,14 +177,14 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
     }
     REQUIRE(!controller.popUpdateRequestedFlag());
-    REQUIRE((*nodes.at(0).popOutput(MockNode::Output::ExecuteCommandResponse)) ==
+    REQUIRE((*nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse)) ==
             Transfer(333, {6, 0, 0, 0, 0, 0, 0}, 3210));  // Internal error.
-    REQUIRE(!nodes.at(1).popOutput(MockNode::Output::ExecuteCommandResponse));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::ExecuteCommandResponse));
 
     // Reboot request.
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
     //      uavcan.node.ExecuteCommand_1_0.Request.COMMAND_RESTART, ''))))
-    nodes.at(1).pushInput(MockNode::Input::ExecuteCommandRequest, Transfer(444, {255, 255, 0}, 2222));
+    nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest, Transfer(444, {255, 255, 0}, 2222));
     ts = std::chrono::microseconds{1'800'000};
     pres.poll(ts);
     for (const auto& n : nodes)
@@ -351,12 +192,12 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
     }
     REQUIRE(controller.popRebootRequestedFlag());
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::ExecuteCommandResponse));
-    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::ExecuteCommandResponse)) ==
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse));
+    REQUIRE((*nodes.at(1).popOutput(Node::Output::ExecuteCommandResponse)) ==
             Transfer(444, {0, 0, 0, 0, 0, 0, 0}, 2222));
 
     // Node info request; app info not available. SR generation not shown.
-    nodes.at(0).pushInput(MockNode::Input::NodeInfoRequest, Transfer(555, std::vector<std::byte>{}, 3333));
+    nodes.at(0).pushInput(Node::Input::NodeInfoRequest, Transfer(555, std::vector<std::byte>{}, 3333));
     ts = std::chrono::microseconds{1'900'000};
     pres.poll(ts);
     for (const auto& n : nodes)
@@ -364,7 +205,7 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
     }
     REQUIRE(
-        (*nodes.at(0).popOutput(MockNode::Output::NodeInfoResponse)) ==
+        (*nodes.at(0).popOutput(Node::Output::NodeInfoResponse)) ==
         Transfer(555,
                  {1,   0,   33,  11,  0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   1,   2,   3,   4,   5,   6,
                   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  33,  99,  111, 109, 46,  122, 117, 98,  97,  120,
@@ -382,7 +223,7 @@ TEST_CASE("Presenter")
                   28,  27,  26,  25,  24,  23,  22,  21,  20,  19,  18,  17,  16,  15,  14,  13,  12,  11,  10,  9,
                   8,   7,   6,   5,   4,   3,   2,   1},
                  3333));
-    REQUIRE(!nodes.at(1).popOutput(MockNode::Output::ExecuteCommandResponse));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::ExecuteCommandResponse));
 
     // Node info request; app info is available.
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.GetInfo_1_0.Response(
@@ -398,14 +239,14 @@ TEST_CASE("Presenter")
         2,
         {3, 11},
     });
-    nodes.at(1).pushInput(MockNode::Input::NodeInfoRequest, Transfer(666, std::vector<std::byte>{}, 1111));
+    nodes.at(1).pushInput(Node::Input::NodeInfoRequest, Transfer(666, std::vector<std::byte>{}, 1111));
     ts = std::chrono::microseconds{1'910'000};
     pres.poll(ts);
     for (const auto& n : nodes)
     {
         REQUIRE(n.getLastPollTime() == ts);
     }
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::ExecuteCommandResponse));
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse));
     const Transfer node_info_reference(666,
                                        {1,   0,   33,  11,  3,   11,  173, 222, 173, 222, 173, 222, 173, 222, 1,   2,
                                         3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  33,  99,
@@ -427,7 +268,7 @@ TEST_CASE("Presenter")
                                         24,  23,  22,  21,  20,  19,  18,  17,  16,  15,  14,  13,  12,  11,  10,  9,
                                         8,   7,   6,   5,   4,   3,   2,   1},
                                        1111);
-    const auto     node_info_response = *nodes.at(1).popOutput(MockNode::Output::NodeInfoResponse);
+    const auto     node_info_response = *nodes.at(1).popOutput(Node::Output::NodeInfoResponse);
     REQUIRE(node_info_reference == node_info_response);
 
     // It's time for another heartbeat.
@@ -437,7 +278,7 @@ TEST_CASE("Presenter")
     for (auto& n : nodes)
     {
         REQUIRE(n.getLastPollTime() == ts);
-        const auto tr = *n.popOutput(MockNode::Output::HeartbeatMessage);
+        const auto tr = *n.popOutput(Node::Output::HeartbeatMessage);
         std::cout << tr.toString() << std::endl;
         REQUIRE(tr == Transfer(1, {2, 0, 0, 0, 15, 0, 0}));
     }
@@ -446,7 +287,7 @@ TEST_CASE("Presenter")
     // Remember that the second update request was rejected so the actual file location is the old one.
     // This one will be rejected because it's the wrong node.
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Response(uavcan.file.Error_1_0(0), b'The data.'))))
-    nodes.at(0).pushInput(MockNode::Input::FileReadResponse,
+    nodes.at(0).pushInput(Node::Input::FileReadResponse,
                           Transfer(0, {0, 0, 9, 0, 84, 104, 101, 32, 100, 97, 116, 97, 46}, 3210));
     ts = std::chrono::microseconds{2'200'000};
     pres.poll(ts);
@@ -456,7 +297,7 @@ TEST_CASE("Presenter")
     }
     REQUIRE(!controller.popFileReadResult());
     // Correct node -- accepted.
-    nodes.at(1).pushInput(MockNode::Input::FileReadResponse,
+    nodes.at(1).pushInput(Node::Input::FileReadResponse,
                           Transfer(0, {0, 0, 9, 0, 84, 104, 101, 32, 100, 97, 116, 97, 46}, 3210));
     ts = std::chrono::microseconds{2'200'000};
     pres.poll(ts);
@@ -469,7 +310,7 @@ TEST_CASE("Presenter")
     REQUIRE(9 == read_result.data_length);  // The pointer is invalidated here, don't check it.
     REQUIRE(nullptr != read_result.data);
     // Further responses not accepted because no request is pending.
-    nodes.at(1).pushInput(MockNode::Input::FileReadResponse,
+    nodes.at(1).pushInput(Node::Input::FileReadResponse,
                           Transfer(0, {0, 0, 9, 0, 84, 104, 101, 32, 100, 97, 116, 97, 46}, 3210));
     ts = std::chrono::microseconds{2'300'000};
     pres.poll(ts);
@@ -482,8 +323,8 @@ TEST_CASE("Presenter")
     // File read error handling.
     nodes.at(1).setFileReadResult(false);
     REQUIRE(!pres.requestFileRead(123'456));
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::FileReadRequest));
-    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::FileReadRequest)) ==
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
             Transfer(1,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
@@ -492,13 +333,13 @@ TEST_CASE("Presenter")
     // Successful request, but the response specifies a non-zero error code.
     nodes.at(1).setFileReadResult(true);
     REQUIRE(pres.requestFileRead(123'456));
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::FileReadRequest));
-    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::FileReadRequest)) ==
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
             Transfer(2,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
-    nodes.at(1).pushInput(MockNode::Input::FileReadResponse,
+    nodes.at(1).pushInput(Node::Input::FileReadResponse,
                           Transfer(1, {1, 0, 9, 0, 84, 104, 101, 32, 100, 97, 116, 97, 46}, 3210));
     ts = std::chrono::microseconds{2'400'000};
     pres.poll(ts);
@@ -511,8 +352,8 @@ TEST_CASE("Presenter")
     // Successful request, but the response times out.
     nodes.at(1).setFileReadResult(true);
     REQUIRE(pres.requestFileRead(123'456));
-    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::FileReadRequest));
-    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::FileReadRequest)) ==
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
             Transfer(3,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},

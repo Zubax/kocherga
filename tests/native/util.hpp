@@ -89,7 +89,7 @@ inline auto makeHexDump(const Container& cont)
     return makeHexDump(std::begin(cont), std::end(cont));
 }
 
-/// A mock ROM backend mapped onto a local file.
+/// A ROM backend mapped onto a local file.
 class FileROMBackend : public kocherga::IROMBackend
 {
 public:
