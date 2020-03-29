@@ -175,11 +175,17 @@ class IROMBackend
 public:
     /// This hook allows the ROM driver to enable write operations, erase ROM, etc, depending on the hardware.
     /// This operation cannot fail.
-    virtual void onBeforeFirstWrite() {}
+    virtual void onBeforeFirstWrite()
+    {
+        // No effect by default.
+    }
 
     /// This hook allows the ROM driver to disable write operations or to perform other hardware-specific steps.
     /// This operation cannot fail.
-    virtual void onAfterLastWrite() {}
+    virtual void onAfterLastWrite()
+    {
+        // No effect by default.
+    }
 
     /// @return Number of bytes written; a value less than size indicates an overflow; empty option indicates failure.
     [[nodiscard]] virtual auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
@@ -884,8 +890,7 @@ private:
         {
             backend_.onAfterLastWrite();
         }
-        detail::AppLocator locator(backend_, max_app_size_);
-        app_info_      = locator.identifyApplication();
+        app_info_      = detail::AppLocator(backend_, max_app_size_).identifyApplication();
         boot_deadline_ = uptime_ + boot_delay_;
         state_         = app_info_ ? ok_state : State::NoAppToBoot;
         final_.reset();

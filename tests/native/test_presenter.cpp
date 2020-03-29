@@ -206,8 +206,6 @@ public:
         return out;
     }
 
-    void setBeginUpdateResult(const bool value) { update_result_ = value; }
-
     void setAppInfo(const std::optional<kocherga::AppInfo>& value) { app_info_ = value; }
 
 private:
@@ -224,7 +222,6 @@ private:
 
     bool reboot_requested_ = false;
     bool update_requested_ = false;
-    bool update_result_    = true;
 
     std::optional<kocherga::AppInfo>                                         app_info_;
     std::optional<std::optional<kocherga::detail::dsdl::File::ReadResponse>> file_read_result_;
@@ -331,7 +328,6 @@ TEST_CASE("Presenter")
                      3210));
 
     // Invalid request serialization. File location specifier not updated.
-    controller.setBeginUpdateResult(false);
     nodes.at(0).pushInput(MockNode::Input::ExecuteCommandRequest, Transfer(333, std::vector<std::byte>(), 3210));
     ts = std::chrono::microseconds{1'700'000};
     pres.poll(ts);
