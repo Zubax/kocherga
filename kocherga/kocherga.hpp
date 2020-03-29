@@ -868,7 +868,7 @@ private:
 /// The class writes the data structure into the provided memory region and appends the CRC64 hash immediately
 /// afterwards (no padding inserted). The other component then checks the memory region where the data is expected to
 /// be found and validates its CRC; if the CRC matches, the data is reported to be found, otherwise it is reported
-/// that there is no data to read (the latter typically occurs when the bootloader is started after power-on reset,
+/// that there is no data to read (the latter occurs when the bootloader is started after power-on reset,
 /// a power loss, or a hard reset).
 ///
 /// The stored data type shall be a trivial type (see https://en.cppreference.com/w/cpp/named_req/TrivialType).
@@ -877,8 +877,8 @@ private:
 ///
 /// Here is a usage example. Initialization:
 ///
-///     struct MyDataStructureForExchangeBetweenBootloaderAndApplication;
-///     VolatileStorage<MyDataStructureForExchangeBetweenBootloaderAndApplication> storage(my_memory_location);
+///     struct MyData;
+///     VolatileStorage<MyData> storage(my_memory_location);
 ///
 /// Reading the data from the storage (the storage is always erased when reading to prevent deja-vu after restart):
 ///
@@ -896,7 +896,7 @@ template <typename Container>
 class VolatileStorage
 {
 public:
-    /// The amount of memory required to store the data. This is the size of the container plus 8 bytes.
+    /// The amount of memory required to store the data. This is the size of the container plus 8 bytes for the CRC.
     static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;
 
     explicit VolatileStorage(std::byte* const location) : ptr_(location) {}

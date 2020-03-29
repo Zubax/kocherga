@@ -517,4 +517,28 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
     }
     REQUIRE(!*controller.popFileReadResult());  // Empty option.
+
+    // Successful request, but the response times out.
+    nodes.at(1).setFileReadResult(true);
+    REQUIRE(pres.requestFileRead(123456));
+    REQUIRE(!nodes.at(0).popOutput(MockNode::Output::FileReadRequest));
+    REQUIRE((*nodes.at(1).popOutput(MockNode::Output::FileReadRequest)) ==
+            Transfer(3,
+                     {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
+                      114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
+                     3210));
+    ts = std::chrono::microseconds{2'500'000};
+    pres.poll(ts);
+    for (auto& n : nodes)
+    {
+        REQUIRE(n.getLastPollTime() == ts);
+    }
+    REQUIRE(!controller.popFileReadResult());  // Nothing yet.
+    ts = std::chrono::microseconds{6'000'000};
+    pres.poll(ts);
+    for (auto& n : nodes)
+    {
+        REQUIRE(n.getLastPollTime() == ts);
+    }
+    REQUIRE(!*controller.popFileReadResult());  // Empty option.
 }
