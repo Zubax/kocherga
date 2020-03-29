@@ -163,7 +163,7 @@ public:
 /// App update scenario:
 ///  1. onBeforeFirstWrite()
 ///  2. write() repeated until finished.
-///  3. onAfterLastWrite(success or not)
+///  3. onAfterLastWrite() (the number of preceding writes may be zero)
 ///
 /// The read() method may be invoked at any time. Its performance is critical.
 /// Slow access may lead to watchdog timeouts (assuming that the watchdog is used) and/or disruption of communications.
@@ -174,13 +174,12 @@ class IROMBackend
 {
 public:
     /// This hook allows the ROM driver to enable write operations, erase ROM, etc, depending on the hardware.
-    /// False may be returned to indicate failure, the update is aborted in this case.
-    /// @return True on success, False on error.
-    [[nodiscard]] virtual auto onBeforeFirstWrite() -> bool { return true; }
+    /// This operation cannot fail.
+    virtual void onBeforeFirstWrite() {}
 
     /// This hook allows the ROM driver to disable write operations or to perform other hardware-specific steps.
-    /// The argument signifies whether the update process was successful. This operation cannot fail.
-    virtual void onAfterLastWrite(const bool success) { (void) success; }
+    /// This operation cannot fail.
+    virtual void onAfterLastWrite() {}
 
     /// @return Number of bytes written; a value less than size indicates an overflow; empty option indicates failure.
     [[nodiscard]] virtual auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
@@ -414,6 +413,7 @@ struct Diagnostic
     enum class Severity : std::uint8_t
     {
         Notice   = 3,
+        Warning  = 4,
         Critical = 6,
     };
 
@@ -448,7 +448,7 @@ public:
 
     /// Begin software update.
     /// The remote node and path are stored in the presenter so that the controller does not need to manage that.
-    [[nodiscard]] virtual auto beginUpdate() -> bool = 0;
+    virtual void beginUpdate() = 0;
 
     /// Response from the file server received or timed out. In case of timeout, the argument is an empty option.
     virtual void handleFileReadResult(const std::optional<dsdl::File::ReadResponse> response) = 0;
@@ -581,18 +581,16 @@ private:
             }
             else if (command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::BeginSoftwareUpdate))
             {
-                if (controller_.beginUpdate())  // Do not update the file location specifier on failure.
-                {
-                    FileLocationSpecifier fls{};
-                    fls.local_node_index = current_node_index_;
-                    fls.server_node_id   = client_node_id;
-                    fls.path_length =
-                        static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr), std::size(fls.path)));
-                    ++ptr;
-                    (void) std::memmove(fls.path.data(), ptr, fls.path_length);
-                    file_loc_spec_ = fls;
-                    result         = dsdl::ExecuteCommand::Status::Success;
-                }
+                controller_.beginUpdate();
+                FileLocationSpecifier fls{};
+                fls.local_node_index = current_node_index_;
+                fls.server_node_id   = client_node_id;
+                fls.path_length =
+                    static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr), std::size(fls.path)));
+                ++ptr;
+                (void) std::memmove(fls.path.data(), ptr, fls.path_length);
+                file_loc_spec_ = fls;
+                result         = dsdl::ExecuteCommand::Status::Success;
             }
             else
             {
@@ -759,6 +757,8 @@ private:
 ///
 /// The bootloader may run multiple nodes on different transports concurrently to support multi-transport functionality.
 /// For example, a device may provide the firmware update capability via CAN and a serial port.
+///
+/// If the boot delay is zero and the valid application is found, the bootloader proceeds to start it immediately.
 template <std::uint8_t NumNodes>
 class Bootloader : public detail::IController
 {
@@ -766,31 +766,31 @@ public:
     /// The following state transition diagram illustrates the operating principles of the bootloader.
     ///
     ///                                ######################
-    ///               /----------------# Bootloader started #-------+ Valid
+    ///               .----------------# Bootloader started #-------. Valid
     ///               | No valid       ######################       | application found.
     ///               v application found.                          v
-    ///         +-------------+                               +-----------+ Boot delay expired. ###############
-    ///     /-->| NoAppToBoot |        /----------------------| BootDelay |--------------------># Booting the #
-    ///     |   +-------------+       /                       +-----------+  (default delay 0)  # application #
-    ///     |          |             /                     Boot |       ^                       ###############
-    ///     |Update    |<-----------/                  canceled.|       |
-    ///     |failed,   |Update requested.                       |       |
-    ///     |no valid  |                                        v       |
-    ///     |image is  |                           +---------------+    |
-    ///     |now ava-  |<--------------------------| BootCancelled |    |
-    ///     |ilable.   |                           +---------------+    |
-    ///     |          v                                       ^        |
+    ///         +-------------+                               +-----------+ Boot delay expired. ################
+    ///     .-->| NoAppToBoot |            .------------------| BootDelay |--------------------># Boot the app #
+    ///     |   +-------------+           /                   +-----------+  (default delay 0)  ################
+    ///     |              |             /                 Boot |       ^
+    ///     |Update        |<-----------'              canceled.|       |
+    ///     |failed,       |Update requested.                   |       |
+    ///     |no valid      |                                    v       |
+    ///     |image is now  |                        +--------------+    |
+    ///     |available.    |<-----------------------| BootCanceled |    |
+    ///     |              |                        +--------------+    |
+    ///     |              v                                   ^        |
     ///     | +----------------------+ Update failed, but the  |        |Update successful,
-    ///     +-| AppUpdateInProgress  |-------------------------/        |the received image
+    ///     '-| AppUpdateInProgress  |-------------------------/        |the received image
     ///       +----------------------+ existing valid image was not     |is valid.
     ///                |               altered and remains valid.       |
     ///                |                                               /
-    ///                +----------------------------------------------/
+    ///                '----------------------------------------------'
     enum class State
     {
-        NoAppToBoot,    ///< Initial state if no valid application exists. Also entered after a failed update.
-        BootDelay,      ///< Initial state if a valid application exists. Also the only terminal state.
-        BootCancelled,  ///< Entered by request from the outer bootloader logic or from the application.
+        NoAppToBoot,   ///< Initial state if no valid application exists. Also entered after a failed update.
+        BootDelay,     ///< Initial state if a valid application exists. Also the only terminal state.
+        BootCanceled,  ///< Entered by request from the outer bootloader logic or from the application.
         AppUpdateInProgress,
     };
 
@@ -802,32 +802,56 @@ public:
         Restart,  ///< Restart the bootloader itself.
     };
 
-    /// The max application image size parameter is very important for performance reasons;
-    /// without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
+    /// The max application image size parameter is very important for performance reasons.
+    /// Without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
     /// valid app descriptor (by virtue of having the same magic, which is only 64 bit long),
     /// and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
     /// Having an upper size limit for the application image allows the bootloader to weed out too large
     /// values early, greatly improving the worst case boot time.
+    ///
+    /// SystemInfo is used for responding to uavcan.node.GetInfo requests.
+    ///
+    /// If the linger flag is set, the bootloader will not boot the application after the initial verification.
+    /// If the application is valid, then the initial state will be BootCanceled instead of BootDelay.
+    /// If the application is invalid, the flag will have no effect.
+    /// It is designed to support the common use case where the application commands the bootloader to start and
+    /// sit idle until instructed otherwise.
+    /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
+    /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
     Bootloader(IROMBackend&                        rom_backend,
                const SystemInfo&                   system_info,
                const std::array<INode*, NumNodes>& nodes,
                const std::size_t                   max_app_size,
+               const bool                          linger     = false,
                const std::chrono::seconds          boot_delay = std::chrono::seconds(0)) :
         max_app_size_(max_app_size),
         boot_delay_(boot_delay),
         backend_(rom_backend),
-        presentation_(system_info, nodes, *this)
+        presentation_(system_info, nodes, *this),
+        linger_(linger)
     {}
 
-    [[nodiscard]] auto poll(const std::chrono::microseconds uptime) -> std::optional<Final>
+    [[nodiscard]] auto poll(const std::chrono::microseconds time_since_boot) -> std::optional<Final>
     {
+        uptime_ = time_since_boot;
         if (!inited_)
         {
-            reset(uptime);
             inited_ = true;
+            reset(linger_ ? State::BootCanceled : State::BootDelay);
         }
 
-        if ((State::BootDelay == state_) && (uptime >= boot_deadline_))
+        if ((State::AppUpdateInProgress == state_) && request_read_)
+        {
+            request_read_ = false;
+            if (!presentation_.requestFileRead(rom_offset_))
+            {
+                presentation_.publishLogRecord(detail::dsdl::Diagnostic::Severity::Critical,
+                                               "Could not send request uavcan.file.Read, abort");
+                reset(State::BootCanceled);
+            }
+        }
+
+        if ((State::BootDelay == state_) && (uptime_ >= boot_deadline_))  // Fast boot path.
         {
             final_ = Final::BootApp;
         }
@@ -835,45 +859,86 @@ public:
         {
             // If the application is valid and the boot delay is zero, the nodes will never be polled by design.
             // This avoids unnecessary delays at startup. In many embedded systems fast boot-up is critical.
-            presentation_.poll(uptime);
+            presentation_.poll(uptime_);
+            if (pending_log_)
+            {
+                presentation_.publishLogRecord(pending_log_->first, pending_log_->second);
+                pending_log_.reset();
+            }
         }
 
         return final_;
     }
 
-    void loiter()
-    {
-        final_.reset();
-        if (State::BootDelay == state_)
-        {
-            state_ = State::BootCancelled;
-        }
-    }
-
+    /// Returns the information about the installed application, if there is one. Otherwise, returns an empty option.
     [[nodiscard]] auto getAppInfo() const override { return app_info_; }
 
+    /// This method is mostly intended for state indication purposes, like driving the status LEDs.
     [[nodiscard]] auto getState() const { return state_; }
 
 private:
-    void reset(const std::chrono::microseconds uptime)
+    /// Execution may take several seconds due to the ROM scanning and CRC verification.
+    void reset(const State ok_state)
     {
+        if (State::AppUpdateInProgress == state_)
+        {
+            backend_.onAfterLastWrite();
+        }
         detail::AppLocator locator(backend_, max_app_size_);
         app_info_      = locator.identifyApplication();
-        boot_deadline_ = uptime + boot_delay_;
-        state_         = app_info_ ? State::BootDelay : State::NoAppToBoot;
+        boot_deadline_ = uptime_ + boot_delay_;
+        state_         = app_info_ ? ok_state : State::NoAppToBoot;
         final_.reset();
     }
 
     void reboot() override { final_ = Final::Restart; }
 
-    [[nodiscard]] auto beginUpdate() -> bool override
+    void beginUpdate() override
     {
-        return true;  // TODO
+        // If an update was already in progress, it is simply interrupted and we begin from scratch.
+        if (State::AppUpdateInProgress == state_)
+        {
+            backend_.onAfterLastWrite();  // Cycle the state to re-init ROM if needed.
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Warning, "Ongoing update process restarted"};
+        }
+        else
+        {
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "Update started"};
+        }
+        state_        = State::AppUpdateInProgress;
+        rom_offset_   = 0;
+        request_read_ = true;
+        backend_.onBeforeFirstWrite();
     }
 
     void handleFileReadResult(const std::optional<detail::dsdl::File::ReadResponse> response) override
     {
-        (void) response;  // TODO
+        if (!response)
+        {
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "File request timeout or remote error"};
+            reset(State::BootCanceled);
+        }
+        else
+        {
+            const bool ok = backend_.write(rom_offset_, response->data, response->data_length);
+            if (ok && (response->data_length >= detail::dsdl::File::ReadResponseDataCapacity))
+            {
+                rom_offset_ += response->data_length;
+                request_read_ = true;
+            }
+            else
+            {
+                if (ok)
+                {
+                    pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "File transfer completed"};
+                }
+                else
+                {
+                    pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "ROM write failure"};
+                }
+                reset(State::BootDelay);
+            }
+        }
     }
 
     const std::size_t          max_app_size_;
@@ -881,12 +946,18 @@ private:
 
     IROMBackend&                backend_;
     detail::Presenter<NumNodes> presentation_;
+    const bool                  linger_;
 
+    std::chrono::microseconds uptime_{};
     bool                      inited_ = false;
     State                     state_  = State::NoAppToBoot;
     std::optional<Final>      final_;
     std::chrono::microseconds boot_deadline_{};
+    std::size_t               rom_offset_   = 0;
+    bool                      request_read_ = false;
     std::optional<AppInfo>    app_info_;
+
+    std::optional<std::pair<detail::dsdl::Diagnostic::Severity, const char*>> pending_log_;
 };
 
 // --------------------------------------------------------------------------------------------------------------------

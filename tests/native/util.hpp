@@ -174,24 +174,18 @@ private:
         }
     }
 
-    [[nodiscard]] auto onBeforeFirstWrite() -> bool override
+    void onBeforeFirstWrite() override
     {
         checkFileHealth();
-        if (trigger_failure_)
-        {
-            return false;
-        }
         if (upgrade_in_progress_)
         {
             throw Error("Bad sequencing");
         }
         upgrade_in_progress_ = true;
-        return true;
     }
 
-    void onAfterLastWrite(const bool success) override
+    void onAfterLastWrite() override
     {
-        (void) success;
         checkFileHealth();
         if (!upgrade_in_progress_)
         {

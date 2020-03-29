@@ -213,11 +213,7 @@ public:
 private:
     void reboot() override { reboot_requested_ = true; }
 
-    auto beginUpdate() -> bool override
-    {
-        update_requested_ = true;
-        return update_result_;
-    }
+    void beginUpdate() override { update_requested_ = true; }
 
     void handleFileReadResult(const std::optional<kocherga::detail::dsdl::File::ReadResponse> response) override
     {
@@ -334,19 +330,16 @@ TEST_CASE("Presenter")
                       114, 47,  98,  97,  122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
 
-    // Trigger failure. File location specifier not updated.
+    // Invalid request serialization. File location specifier not updated.
     controller.setBeginUpdateResult(false);
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
-    //      uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, '/ignored.bin'))))
-    nodes.at(0).pushInput(MockNode::Input::ExecuteCommandRequest,
-                          Transfer(333, {253, 255, 12, 47, 105, 103, 110, 111, 114, 101, 100, 46, 98, 105, 110}, 3210));
+    nodes.at(0).pushInput(MockNode::Input::ExecuteCommandRequest, Transfer(333, std::vector<std::byte>(), 3210));
     ts = std::chrono::microseconds{1'700'000};
     pres.poll(ts);
     for (const auto& n : nodes)
     {
         REQUIRE(n.getLastPollTime() == ts);
     }
-    REQUIRE(controller.popUpdateRequestedFlag());
+    REQUIRE(!controller.popUpdateRequestedFlag());
     REQUIRE((*nodes.at(0).popOutput(MockNode::Output::ExecuteCommandResponse)) ==
             Transfer(333, {6, 0, 0, 0, 0, 0, 0}, 3210));  // Internal error.
     REQUIRE(!nodes.at(1).popOutput(MockNode::Output::ExecuteCommandResponse));
@@ -403,7 +396,7 @@ TEST_CASE("Presenter")
     //      software_image_crc=[0xBADC0FFEE0DDF00D], certificate_of_authenticity=bytes(range(1, 223)[::-1])))))
     controller.setAppInfo(kocherga::AppInfo{
         0xBADC'0FFE'E0DD'F00DULL,
-        0xDE'ADBULL,
+        0xD'EADBULL,
         0xDEAD'DEAD'DEAD'DEADULL,
         0,
         2,
