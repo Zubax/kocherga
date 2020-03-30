@@ -52,6 +52,7 @@ struct Transfer
         return (remote_node_id == rhs.remote_node_id) && (transfer_id == rhs.transfer_id) &&
                std::equal(std::begin(payload), std::end(payload), std::begin(rhs.payload), std::end(rhs.payload));
     }
+    auto operator!=(const Transfer& rhs) const -> bool { return !operator==(rhs); }
 };
 
 class Node : public kocherga::INode

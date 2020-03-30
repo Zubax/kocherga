@@ -493,12 +493,6 @@ public:
             ++current_node_index_;
         }
 
-        if (uptime >= next_heartbeat_deadline_)
-        {
-            next_heartbeat_deadline_ += dsdl::Heartbeat::Period;
-            publishHeartbeat(uptime);
-        }
-
         if (file_loc_spec_)
         {
             FileLocationSpecifier& fls = *file_loc_spec_;
@@ -507,6 +501,12 @@ public:
                 fls.response_deadline_.reset();
                 controller_.handleFileReadResult({});
             }
+        }
+
+        if (uptime >= next_heartbeat_deadline_)  // Postpone heartbeat to reflect the latest state changes.
+        {
+            next_heartbeat_deadline_ += dsdl::Heartbeat::Period;
+            publishHeartbeat(uptime);
         }
     }
 
@@ -823,14 +823,14 @@ public:
     /// If the application is valid, then the initial state will be BootCanceled instead of BootDelay.
     /// If the application is invalid, the flag will have no effect.
     /// It is designed to support the common use case where the application commands the bootloader to start and
-    /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the updat.
+    /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the update.
     /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
     /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
     Bootloader(IROMBackend&                        rom_backend,
                const SystemInfo&                   system_info,
                const std::array<INode*, NumNodes>& nodes,
                const std::size_t                   max_app_size,
-               const bool                          linger     = false,
+               const bool                          linger,
                const std::chrono::seconds          boot_delay = std::chrono::seconds(0)) :
         max_app_size_(max_app_size),
         boot_delay_(boot_delay),
@@ -839,13 +839,17 @@ public:
         linger_(linger)
     {}
 
+    /// Non-blocking periodic state update.
+    /// The outer logic should invoke this method after any hardware event (for example, if WFE/WFI is used on an
+    /// ARM platform), and periodically at least once per second. Typically, it would be invoked from the main loop.
+    /// The watchdog, if used, should be reset before or after each invocation.
     [[nodiscard]] auto poll(const std::chrono::microseconds time_since_boot) -> std::optional<Final>
     {
         uptime_ = time_since_boot;
         if (!inited_)
         {
             inited_ = true;
-            reset(linger_ ? State::BootCanceled : State::BootDelay);
+            reset(!linger_);
         }
 
         if ((State::AppUpdateInProgress == state_) && request_read_)
@@ -855,7 +859,7 @@ public:
             {
                 presentation_.publishLogRecord(detail::dsdl::Diagnostic::Severity::Critical,
                                                "Could not send request uavcan.file.Read, abort");
-                reset(State::BootCanceled);
+                reset(false);
             }
         }
 
@@ -864,17 +868,18 @@ public:
             final_ = Final::BootApp;
         }
 
-        if (pending_log_)
-        {
-            presentation_.publishLogRecord(pending_log_->first, pending_log_->second);
-            pending_log_.reset();
-        }
-
         if (!final_)
         {
             // If the application is valid and the boot delay is zero, the nodes will never be polled by design.
             // This avoids unnecessary delays at startup. In many embedded systems fast boot-up is critical.
             presentation_.poll(uptime_);
+        }
+
+        if (pending_log_)
+        {
+            // Send logs as late as possible to take into account the new entries from this poll().
+            presentation_.publishLogRecord(pending_log_->first, pending_log_->second);
+            pending_log_.reset();
         }
 
         return final_;
@@ -890,16 +895,34 @@ public:
 
 private:
     /// Execution may take several seconds due to the ROM scanning and CRC verification.
-    void reset(const State ok_state)
+    /// The argument is true if the application should be automatically launched if present.
+    void reset(const bool auto_boot)
     {
         if (State::AppUpdateInProgress == state_)
         {
             backend_.onAfterLastWrite();
         }
-        app_info_      = detail::AppLocator(backend_, max_app_size_).identifyApplication();
-        boot_deadline_ = uptime_ + boot_delay_;
-        state_         = app_info_ ? ok_state : State::NoAppToBoot;
+        app_info_ = detail::AppLocator(backend_, max_app_size_).identifyApplication();
         final_.reset();
+        if (app_info_)
+        {
+            if (auto_boot)
+            {
+                state_         = State::BootDelay;
+                boot_deadline_ = uptime_ + boot_delay_;
+                presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Nominal);
+            }
+            else
+            {
+                state_ = State::BootCanceled;
+                presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Advisory);
+            }
+        }
+        else
+        {
+            state_ = State::NoAppToBoot;
+            presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Warning);
+        }
     }
 
     void reboot() override { final_ = Final::Restart; }
@@ -920,6 +943,7 @@ private:
         rom_offset_   = 0;
         request_read_ = true;
         backend_.onBeforeFirstWrite();
+        presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Nominal);
     }
 
     void handleFileReadResult(const std::optional<detail::dsdl::File::ReadResponse> response) override
@@ -927,7 +951,7 @@ private:
         if (!response)
         {
             pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "File request timeout or remote error"};
-            reset(State::BootCanceled);
+            reset(false);
         }
         else
         {
@@ -948,7 +972,7 @@ private:
                 {
                     pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "ROM write failure"};
                 }
-                reset(State::BootDelay);
+                reset(true);
             }
         }
     }

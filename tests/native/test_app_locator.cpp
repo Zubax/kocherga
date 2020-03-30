@@ -6,10 +6,6 @@
 #include "catch.hpp"
 #include "util.hpp"
 #include <cstdlib>
-#include <iostream>
-
-namespace
-{}  // namespace
 
 TEST_CASE("AppLocator-good-simple")
 {
