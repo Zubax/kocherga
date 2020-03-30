@@ -511,6 +511,7 @@ public:
     }
 
     void setNodeHealth(const dsdl::Heartbeat::Health value) { node_health_ = value; }
+    void setNodeVSSC(const std::uint32_t value) { node_vssc_ = value; }
 
     /// The timeout will be managed by the presenter automatically.
     [[nodiscard]] auto requestFileRead(const std::uint64_t offset) -> bool
@@ -706,16 +707,17 @@ private:
 
     void publishHeartbeat(const std::chrono::microseconds uptime)
     {
+        const auto hmv = (node_vssc_ << 5U) | static_cast<std::uint32_t>(dsdl::Heartbeat::ModeSoftwareUpdate << 2U) |
+                         static_cast<std::uint32_t>(node_health_);
         const auto ut = static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(uptime).count());
         std::array<std::uint8_t, INode::HeartbeatLength> buf{{
             static_cast<std::uint8_t>(ut >> ByteShiftFirst),
             static_cast<std::uint8_t>(ut >> ByteShiftSecond),
             static_cast<std::uint8_t>(ut >> ByteShiftThird),
             static_cast<std::uint8_t>(ut >> ByteShiftFourth),
-            static_cast<std::uint8_t>(static_cast<std::uint8_t>(dsdl::Heartbeat::ModeSoftwareUpdate << 2U) |
-                                      static_cast<std::uint8_t>(node_health_)),
-            0,
-            0,
+            static_cast<std::uint8_t>(hmv >> ByteShiftFirst),
+            static_cast<std::uint8_t>(hmv >> ByteShiftSecond),
+            static_cast<std::uint8_t>(hmv >> ByteShiftThird),
         }};
         for (INode* const node : nodes_)
         {
@@ -749,6 +751,7 @@ private:
 
     std::chrono::microseconds next_heartbeat_deadline_{dsdl::Heartbeat::Period};
     dsdl::Heartbeat::Health   node_health_ = dsdl::Heartbeat::Health::Nominal;
+    std::uint32_t             node_vssc_   = 0;
 
     static constexpr std::uint8_t ByteShiftFirst  = 0;
     static constexpr std::uint8_t ByteShiftSecond = 8;
@@ -782,8 +785,8 @@ private:
 ///     '-| AppUpdateInProgress  |-------------------------/        |the received image
 ///       +----------------------+ existing valid image was not     |is valid.
 ///                |               altered and remains valid.       |
-///                |                                               /
-///                '----------------------------------------------'
+///                |                                                |
+///                '------------------------------------------------'
 enum class State
 {
     NoAppToBoot,
@@ -855,6 +858,8 @@ public:
         if ((State::AppUpdateInProgress == state_) && request_read_)
         {
             request_read_ = false;
+            ++read_request_count_;
+            presentation_.setNodeVSSC(read_request_count_);  // Indicate progress.
             if (!presentation_.requestFileRead(rom_offset_))
             {
                 presentation_.publishLogRecord(detail::dsdl::Diagnostic::Severity::Critical,
@@ -923,6 +928,7 @@ private:
             state_ = State::NoAppToBoot;
             presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Warning);
         }
+        presentation_.setNodeVSSC(0);
     }
 
     void reboot() override { final_ = Final::Restart; }
@@ -939,9 +945,10 @@ private:
         {
             pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "Update started"};
         }
-        state_        = State::AppUpdateInProgress;
-        rom_offset_   = 0;
-        request_read_ = true;
+        state_              = State::AppUpdateInProgress;
+        rom_offset_         = 0;
+        read_request_count_ = 0;
+        request_read_       = true;
         backend_.onBeforeFirstWrite();
         presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Nominal);
     }
@@ -989,8 +996,9 @@ private:
     State                     state_  = State::NoAppToBoot;
     std::optional<Final>      final_;
     std::chrono::microseconds boot_deadline_{};
-    std::size_t               rom_offset_   = 0;
-    bool                      request_read_ = false;
+    std::size_t               rom_offset_         = 0;
+    std::uint32_t             read_request_count_ = 0;
+    bool                      request_read_       = false;
     std::optional<AppInfo>    app_info_;
 
     std::optional<std::pair<detail::dsdl::Diagnostic::Severity, const char*>> pending_log_;

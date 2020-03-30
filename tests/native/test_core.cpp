@@ -28,26 +28,27 @@ inline auto getSysInfo()
 
 template <std::size_t NumNodes>
 inline auto checkHeartbeat(std::array<mock::Node, NumNodes>&               nodes,
-                           const kocherga::TransferID                      tid,
+                           const std::optional<kocherga::TransferID>       tid,
                            const std::uint32_t                             uptime,
-                           const kocherga::detail::dsdl::Heartbeat::Health health) -> bool
+                           const kocherga::detail::dsdl::Heartbeat::Health health,
+                           const std::uint32_t                             vssc) -> bool
 {
-    const mock::Transfer ref(tid,
-                             {
-                                 static_cast<std::uint8_t>(uptime >> 0U),
-                                 static_cast<std::uint8_t>(uptime >> 8U),
-                                 static_cast<std::uint8_t>(uptime >> 16U),
-                                 static_cast<std::uint8_t>(uptime >> 24U),
-                                 static_cast<std::uint8_t>(
-                                     static_cast<std::uint8_t>(kocherga::detail::dsdl::Heartbeat::ModeSoftwareUpdate
-                                                               << 2U) |
-                                     static_cast<std::uint8_t>(health)),
-                                 0,
-                                 0,
-                             });
+    using kocherga::detail::dsdl::Heartbeat;
     for (auto& n : nodes)
     {
-        const auto tr = *n.popOutput(mock::Node::Output::HeartbeatMessage);
+        const mock::Transfer tr  = *n.popOutput(mock::Node::Output::HeartbeatMessage);
+        const auto           hmv = (vssc << 5U) | static_cast<std::uint32_t>(Heartbeat::ModeSoftwareUpdate << 2U) |
+                         static_cast<std::uint32_t>(health);
+        const mock::Transfer ref(tid ? *tid : tr.transfer_id,
+                                 {
+                                     static_cast<std::uint8_t>(uptime >> 0U),
+                                     static_cast<std::uint8_t>(uptime >> 8U),
+                                     static_cast<std::uint8_t>(uptime >> 16U),
+                                     static_cast<std::uint8_t>(uptime >> 24U),
+                                     static_cast<std::uint8_t>(hmv >> 0U),
+                                     static_cast<std::uint8_t>(hmv >> 8U),
+                                     static_cast<std::uint8_t>(hmv >> 24U),
+                                 });
         if (tr != ref)
         {
             std::cout << ref.toString() << tr.toString() << std::endl;
@@ -168,7 +169,7 @@ TEST_CASE("Bootloader-update-valid")
 
     REQUIRE(!bl.poll(1'500ms));
     REQUIRE(bl.getState() == kocherga::State::BootCanceled);
-    REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Advisory));
+    REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Advisory, 0));
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
@@ -190,7 +191,7 @@ TEST_CASE("Bootloader-update-valid")
                                     56,  98,  102, 98,  54,  98,  48,  44, 100, 105, 114, 116, 121, 46,  105, 109, 103},
                                    0));
     REQUIRE(!bl.poll(2'100ms));
-    REQUIRE(checkHeartbeat(nodes, 1, 2, Heartbeat::Health::Nominal));
+    REQUIRE(checkHeartbeat(nodes, 1, 2, Heartbeat::Health::Nominal, 0));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse));
     REQUIRE((*nodes.at(1).popOutput(Node::Output::ExecuteCommandResponse)) == Transfer(444, {0, 0, 0, 0, 0, 0, 0}, 0));
 
@@ -244,7 +245,7 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(!ai.isDirtyBuild());
 }
 
-TEST_CASE("Bootloader-update-invalid")
+TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
 {
     using std::chrono_literals::operator""s;
     using std::chrono_literals::operator""ms;
@@ -266,7 +267,7 @@ TEST_CASE("Bootloader-update-invalid")
 
     REQUIRE(!bl.poll(1'100ms));
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
-    REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal));
+    REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal, 0));
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
@@ -289,7 +290,7 @@ TEST_CASE("Bootloader-update-invalid")
             Transfer(111, {0, 0, 0, 0, 0, 0, 0}, 1111));
 
     REQUIRE(!bl.poll(2'100ms));
-    REQUIRE(checkHeartbeat(nodes, 1, 2, Heartbeat::Health::Nominal));
+    REQUIRE(checkHeartbeat(nodes, 1, 2, Heartbeat::Health::Nominal, 1));
 
     // FIRST READ REQUEST
     REQUIRE(!bl.poll(2'200ms));
@@ -333,7 +334,7 @@ TEST_CASE("Bootloader-update-invalid")
                                    1111));
     REQUIRE(!bl.poll(3'100ms));
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
-    REQUIRE(checkHeartbeat(nodes, 2, 3, Heartbeat::Health::Nominal));
+    REQUIRE(checkHeartbeat(nodes, 2, 3, Heartbeat::Health::Nominal, 1));
     REQUIRE(!bl.poll(3'200ms));
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
 
@@ -351,10 +352,10 @@ TEST_CASE("Bootloader-update-invalid")
     // Due to the large time leap, we will be getting a heartbeat every poll() from now on until the leap is corrected.
     REQUIRE(!bl.poll(10'100ms));
     REQUIRE(bl.getState() == kocherga::State::NoAppToBoot);
-    REQUIRE(checkHeartbeat(nodes, 3, 10, Heartbeat::Health::Warning));
+    REQUIRE(checkHeartbeat(nodes, 3, 10, Heartbeat::Health::Warning, 0));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
 
-    // HERE WE GO AGAIN -- RESPONSE ERROR CODE
+    // RESPONSE ERROR CODE
     nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(112,
                                    {253, 255, 17, 98, 97,  100, 45, 108, 101, 45,
@@ -363,18 +364,16 @@ TEST_CASE("Bootloader-update-invalid")
     REQUIRE(!bl.poll(10'200ms));
     REQUIRE((*nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse)) ==
             Transfer(112, {0, 0, 0, 0, 0, 0, 0}, 2222));
-    REQUIRE(checkHeartbeat(nodes, 4, 10, Heartbeat::Health::Nominal));
+    REQUIRE(checkHeartbeat(nodes, 4, 10, Heartbeat::Health::Nominal, 0));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
-
-    // READ REQUEST AND RESPONSE WITH A RANDOM ERROR CODE
     nodes.at(0).pushInput(Node::Input::FileReadResponse, Transfer(2, {0xAD, 0xDE, 0x00, 0x00}, 2222));
     REQUIRE(!bl.poll(10'300ms));
     REQUIRE(bl.getState() == kocherga::State::NoAppToBoot);
-    REQUIRE(checkHeartbeat(nodes, 5, 10, Heartbeat::Health::Warning));
+    REQUIRE(checkHeartbeat(nodes, 5, 10, Heartbeat::Health::Warning, 0));
     REQUIRE(nodes.at(0).popOutput(Node::Output::FileReadRequest));  // Not checked
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
 
-    // HERE WE GO AGAIN -- SEND REQUEST FAILURE
+    // SEND REQUEST FAILURE
     nodes.at(0).setFileReadResult(false);
     nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(113,
@@ -384,11 +383,61 @@ TEST_CASE("Bootloader-update-invalid")
     REQUIRE(!bl.poll(10'400ms));
     REQUIRE((*nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse)) ==
             Transfer(113, {0, 0, 0, 0, 0, 0, 0}, 3333));
-    REQUIRE(checkHeartbeat(nodes, 6, 10, Heartbeat::Health::Nominal));
+    REQUIRE(checkHeartbeat(nodes, 6, 10, Heartbeat::Health::Nominal, 0));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!bl.poll(10'500ms));
     REQUIRE(bl.getState() == kocherga::State::NoAppToBoot);
     (void) nodes.at(0).popOutput(Node::Output::HeartbeatMessage);
     REQUIRE(nodes.at(0).popOutput(Node::Output::FileReadRequest));  // Not checked
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
+
+    // ROM WRITE FAILURE
+    nodes.at(0).setFileReadResult(true);
+    rom.enableFailureInjection(true);
+    nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest,
+                          Transfer(114,
+                                   {253, 255, 17, 98, 97,  100, 45, 108, 101, 45,
+                                    99,  114, 99, 45, 120, 51,  46, 105, 109, 103},
+                                   3210));
+    REQUIRE(!bl.poll(10'600ms));
+    (void) nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse);
+    (void) nodes.at(0).popOutput(Node::Output::HeartbeatMessage);
+    (void) nodes.at(0).popOutput(Node::Output::LogRecordMessage);
+    REQUIRE(!bl.poll(10'700ms));
+    REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
+    (void) nodes.at(0).popOutput(Node::Output::HeartbeatMessage);
+    (void) nodes.at(0).popOutput(Node::Output::LogRecordMessage);
+    REQUIRE(nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    nodes.at(0).pushInput(Node::Input::FileReadResponse,
+                          Transfer(3,
+                                   {
+                                       0x00, 0x00, 0x00, 0x01, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72,
+                                       0x6c, 0x64, 0x3f, 0x20, 0x20, 0x20, 0x20, 0xc7, 0xc4, 0xc0, 0x6f, 0x14, 0x15,
+                                       0x44, 0x5e, 0x88, 0x7a, 0x2e, 0xd0, 0x7e, 0xb1, 0x8c, 0xbe, 0xff, 0xff, 0xff,
+                                       0xff, 0xff, 0x00, 0x00, 0x00, 0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,
+                                       0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                       0x00, 0x01, 0x10, 0x00, 0x00, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x48,
+                                       0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x3f, 0x20, 0x20,
+                                       0x20, 0x20, 0xc7, 0xc4, 0xc0, 0x6f, 0x14, 0x15, 0x44, 0x5e, 0x88, 0x7a, 0x2e,
+                                       0xd0, 0x7e, 0xb1, 0x8c, 0xbe, 0x68, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                       0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba, 0x00, 0x00, 0x00, 0x00, 0x01,
+                                       0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x00,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e,
+                                       0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x7e, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20,
+                                       0x77, 0x6f, 0x72, 0x6c, 0x64, 0x3f, 0x20, 0x20, 0x20, 0x20, 0xc7, 0xc4, 0xc0,
+                                       0x6f, 0x14, 0x15, 0x44, 0x5e, 0x88, 0x7a, 0x2e, 0xd0, 0x7e, 0xb1, 0x8c, 0xbe,
+                                   },
+                                   3210));
+    REQUIRE(!bl.poll(10'800ms));
+    (void) nodes.at(0).popOutput(Node::Output::HeartbeatMessage);
+    REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!bl.poll(11'100ms));
+    REQUIRE(checkHeartbeat(nodes, {}, 11, Heartbeat::Health::Warning, 0));
+    REQUIRE(bl.getState() == kocherga::State::NoAppToBoot);
+    REQUIRE(!bl.getAppInfo());
 }

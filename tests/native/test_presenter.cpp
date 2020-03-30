@@ -99,9 +99,10 @@ TEST_CASE("Presenter")
     }
 
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.Heartbeat_1_0(
-    //      mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE,
-    //      health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY, uptime=1))))
+    //      mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE, health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY,
+    //      uptime=1, vendor_specific_status_code=0x7dead))))
     pres.setNodeHealth(kocherga::detail::dsdl::Heartbeat::Health::Advisory);
+    pres.setNodeVSSC(0x7'DEAD);
     ts = std::chrono::microseconds{1'500'000};
     pres.poll(ts);
     for (auto& n : nodes)
@@ -109,7 +110,7 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
         const auto tr = *n.popOutput(Node::Output::HeartbeatMessage);
         std::cout << tr.toString() << std::endl;
-        REQUIRE(tr == Transfer(0, {1, 0, 0, 0, 13, 0, 0}));
+        REQUIRE(tr == Transfer(0, {1, 0, 0, 0, 173, 213, 251}));
     }
 
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_0(
@@ -273,6 +274,7 @@ TEST_CASE("Presenter")
 
     // It's time for another heartbeat.
     pres.setNodeHealth(kocherga::detail::dsdl::Heartbeat::Health::Warning);
+    pres.setNodeVSSC(0x0000);
     ts = std::chrono::microseconds{2'100'000};
     pres.poll(ts);
     for (auto& n : nodes)
