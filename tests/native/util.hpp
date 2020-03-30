@@ -102,15 +102,15 @@ public:
     /// This overload creates a new file filled as specified. If the file exists, it will be written over.
     FileROMBackend(const std::filesystem::path& file_path,
                    const std::size_t            rom_size,
-                   const std::uint8_t           empty_memory_fill) :
+                   const std::uint8_t           memory_fill = static_cast<std::uint8_t>((1U << BitsPerByte) - 1U)) :
         path_(file_path), rom_size_(rom_size)
     {
         std::ofstream f(path_, std::ios::binary | std::ios::out | std::ios::trunc);
         if (f)
         {
-            const std::vector<char>
-                empty_image(rom_size,
-                            static_cast<char>(empty_memory_fill));  // NOSONAR intentional conversion to plain char
+            const std::vector<char> empty_image(rom_size,
+                                                static_cast<char>(
+                                                    memory_fill));  // NOSONAR intentional conversion to plain char
             f.write(empty_image.data(), static_cast<std::streamsize>(empty_image.size()));
             f.flush();
         }
@@ -254,6 +254,11 @@ inline auto getSourceDir() -> std::filesystem::path
         return std::filesystem::path(*path);
     }
     throw EnvironmentError("The environment variable SOURCE_DIR shall be set.");
+}
+
+inline auto getImagePath(const std::string& name) -> std::filesystem::path
+{
+    return util::getSourceDir() / "images" / name;
 }
 
 }  // namespace util

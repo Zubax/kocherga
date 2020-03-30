@@ -27,7 +27,7 @@ static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};
 
 /// The service response timeout used by the bootloader.
 /// This value applies when the bootloader invokes uavcan.file.Read during the update.
-static constexpr std::chrono::seconds ServiceResponseTimeout{3};
+static constexpr std::chrono::seconds ServiceResponseTimeout{5};
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -387,6 +387,10 @@ static constexpr std::size_t NameCapacity = 50;
 
 struct Heartbeat
 {
+    static constexpr std::chrono::seconds Period{1};
+
+    static constexpr std::uint8_t ModeSoftwareUpdate = 3;
+
     enum class Health : std::uint8_t
     {
         Nominal  = 0,
@@ -491,7 +495,7 @@ public:
 
         if (uptime >= next_heartbeat_deadline_)
         {
-            next_heartbeat_deadline_ += HeartbeatPeriod;
+            next_heartbeat_deadline_ += dsdl::Heartbeat::Period;
             publishHeartbeat(uptime);
         }
 
@@ -708,7 +712,7 @@ private:
             static_cast<std::uint8_t>(ut >> ByteShiftSecond),
             static_cast<std::uint8_t>(ut >> ByteShiftThird),
             static_cast<std::uint8_t>(ut >> ByteShiftFourth),
-            static_cast<std::uint8_t>(static_cast<std::uint8_t>(NodeModeSoftwareUpdate << 2U) |
+            static_cast<std::uint8_t>(static_cast<std::uint8_t>(dsdl::Heartbeat::ModeSoftwareUpdate << 2U) |
                                       static_cast<std::uint8_t>(node_health_)),
             0,
             0,
@@ -743,10 +747,8 @@ private:
     TransferID tid_heartbeat_  = 0;
     TransferID tid_log_record_ = 0;
 
-    static constexpr std::uint8_t         NodeModeSoftwareUpdate = 3;
-    static constexpr std::chrono::seconds HeartbeatPeriod{1};
-    std::chrono::microseconds             next_heartbeat_deadline_{HeartbeatPeriod};
-    dsdl::Heartbeat::Health               node_health_ = dsdl::Heartbeat::Health::Nominal;
+    std::chrono::microseconds next_heartbeat_deadline_{dsdl::Heartbeat::Period};
+    dsdl::Heartbeat::Health   node_health_ = dsdl::Heartbeat::Health::Nominal;
 
     static constexpr std::uint8_t ByteShiftFirst  = 0;
     static constexpr std::uint8_t ByteShiftSecond = 8;
@@ -759,6 +761,45 @@ private:
 
 // --------------------------------------------------------------------------------------------------------------------
 
+/// The following state transition diagram illustrates the operating principles of the bootloader.
+///
+///                                ######################
+///               .----------------# Bootloader started #-------. Valid
+///               | No valid       ######################       | application found.
+///               v application found.                          v
+///         +-------------+                               +-----------+ Boot delay expired. ################
+///     .-->| NoAppToBoot |            .------------------| BootDelay |--------------------># Boot the app #
+///     |   +-------------+           /                   +-----------+  (default delay 0)  ################
+///     |              |             /                 Boot |       ^
+///     |Update        |<-----------'              canceled.|       |
+///     |failed,       |Update requested.                   |       |
+///     |no valid      |                                    v       |
+///     |image is now  |                        +--------------+    |
+///     |available.    |<-----------------------| BootCanceled |    |
+///     |              |                        +--------------+    |
+///     |              v                                   ^        |
+///     | +----------------------+ Update failed, but the  |        |Update successful,
+///     '-| AppUpdateInProgress  |-------------------------/        |the received image
+///       +----------------------+ existing valid image was not     |is valid.
+///                |               altered and remains valid.       |
+///                |                                               /
+///                '----------------------------------------------'
+enum class State
+{
+    NoAppToBoot,
+    BootDelay,
+    BootCanceled,
+    AppUpdateInProgress,
+};
+
+/// The bootloader instructs the outer logic what action needs to be taken when its execution has completed.
+/// Once the final action is returned, the bootloader has terminated itself and need not be run anymore.
+enum class Final
+{
+    BootApp,  ///< Jump to the application image. The bootloader has verified its correctness.
+    Restart,  ///< Restart the bootloader itself.
+};
+
 /// The bootloader core.
 ///
 /// The bootloader may run multiple nodes on different transports concurrently to support multi-transport functionality.
@@ -769,45 +810,6 @@ template <std::uint8_t NumNodes>
 class Bootloader : public detail::IController
 {
 public:
-    /// The following state transition diagram illustrates the operating principles of the bootloader.
-    ///
-    ///                                ######################
-    ///               .----------------# Bootloader started #-------. Valid
-    ///               | No valid       ######################       | application found.
-    ///               v application found.                          v
-    ///         +-------------+                               +-----------+ Boot delay expired. ################
-    ///     .-->| NoAppToBoot |            .------------------| BootDelay |--------------------># Boot the app #
-    ///     |   +-------------+           /                   +-----------+  (default delay 0)  ################
-    ///     |              |             /                 Boot |       ^
-    ///     |Update        |<-----------'              canceled.|       |
-    ///     |failed,       |Update requested.                   |       |
-    ///     |no valid      |                                    v       |
-    ///     |image is now  |                        +--------------+    |
-    ///     |available.    |<-----------------------| BootCanceled |    |
-    ///     |              |                        +--------------+    |
-    ///     |              v                                   ^        |
-    ///     | +----------------------+ Update failed, but the  |        |Update successful,
-    ///     '-| AppUpdateInProgress  |-------------------------/        |the received image
-    ///       +----------------------+ existing valid image was not     |is valid.
-    ///                |               altered and remains valid.       |
-    ///                |                                               /
-    ///                '----------------------------------------------'
-    enum class State
-    {
-        NoAppToBoot,   ///< Initial state if no valid application exists. Also entered after a failed update.
-        BootDelay,     ///< Initial state if a valid application exists. Also the only terminal state.
-        BootCanceled,  ///< Entered by request from the outer bootloader logic or from the application.
-        AppUpdateInProgress,
-    };
-
-    /// The bootloader instructs the outer logic what action needs to be taken when its execution has completed.
-    /// Once the final action is returned, the bootloader has terminated itself and need not be run anymore.
-    enum class Final
-    {
-        BootApp,  ///< Jump to the application image. The bootloader has verified its correctness.
-        Restart,  ///< Restart the bootloader itself.
-    };
-
     /// The max application image size parameter is very important for performance reasons.
     /// Without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
     /// valid app descriptor (by virtue of having the same magic, which is only 64 bit long),
@@ -821,7 +823,7 @@ public:
     /// If the application is valid, then the initial state will be BootCanceled instead of BootDelay.
     /// If the application is invalid, the flag will have no effect.
     /// It is designed to support the common use case where the application commands the bootloader to start and
-    /// sit idle until instructed otherwise.
+    /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the updat.
     /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
     /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
     Bootloader(IROMBackend&                        rom_backend,
@@ -861,25 +863,29 @@ public:
         {
             final_ = Final::BootApp;
         }
-        else
+
+        if (pending_log_)
+        {
+            presentation_.publishLogRecord(pending_log_->first, pending_log_->second);
+            pending_log_.reset();
+        }
+
+        if (!final_)
         {
             // If the application is valid and the boot delay is zero, the nodes will never be polled by design.
             // This avoids unnecessary delays at startup. In many embedded systems fast boot-up is critical.
             presentation_.poll(uptime_);
-            if (pending_log_)
-            {
-                presentation_.publishLogRecord(pending_log_->first, pending_log_->second);
-                pending_log_.reset();
-            }
         }
 
         return final_;
     }
 
     /// Returns the information about the installed application, if there is one. Otherwise, returns an empty option.
-    [[nodiscard]] auto getAppInfo() const override { return app_info_; }
+    /// The return value may not match the actual state of the application before the first poll() is executed.
+    [[nodiscard]] auto getAppInfo() const -> std::optional<AppInfo> override { return app_info_; }
 
     /// This method is mostly intended for state indication purposes, like driving the status LEDs.
+    /// The return value may not match the actual state of the application before the first poll() is executed.
     [[nodiscard]] auto getState() const { return state_; }
 
 private:
@@ -925,7 +931,8 @@ private:
         }
         else
         {
-            const bool ok = backend_.write(rom_offset_, response->data, response->data_length);
+            const auto result = backend_.write(rom_offset_, response->data, response->data_length);
+            const bool ok     = result && (result == response->data_length);
             if (ok && (response->data_length >= detail::dsdl::File::ReadResponseDataCapacity))
             {
                 rom_offset_ += response->data_length;

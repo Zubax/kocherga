@@ -9,19 +9,12 @@
 #include <iostream>
 
 namespace
-{
-auto getImagePath(const std::string& name) -> std::filesystem::path
-{
-    const auto out = util::getSourceDir() / "images" / name;
-    std::cout << "Using image file: " << out << std::endl;
-    return out;
-}
-
-}  // namespace
+{}  // namespace
 
 TEST_CASE("AppLocator-good-simple")
 {
-    const util::FileROMBackend rom(getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img"));
+    const util::FileROMBackend rom(
+        util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img"));
 
     const kocherga::detail::AppLocator loc_ok(rom, 1024U);
 
@@ -42,7 +35,8 @@ TEST_CASE("AppLocator-good-simple")
 
 TEST_CASE("AppLocator-good-3rd-entry")
 {
-    const util::FileROMBackend rom(getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img"));
+    const util::FileROMBackend rom(
+        util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img"));
 
     const kocherga::detail::AppLocator loc_ok(rom, 1024U);
 
@@ -63,14 +57,14 @@ TEST_CASE("AppLocator-good-3rd-entry")
 
 TEST_CASE("AppLocator-bad-crc-x3")
 {
-    const util::FileROMBackend rom(getImagePath("bad-le-crc-x3.img"));
+    const util::FileROMBackend rom(util::getImagePath("bad-le-crc-x3.img"));
     REQUIRE(!kocherga::detail::AppLocator(rom, 1024U).identifyApplication());
     REQUIRE(!kocherga::detail::AppLocator(rom, 100U).identifyApplication());
 }
 
 TEST_CASE("AppLocator-bad-short")
 {
-    const util::FileROMBackend rom(getImagePath("bad-le-short.img"));
+    const util::FileROMBackend rom(util::getImagePath("bad-le-short.img"));
     REQUIRE(!kocherga::detail::AppLocator(rom, 1024U).identifyApplication());
     REQUIRE(!kocherga::detail::AppLocator(rom, 10U).identifyApplication());
 }
