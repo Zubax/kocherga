@@ -787,6 +787,18 @@ private:
 ///                |               altered and remains valid.       |
 ///                |                                                |
 ///                '------------------------------------------------'
+///
+/// The current state is communicated to the outside world via uavcan.node.Heartbeat. The mapping is as follows:
+///
+/// State                   Node mode           Node health     Vendor-specific status code
+/// -----------------------------------------------------------------------------------------------
+/// NoAppToBoot             SOFTWARE_UPDATE     WARNING         =0
+/// BootDelay               SOFTWARE_UPDATE     NOMINAL         =0
+/// BootCanceled            SOFTWARE_UPDATE     ADVISORY        =0
+/// AppUpdateInProgress     SOFTWARE_UPDATE     NOMINAL         >0 (see below)
+///
+/// In the mode AppUpdateInProgress, the vendor-specific status code equals the number of uavcan.file.Read requests
+/// sent since the update process was initiated; it is always greater than zero. This is used for progress reporting.
 enum class State
 {
     NoAppToBoot,
