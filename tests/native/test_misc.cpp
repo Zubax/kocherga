@@ -13,10 +13,10 @@ TEST_CASE("CRC")
 {
     kocherga::detail::CRC64 crc;
     const char*             val = "12345";
-    crc.add(reinterpret_cast<const std::byte*>(val), 5);  // NOSONAR NOLINT reinterpret_cast
-    crc.add(nullptr, 0);
+    crc.update(reinterpret_cast<const std::byte*>(val), 5);  // NOSONAR NOLINT reinterpret_cast
+    crc.update(nullptr, 0);
     val = "6789";
-    crc.add(reinterpret_cast<const std::byte*>(val), 4);  // NOSONAR NOLINT reinterpret_cast
+    crc.update(reinterpret_cast<const std::byte*>(val), 4);  // NOSONAR NOLINT reinterpret_cast
 
     REQUIRE(0x62EC'59E3'F1A4'F00AULL == crc.get());
     REQUIRE(crc.getBytes().at(0) == std::byte{0x62U});
@@ -29,7 +29,7 @@ TEST_CASE("CRC")
     REQUIRE(crc.getBytes().at(7) == std::byte{0x0AU});
 
     REQUIRE(!crc.isResidueCorrect());
-    crc.add(crc.getBytes().data(), 8);
+    crc.update(crc.getBytes().data(), 8);
     REQUIRE(crc.isResidueCorrect());
     REQUIRE(0xFCAC'BEBD'5931'A992ULL == (~crc.get()));
 }

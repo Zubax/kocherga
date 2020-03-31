@@ -64,7 +64,9 @@ function(gen_test name files compile_definitions compile_flags link_flags)
     set_tests_properties("run_${name}" PROPERTIES ENVIRONMENT SOURCE_DIR=${CMAKE_SOURCE_DIR})
 endfunction()
 
-file(GLOB test_sources ${CMAKE_SOURCE_DIR}/test_*.cpp)
+file(GLOB test_sources
+     ${CMAKE_SOURCE_DIR}/test_*.cpp
+     ${CMAKE_SOURCE_DIR}/serial/test_*.cpp)
 gen_test("test_x64" "${test_sources}" "" "-m64" "-m64")
 gen_test("test_x32" "${test_sources}" "" "-m32" "-m32")
 if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))

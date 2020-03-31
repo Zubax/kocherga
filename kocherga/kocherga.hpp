@@ -208,6 +208,8 @@ public:
 /// Internal use only.
 namespace detail
 {
+static constexpr auto BitsPerByte = 8U;
+
 /// This is used to verify integrity of the application and other data.
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to
@@ -218,7 +220,7 @@ class CRC64
 public:
     static constexpr std::size_t Size = 8U;
 
-    void add(const std::byte* const data, const std::size_t len)
+    void update(const std::byte* const data, const std::size_t len)
     {
         auto bytes = data;
         for (auto remaining = len; remaining > 0; remaining--)
@@ -267,7 +269,6 @@ private:
     static constexpr auto Xor     = static_cast<std::uint64_t>(0xFFFF'FFFF'FFFF'FFFFULL);
     static constexpr auto Residue = static_cast<std::uint64_t>(0xFCAC'BEBD'5931'A992ULL);
 
-    static constexpr auto BitsPerByte = 8U;
     static constexpr auto InputShift  = 56U;
 
     std::uint64_t crc_ = Xor;
@@ -346,7 +347,7 @@ private:
             if (res > 0)
             {
                 offset += res;
-                crc.add(buffer.data(), res);
+                crc.update(buffer.data(), res);
             }
             else
             {
@@ -356,7 +357,7 @@ private:
         // Fill CRC with zero.
         static const std::array<std::byte, CRC64::Size> dummy{};
         offset += CRC64::Size;
-        crc.add(dummy.data(), CRC64::Size);
+        crc.update(dummy.data(), CRC64::Size);
         // Read the rest of the image in large chunks.
         while (offset < image_size)
         {
@@ -364,7 +365,7 @@ private:
             if (res > 0)
             {
                 offset += res;
-                crc.add(buffer.data(), res);
+                crc.update(buffer.data(), res);
             }
             else
             {
@@ -519,11 +520,16 @@ public:
         if (file_loc_spec_)
         {
             std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{};
-            buf[0] = static_cast<std::uint8_t>(offset >> ByteShiftFirst);
-            buf[1] = static_cast<std::uint8_t>(offset >> ByteShiftSecond);
-            buf[2] = static_cast<std::uint8_t>(offset >> ByteShiftThird);
-            buf[3] = static_cast<std::uint8_t>(offset >> ByteShiftFourth);
-            buf[4] = static_cast<std::uint8_t>(offset >> ByteShiftFifth);
+            auto of = offset;
+            buf[0] = static_cast<std::uint8_t>(of);
+            of >>= BitsPerByte;
+            buf[1] = static_cast<std::uint8_t>(of);
+            of >>= BitsPerByte;
+            buf[2] = static_cast<std::uint8_t>(of);
+            of >>= BitsPerByte;
+            buf[3] = static_cast<std::uint8_t>(of);
+            of >>= BitsPerByte;
+            buf[4] = static_cast<std::uint8_t>(of);
 
             static constexpr auto  length_minus_path = 6U;
             FileLocationSpecifier& fls               = *file_loc_spec_;
@@ -582,7 +588,7 @@ private:
             auto command = static_cast<std::uint16_t>(*ptr);
             ++ptr;
             command = static_cast<std::uint16_t>(
-                command | static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr) << ByteShiftSecond));
+                command | static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr) << BitsPerByte));
             ++ptr;
             if ((command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::EmergencyStop)) ||
                 (command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::Restart)))
@@ -628,7 +634,7 @@ private:
             for (auto i = 0U; i < sizeof(std::uint64_t); i++)
             {
                 *ptr++ = static_cast<std::uint8_t>(vcs_commit);
-                vcs_commit >>= ByteShiftSecond;
+                vcs_commit >>= BitsPerByte;
             }
         }
         else
@@ -662,7 +668,7 @@ private:
             for (auto i = 0U; i < sizeof(std::uint64_t); i++)
             {
                 *ptr++ = static_cast<std::uint8_t>(crc);
-                crc >>= ByteShiftSecond;
+                crc >>= BitsPerByte;
             }
         }
         else
@@ -691,8 +697,8 @@ private:
                 {
                     argument = dsdl::File::ReadResponse{
                         static_cast<std::uint16_t>(
-                            static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[2]) << ByteShiftFirst) |
-                            static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[3]) << ByteShiftSecond)),
+                            static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[2])) |
+                            static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[3]) << BitsPerByte)),
                         &response[4],
                     };
                 }
@@ -711,13 +717,13 @@ private:
                          static_cast<std::uint32_t>(node_health_);
         const auto ut = static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(uptime).count());
         std::array<std::uint8_t, INode::HeartbeatLength> buf{{
-            static_cast<std::uint8_t>(ut >> ByteShiftFirst),
-            static_cast<std::uint8_t>(ut >> ByteShiftSecond),
-            static_cast<std::uint8_t>(ut >> ByteShiftThird),
-            static_cast<std::uint8_t>(ut >> ByteShiftFourth),
-            static_cast<std::uint8_t>(hmv >> ByteShiftFirst),
-            static_cast<std::uint8_t>(hmv >> ByteShiftSecond),
-            static_cast<std::uint8_t>(hmv >> ByteShiftThird),
+            static_cast<std::uint8_t>(ut >> (BitsPerByte * 0U)),
+            static_cast<std::uint8_t>(ut >> (BitsPerByte * 1U)),
+            static_cast<std::uint8_t>(ut >> (BitsPerByte * 2U)),
+            static_cast<std::uint8_t>(ut >> (BitsPerByte * 3U)),
+            static_cast<std::uint8_t>(hmv >> (BitsPerByte * 0U)),
+            static_cast<std::uint8_t>(hmv >> (BitsPerByte * 1U)),
+            static_cast<std::uint8_t>(hmv >> (BitsPerByte * 2U)),
         }};
         for (INode* const node : nodes_)
         {
@@ -752,12 +758,6 @@ private:
     std::chrono::microseconds next_heartbeat_deadline_{dsdl::Heartbeat::Period};
     dsdl::Heartbeat::Health   node_health_ = dsdl::Heartbeat::Health::Nominal;
     std::uint32_t             node_vssc_   = 0;
-
-    static constexpr std::uint8_t ByteShiftFirst  = 0;
-    static constexpr std::uint8_t ByteShiftSecond = 8;
-    static constexpr std::uint8_t ByteShiftThird  = 16;
-    static constexpr std::uint8_t ByteShiftFourth = 24;
-    static constexpr std::uint8_t ByteShiftFifth  = 32;
 };
 
 }  // namespace detail
@@ -1065,7 +1065,7 @@ public:
     [[nodiscard]] auto take() -> std::optional<Container>
     {
         detail::CRC64 crc;
-        crc.add(ptr_, StorageSize);
+        crc.update(ptr_, StorageSize);
         if (crc.isResidueCorrect())
         {
             Container out{};
@@ -1081,7 +1081,7 @@ public:
     {
         (void) std::memmove(ptr_, &data, sizeof(Container));
         detail::CRC64 crc;
-        crc.add(ptr_, sizeof(Container));
+        crc.update(ptr_, sizeof(Container));
         const auto crc_ptr = ptr_ + sizeof(Container);  // NOLINT NOSONAR pointer arithmetic
         (void) std::memmove(crc_ptr, crc.getBytes().data(), detail::CRC64::Size);
     }
