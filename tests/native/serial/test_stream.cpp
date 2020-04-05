@@ -120,9 +120,9 @@ TEST_CASE("serial::StreamParser")
         // Same as above but unescaped to compute the CRC.
         123,                                             // Version
         3,                                               // Priority
-        0x8E, 0x01,                                      // Source NID        398 (escaped)
+        0x8E, 0x02,                                      // Source NID        (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
-        0x9E, 0xC0,                                      // Data specifier    response 158 (escaped)
+        0x8E, 0xC0,                                      // Data specifier    response (escaped)
         0x0D, 0xF0, 0xDD, 0xE0, 0xFE, 0x0F, 0xDC, 0xBA,  // Data type hash    0xbad_c0ffee_0dd_f00d
         0xD2, 0x0A, 0x1F, 0xEB, 0x8C, 0xA9, 0x54, 0xAB,  // Transfer ID       12345678901234567890
         0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT  0 with EOT flag set
