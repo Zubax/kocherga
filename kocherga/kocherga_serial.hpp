@@ -64,8 +64,10 @@ struct Transfer
     {
         static constexpr std::uint8_t DefaultPriority      = 7U;  // Lowest.
         static constexpr NodeID       AnonymousNodeID      = 0xFFFFU;
-        static constexpr PortID       DataSpecRequestMask  = 0x8000U;
-        static constexpr PortID       DataSpecResponseMask = 0xC000U;
+        static constexpr PortID       DataSpecServiceFlag  = 0x8000U;
+        static constexpr PortID       DataSpecResponseFlag = 0x4000U;
+        static constexpr auto         DataSpecServiceIDMask =
+            static_cast<PortID>(~static_cast<PortID>(DataSpecServiceFlag | DataSpecResponseFlag));
 
         std::uint8_t  priority    = DefaultPriority;
         NodeID        source      = AnonymousNodeID;
@@ -75,18 +77,20 @@ struct Transfer
 
         [[nodiscard]] auto isRequest() const -> std::optional<PortID>
         {
-            if ((data_spec & DataSpecRequestMask) == DataSpecRequestMask)
+            if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecResponseFlag) == 0))
             {
-                return data_spec & static_cast<PortID>(~DataSpecRequestMask);
+                return data_spec & DataSpecServiceIDMask;
             }
             return {};
         }
 
         [[nodiscard]] auto isResponse() const -> std::optional<PortID>
         {
-            return ((data_spec & DataSpecResponseMask) == DataSpecResponseMask)
-                       ? std::optional<PortID>(data_spec & static_cast<PortID>(~DataSpecResponseMask))
-                       : std::nullopt;
+            if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecResponseFlag) != 0))
+            {
+                return data_spec & DataSpecServiceIDMask;
+            }
+            return {};
         }
     };
     Metadata            meta{};
@@ -107,11 +111,12 @@ public:
         std::optional<Transfer> out;
         if (stream_byte == FrameDelimiter)
         {
-            if (inside_ && (offset_ >= CRC32C::Size) && crc_.isResidueCorrect())
+            constexpr auto total_overhead = HeaderSize + CRC32C::Size;
+            if (inside_ && (offset_ >= total_overhead) && crc_.isResidueCorrect())
             {
                 out = Transfer{
                     meta_,
-                    offset_ - CRC32C::Size,
+                    offset_ - total_overhead,
                     buf_.data(),
                 };
             }
@@ -142,13 +147,17 @@ public:
                 }
                 else
                 {
-                    buf_.at(offset_) = bt;
+                    const auto buf_offset = offset_ - HeaderSize;
+                    if (buf_offset < buf_.size())
+                    {
+                        buf_.at(buf_offset) = bt;
+                    }
+                    else
+                    {
+                        inside_ = false;
+                    }
                 }
                 ++offset_;
-                if (offset_ >= buf_.size())
-                {
-                    inside_ = false;
-                }
             }
         }
         else
@@ -207,7 +216,14 @@ private:
     {
         if ((range.first <= offset_) && (offset_ <= range.second))
         {
-            fld |= static_cast<Field>(static_cast<Field>(bt) << (BitsPerByte * (offset_ - range.first)));
+            if (const auto byte_index = offset_ - range.first; byte_index > 0)
+            {
+                fld |= static_cast<Field>(static_cast<Field>(bt) << (BitsPerByte * byte_index));
+            }
+            else
+            {
+                fld = static_cast<Field>(bt);
+            }
         }
     }
 
@@ -275,6 +291,10 @@ template <typename Callback>
     {
         ok = ok && out(*ptr);
         ++ptr;
+        if (!ok)  // Early exit to avoid scanning the entire payload.
+        {
+            break;
+        }
     }
     for (const auto x : crc.getBytes())
     {
@@ -341,7 +361,7 @@ private:
             {
                 const bool match = (resp_id == pending_request_meta_->service_id) &&
                                    (tr.meta.source == pending_request_meta_->server_node_id) &&
-                                   (tr.meta.destination == *local_node_id_) &&
+                                   (tr.meta.destination == (*local_node_id_)) &&
                                    (tr.meta.transfer_id == pending_request_meta_->transfer_id);
                 if (match)
                 {
@@ -362,7 +382,9 @@ private:
                     meta.priority    = tr.meta.priority;
                     meta.source      = *local_node_id_;
                     meta.destination = tr.meta.source;
-                    meta.data_spec   = static_cast<PortID>(*req_id) | detail::Transfer::Metadata::DataSpecResponseMask;
+                    meta.data_spec   = static_cast<PortID>(*req_id) |
+                                     static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
+                                                         detail::Transfer::Metadata::DataSpecResponseFlag);
                     meta.transfer_id = tr.meta.transfer_id;
                     (void) transmit({meta, *size, buf.data()});
                 }
@@ -385,7 +407,7 @@ private:
             detail::Transfer::Metadata meta{};
             meta.source      = *local_node_id_;
             meta.destination = server_node_id;
-            meta.data_spec   = static_cast<PortID>(service_id) | detail::Transfer::Metadata::DataSpecRequestMask;
+            meta.data_spec   = static_cast<PortID>(service_id) | detail::Transfer::Metadata::DataSpecServiceFlag;
             meta.transfer_id = transfer_id;
             if (transmit({meta, payload_length, payload}))
             {
