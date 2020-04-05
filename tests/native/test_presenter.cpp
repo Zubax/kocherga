@@ -67,7 +67,7 @@ private:
 
 }  // namespace
 
-TEST_CASE("Presenter")
+TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
 {
     using mock::Node;
     using mock::Transfer;
@@ -164,7 +164,7 @@ TEST_CASE("Presenter")
     REQUIRE(pres.requestFileRead(0xB'ADBA'DBADULL));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
-            Transfer(0,
+            Transfer(1,
                      {173, 219, 186, 173, 11,  20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98,  97,  122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
@@ -327,7 +327,7 @@ TEST_CASE("Presenter")
     REQUIRE(!pres.requestFileRead(123'456));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
-            Transfer(1,
+            Transfer(2,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
@@ -337,7 +337,7 @@ TEST_CASE("Presenter")
     REQUIRE(pres.requestFileRead(123'456));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
-            Transfer(2,
+            Transfer(3,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
@@ -356,7 +356,7 @@ TEST_CASE("Presenter")
     REQUIRE(pres.requestFileRead(123'456));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
-            Transfer(3,
+            Transfer(4,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
                      3210));
@@ -367,11 +367,15 @@ TEST_CASE("Presenter")
         REQUIRE(n.getLastPollTime() == ts);
     }
     REQUIRE(!controller.popFileReadResult());  // Nothing yet.
-    ts = std::chrono::microseconds{6'000'000};
+    ts = std::chrono::microseconds{9'000'000};
     pres.poll(ts);
-    for (const auto& n : nodes)
+    for (auto& n : nodes)
     {
+        REQUIRE(n.popOutput(Node::Output::HeartbeatMessage));
         REQUIRE(n.getLastPollTime() == ts);
     }
+    pres.poll(ts);
     REQUIRE(!*controller.popFileReadResult());  // Empty option.
+    REQUIRE(!nodes.at(0).wasRequestCanceled());
+    REQUIRE(nodes.at(1).wasRequestCanceled());
 }

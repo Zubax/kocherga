@@ -204,7 +204,7 @@ TEST_CASE("Bootloader-update-valid")
     //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img')))))
     const auto received = *nodes.at(1).popOutput(Node::Output::FileReadRequest);
     const auto reference =
-        Transfer(0,
+        Transfer(1,
                  {0,   0,   0,   0,   0,   65, 103, 111, 111, 100, 45,  108, 101, 45, 51,  114, 100, 45,
                   101, 110, 116, 114, 121, 45, 53,  46,  54,  46,  51,  51,  51,  51, 51,  51,  51,  51,
                   51,  51,  51,  51,  51,  51, 51,  51,  46,  54,  48,  99,  99,  57, 54,  52,  53,  54,
@@ -299,7 +299,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     //      uavcan.file.Path_1_0('bad-le-crc-x3.img')))))
     auto received = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
     auto reference =
-        Transfer(0,
+        Transfer(1,
                  {0, 0, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 105, 109, 103},
                  1111);
     std::cout << received.toString() << reference.toString() << std::endl;
@@ -342,7 +342,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(!bl.poll(3'300ms));
     received = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
     reference =
-        Transfer(1,
+        Transfer(2,
                  {0, 1, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 105, 109, 103},
                  1111);
     std::cout << received.toString() << reference.toString() << std::endl;

@@ -69,12 +69,12 @@ TEST_CASE("util::FileROMBackend")
 
     // Writing
     REQUIRE_THROWS_AS(interface.write(0, buf1.data(), 123), std::runtime_error);
-    REQUIRE_THROWS_AS(interface.onAfterLastWrite(), std::runtime_error);
-    interface.onBeforeFirstWrite();
+    REQUIRE_THROWS_AS(interface.endWrite(), std::runtime_error);
+    interface.beginWrite();
     buf1.fill(std::byte{0xAA});
     REQUIRE(128 == *interface.write(0, buf1.data(), 128));
     REQUIRE(128 == *interface.write(512, buf1.data(), 128));
-    interface.onAfterLastWrite();
+    interface.endWrite();
 
     REQUIRE(1024 == interface.read(0, buf1.data(), 2000));
     REQUIRE(std::all_of(buf1.begin() + 0, buf1.begin() + 128, [](auto x) { return x == std::byte{0xAA}; }));
@@ -90,7 +90,7 @@ TEST_CASE("util::FileROMBackend")
     REQUIRE(3 == back.getWriteCount());
 
     // Failure injection
-    interface.onBeforeFirstWrite();
+    interface.beginWrite();
     back.enableFailureInjection(true);
     REQUIRE(!interface.write(0, buf1.data(), 128));
     back.enableFailureInjection(false);

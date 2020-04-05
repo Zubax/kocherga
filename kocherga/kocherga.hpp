@@ -16,8 +16,27 @@ namespace kocherga
 {
 /// Semantic version number pair: major then minor.
 using SemanticVersion = std::array<std::uint8_t, 2>;
-using TransferID      = std::uint64_t;
-using NodeID          = std::uint16_t;
+
+using TransferID = std::uint64_t;
+using NodeID     = std::uint16_t;
+using PortID     = std::uint16_t;
+
+/// UAVCAN subjects used by Kocherga.
+enum class SubjectID : PortID
+{
+    NodeHeartbeat               = 32085,
+    PnPNodeIDAllocationData     = 32741,
+    PnPNodeIDAllocationDataMTU8 = 32742,
+    DiagnosticRecord            = 32760,
+};
+
+/// UAVCAN services used by Kocherga.
+enum class ServiceID : PortID
+{
+    FileRead           = 408,
+    NodeGetInfo        = 430,
+    NodeExecuteCommand = 435,
+};
 
 /// Version of the library, major and minor.
 static constexpr SemanticVersion Version{{1, 0}};
@@ -28,6 +47,9 @@ static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};
 /// The service response timeout used by the bootloader.
 /// This value applies when the bootloader invokes uavcan.file.Read during the update.
 static constexpr std::chrono::seconds ServiceResponseTimeout{5};
+
+/// The largest transfer size used by the bootloader. Use this to size the buffers in transport implementations.
+static constexpr std::size_t MaxSerializedRepresentationSize = 313;
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -78,8 +100,8 @@ struct SystemInfo
 
 /// A standard IoC delegate for handling protocol events in the node.
 /// The user code will INVOKE this interface, not implement it.
-/// A reference to the reactor is supplied to INode implementations to let them delegate application-level activities
-/// back to the bootloader core.
+/// A reference to the reactor is supplied to INode implementations to let them delegate transfer processing back
+/// to the bootloader core.
 /// The methods accept raw serialized representation and return one as well.
 /// Serialization/deserialization is done by the bootloader core because DSDL is transport-agnostic.
 /// All methods are non-blocking and return immediately.
@@ -88,23 +110,16 @@ struct SystemInfo
 class IReactor
 {
 public:
-    static constexpr std::size_t ExecuteCommandResponseLength = 7;
-    static constexpr std::size_t NodeInfoResponseMaxLength    = 313;
-
-    /// Invoked when the node receives a uavcan.node.ExecuteResponse request.
-    virtual void processExecuteCommandRequest(const NodeID           client_node_id,
+    /// Returns the size of the response payload. Returns an empty option if no response should be sent.
+    [[nodiscard]] virtual auto processRequest(const ServiceID        service_id,
+                                              const NodeID           client_node_id,
                                               const std::size_t      request_length,
                                               const std::byte* const request,
-                                              std::byte* const       out_response) = 0;
+                                              std::byte* const       out_response) -> std::optional<std::size_t> = 0;
 
-    /// Invoked when the node receives a uavcan.node.GetInfo request. The request does not have any useful payload.
-    /// The client node-ID not provided because it doesn't matter.
-    /// Returns the number of bytes written into out_response, which is never greater than NodeInfoResponseCapacity.
-    [[nodiscard]] virtual auto processNodeInfoRequest(std::byte* const out_response) const -> std::size_t = 0;
-
-    /// Invoked when the node receives the response to a previously sent uavcan.file.Read request.
-    /// This service is actually used for transferring the application image when update is in progress.
-    virtual void processFileReadResponse(const std::size_t response_length, const std::byte* const response) = 0;
+    /// The service-ID is not communicated back because there may be at most one request pending at a time.
+    /// Hence, the bootloader core knows what response it is by checking which request was sent last.
+    virtual void processResponse(const std::size_t response_length, const std::byte* const response) = 0;
 
     virtual ~IReactor()        = default;
     IReactor()                 = default;
@@ -120,34 +135,35 @@ public:
 /// If redundant transports are desired, they should be implemented in a custom implementation of INode.
 /// If the node implementation is unable to perform the requested action (for example, because a node-ID allocation
 /// is still in progress), it shall ignore the commanded action or return an error if such possibility is provided.
+/// The priority of outgoing transfers should be the lowest, excepting the service responses -- those should use the
+/// same priority level as the corresponding request transfer.
 class INode
 {
 public:
-    static constexpr std::size_t HeartbeatLength = 7;
-
     /// The bootloader invokes this method every tick to let the node run background activities such as
     /// processing incoming transfers. If a reaction is required (such as responding to a service request),
     /// it is delegated to the bootloader core via the IoC IReactor.
     virtual void poll(IReactor& reactor, const std::chrono::microseconds uptime) = 0;
 
-    /// Send a request uavcan.file.Read.
-    /// The response will be delivered later asynchronously via IReactor.
+    /// Send a request. The response will be delivered later asynchronously via IReactor.
+    /// There may be AT MOST one pending request at a time.
     /// The return value is True on success and False if the request could not be sent (aborts the update process).
-    [[nodiscard]] virtual auto requestFileRead(const NodeID           server_node_id,
-                                               const TransferID       transfer_id,
-                                               const std::size_t      payload_length,
-                                               const std::byte* const payload) -> bool = 0;
+    [[nodiscard]] virtual auto sendRequest(const ServiceID        service_id,
+                                           const NodeID           server_node_id,
+                                           const TransferID       transfer_id,
+                                           const std::size_t      payload_length,
+                                           const std::byte* const payload) -> bool = 0;
 
-    /// Publish a message uavcan.node.Heartbeat. Observe that the size of the payload is fixed so it is not passed.
-    /// If an error occurred, it shall be ignored or reported using other means.
+    /// Cancel the request that was previously set pending by sendRequest(); no longer expect the response.
+    /// This method is invoked when the request has timed out.
+    virtual void cancelRequest() = 0;
+
+    /// Publish a message. If an error occurred, it shall be ignored or reported using other means.
     /// Such lax error handling policy is implemented because the bootloader need not react to transient failures.
-    virtual void publishHeartbeat(const TransferID transfer_id, const std::byte* const payload) = 0;
-
-    /// Publish a message uavcan.diagnostic.Record.
-    /// If an error occurred, it shall be ignored or reported using other means.
-    virtual void publishLogRecord(const TransferID       transfer_id,
-                                  const std::size_t      payload_length,
-                                  const std::byte* const payload) = 0;
+    virtual void publishMessage(const SubjectID        subject_id,
+                                const TransferID       transfer_id,
+                                const std::size_t      payload_length,
+                                const std::byte* const payload) = 0;
 
     virtual ~INode()     = default;
     INode()              = default;
@@ -161,9 +177,9 @@ public:
 
 /// This interface abstracts the target-specific ROM routines.
 /// App update scenario:
-///  1. onBeforeFirstWrite()
+///  1. beginWrite()
 ///  2. write() repeated until finished.
-///  3. onAfterLastWrite() (the number of preceding writes may be zero)
+///  3. endWrite() (the number of preceding writes may be zero)
 ///
 /// The read() method may be invoked at any time. Its performance is critical.
 /// Slow access may lead to watchdog timeouts (assuming that the watchdog is used) and/or disruption of communications.
@@ -175,14 +191,14 @@ class IROMBackend
 public:
     /// This hook allows the ROM driver to enable write operations, erase ROM, etc, depending on the hardware.
     /// This operation cannot fail.
-    virtual void onBeforeFirstWrite()
+    virtual void beginWrite()
     {
         // No effect by default.
     }
 
     /// This hook allows the ROM driver to disable write operations or to perform other hardware-specific steps.
     /// This operation cannot fail.
-    virtual void onAfterLastWrite()
+    virtual void endWrite()
     {
         // No effect by default.
     }
@@ -269,7 +285,7 @@ private:
     static constexpr auto Xor     = static_cast<std::uint64_t>(0xFFFF'FFFF'FFFF'FFFFULL);
     static constexpr auto Residue = static_cast<std::uint64_t>(0xFCAC'BEBD'5931'A992ULL);
 
-    static constexpr auto InputShift  = 56U;
+    static constexpr auto InputShift = 56U;
 
     std::uint64_t crc_ = Xor;
 };
@@ -388,6 +404,7 @@ static constexpr std::size_t NameCapacity = 50;
 
 struct Heartbeat
 {
+    static constexpr std::size_t          Size = 7;
     static constexpr std::chrono::seconds Period{1};
 
     static constexpr std::uint8_t ModeSoftwareUpdate = 3;
@@ -402,6 +419,7 @@ struct Heartbeat
 
 struct ExecuteCommand
 {
+    static constexpr std::size_t ResponseSize   = 7;
     static constexpr std::size_t RequestSizeMin = 3;
 
     enum class Command : std::uint16_t
@@ -499,6 +517,8 @@ public:
             FileLocationSpecifier& fls = *file_loc_spec_;
             if (fls.response_deadline_ && (uptime > *fls.response_deadline_))
             {
+                INode* const nd = nodes_.at(fls.local_node_index);
+                nd->cancelRequest();
                 fls.response_deadline_.reset();
                 controller_.handleFileReadResult({});
             }
@@ -520,8 +540,9 @@ public:
         if (file_loc_spec_)
         {
             std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{};
+
             auto of = offset;
-            buf[0] = static_cast<std::uint8_t>(of);
+            buf[0]  = static_cast<std::uint8_t>(of);
             of >>= BitsPerByte;
             buf[1] = static_cast<std::uint8_t>(of);
             of >>= BitsPerByte;
@@ -537,11 +558,12 @@ public:
             (void) std::memmove(&buf.at(length_minus_path), fls.path.data(), fls.path_length);
             INode* const node = nodes_.at(fls.local_node_index);
 
-            const bool out = node->requestFileRead(fls.server_node_id,
-                                                   fls.read_transfer_id,
-                                                   fls.path_length + length_minus_path,
-                                                   reinterpret_cast<const std::byte*>(buf.data()));
             fls.read_transfer_id++;
+            const bool out = node->sendRequest(ServiceID::FileRead,
+                                               fls.server_node_id,
+                                               fls.read_transfer_id,
+                                               fls.path_length + length_minus_path,
+                                               reinterpret_cast<const std::byte*>(buf.data()));
             if (out)
             {
                 fls.response_deadline_ = last_poll_at_ + ServiceResponseTimeout;
@@ -570,16 +592,47 @@ public:
         buf[8] = text_length;
         for (INode* const node : nodes_)
         {
-            node->publishLogRecord(tid_log_record_, text_length + 9U, reinterpret_cast<const std::byte*>(buf.data()));
+            node->publishMessage(SubjectID::DiagnosticRecord,
+                                 tid_log_record_,
+                                 text_length + 9U,
+                                 reinterpret_cast<const std::byte*>(buf.data()));
         }
         ++tid_log_record_;
     }
 
 private:
-    void processExecuteCommandRequest(const NodeID           client_node_id,
+    [[nodiscard]] auto processRequest(const ServiceID        service_id,
+                                      const NodeID           client_node_id,
                                       const std::size_t      request_length,
                                       const std::byte* const request,
-                                      std::byte* const       out_response) override
+                                      std::byte* const       out_response) -> std::optional<std::size_t> override
+    {
+        std::optional<std::size_t> out;
+        switch (service_id)
+        {
+        case ServiceID::NodeExecuteCommand:
+        {
+            out = processExecuteCommandRequest(client_node_id, request_length, request, out_response);
+            break;
+        }
+        case ServiceID::NodeGetInfo:
+        {
+            out = processNodeInfoRequest(out_response);
+            break;
+        }
+        case ServiceID::FileRead:
+        default:
+        {
+            break;
+        }
+        }
+        return out;
+    }
+
+    auto processExecuteCommandRequest(const NodeID           client_node_id,
+                                      const std::size_t      request_length,
+                                      const std::byte* const request,
+                                      std::byte* const       out_response) -> std::size_t
     {
         auto result = dsdl::ExecuteCommand::Status::InternalError;
         if (request_length >= dsdl::ExecuteCommand::RequestSizeMin)
@@ -614,10 +667,12 @@ private:
                 result = dsdl::ExecuteCommand::Status::BadCommand;
             }
         }
+        (void) std::memset(out_response, 0, dsdl::ExecuteCommand::ResponseSize);
         *out_response = static_cast<std::byte>(result);
+        return dsdl::ExecuteCommand::ResponseSize;
     }
 
-    [[nodiscard]] auto processNodeInfoRequest(std::byte* const out_response) const -> std::size_t override
+    [[nodiscard]] auto processNodeInfoRequest(std::byte* const out_response) const -> std::size_t
     {
         const auto app_info = controller_.getAppInfo();
         const auto base_ptr = reinterpret_cast<std::uint8_t*>(out_response);
@@ -683,7 +738,7 @@ private:
         return static_cast<std::size_t>(ptr - base_ptr);
     }
 
-    void processFileReadResponse(const std::size_t response_length, const std::byte* const response) override
+    void processResponse(const std::size_t response_length, const std::byte* const response) override
     {
         if (file_loc_spec_ && (response_length >= dsdl::File::ReadResponseSizeMin))
         {
@@ -716,7 +771,7 @@ private:
         const auto hmv = (node_vssc_ << 5U) | static_cast<std::uint32_t>(dsdl::Heartbeat::ModeSoftwareUpdate << 2U) |
                          static_cast<std::uint32_t>(node_health_);
         const auto ut = static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(uptime).count());
-        std::array<std::uint8_t, INode::HeartbeatLength> buf{{
+        std::array<std::uint8_t, dsdl::Heartbeat::Size> buf{{
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 0U)),
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 1U)),
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 2U)),
@@ -727,7 +782,10 @@ private:
         }};
         for (INode* const node : nodes_)
         {
-            node->publishHeartbeat(tid_heartbeat_, reinterpret_cast<std::byte*>(buf.data()));
+            node->publishMessage(SubjectID::NodeHeartbeat,
+                                 tid_heartbeat_,
+                                 buf.size(),
+                                 reinterpret_cast<std::byte*>(buf.data()));
         }
         ++tid_heartbeat_;
     }
@@ -917,7 +975,7 @@ private:
     {
         if (State::AppUpdateInProgress == state_)
         {
-            backend_.onAfterLastWrite();
+            backend_.endWrite();
         }
         app_info_ = detail::AppLocator(backend_, max_app_size_).identifyApplication();
         final_.reset();
@@ -950,7 +1008,7 @@ private:
         // If an update was already in progress, it is simply interrupted and we begin from scratch.
         if (State::AppUpdateInProgress == state_)
         {
-            backend_.onAfterLastWrite();  // Cycle the state to re-init ROM if needed.
+            backend_.endWrite();  // Cycle the state to re-init ROM if needed.
             pending_log_ = {detail::dsdl::Diagnostic::Severity::Warning, "Ongoing update process restarted"};
         }
         else
@@ -961,7 +1019,7 @@ private:
         rom_offset_         = 0;
         read_request_count_ = 0;
         request_read_       = true;
-        backend_.onBeforeFirstWrite();
+        backend_.beginWrite();
         presentation_.setNodeHealth(detail::dsdl::Heartbeat::Health::Nominal);
     }
 

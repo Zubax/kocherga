@@ -76,6 +76,13 @@ public:
 
     [[nodiscard]] auto getLastPollTime() const { return last_poll_at_; }
 
+    [[nodiscard]] auto wasRequestCanceled()
+    {
+        const auto out    = request_canceled_;
+        request_canceled_ = false;
+        return out;
+    }
+
     void setFileReadResult(const bool value) { file_read_result_ = value; }
 
     /// Retrieve a previously received transfer under the specified session.
@@ -103,6 +110,20 @@ public:
 private:
     void poll(kocherga::IReactor& reactor, const std::chrono::microseconds uptime) override
     {
+        const auto proc = [&](const Output ses, const kocherga::ServiceID service_id, const Transfer& tr) {
+            std::vector<std::byte> buffer(kocherga::MaxSerializedRepresentationSize);
+            const auto             size = reactor.processRequest(service_id,
+                                                     *tr.remote_node_id,
+                                                     tr.payload.size(),
+                                                     tr.payload.data(),
+                                                     buffer.data());
+            if (size)
+            {
+                buffer.resize(*size);
+                store(ses, Transfer(tr.transfer_id, buffer, *tr.remote_node_id));
+            }
+        };
+
         last_poll_at_ = uptime;
         for (auto [key, tr] : inputs_)
         {
@@ -110,25 +131,17 @@ private:
             {
             case Input::ExecuteCommandRequest:
             {
-                std::vector<std::byte> buffer(kocherga::IReactor::ExecuteCommandResponseLength);
-                reactor.processExecuteCommandRequest(*tr.remote_node_id,
-                                                     tr.payload.size(),
-                                                     tr.payload.data(),
-                                                     buffer.data());
-                store(Output::ExecuteCommandResponse, Transfer(tr.transfer_id, buffer, *tr.remote_node_id));
+                proc(Output::ExecuteCommandResponse, kocherga::ServiceID::NodeExecuteCommand, tr);
                 break;
             }
             case Input::NodeInfoRequest:
             {
-                std::vector<std::byte> buffer(kocherga::IReactor::NodeInfoResponseMaxLength);
-                const auto             size = reactor.processNodeInfoRequest(buffer.data());
-                buffer.resize(size);
-                store(Output::NodeInfoResponse, Transfer(tr.transfer_id, buffer, *tr.remote_node_id));
+                proc(Output::NodeInfoResponse, kocherga::ServiceID::NodeGetInfo, tr);
                 break;
             }
             case Input::FileReadResponse:
             {
-                reactor.processFileReadResponse(std::size(tr.payload), tr.payload.data());
+                reactor.processResponse(std::size(tr.payload), tr.payload.data());
                 break;
             }
             default:
@@ -140,35 +153,69 @@ private:
         inputs_.clear();
     }
 
-    [[nodiscard]] auto requestFileRead(const kocherga::NodeID     server_node_id,
-                                       const kocherga::TransferID transfer_id,
-                                       const std::size_t          payload_length,
-                                       const std::byte* const     payload) -> bool override
+    [[nodiscard]] auto sendRequest(const kocherga::ServiceID  service_id,
+                                   const kocherga::NodeID     server_node_id,
+                                   const kocherga::TransferID transfer_id,
+                                   const std::size_t          payload_length,
+                                   const std::byte* const     payload) -> bool override
     {
-        store(Output::FileReadRequest, Transfer(transfer_id, payload_length, payload, server_node_id));
-        return file_read_result_;
+        switch (service_id)
+        {
+        case kocherga::ServiceID::FileRead:
+        {
+            store(Output::FileReadRequest, Transfer(transfer_id, payload_length, payload, server_node_id));
+            return file_read_result_;
+        }
+        case kocherga::ServiceID::NodeGetInfo:
+        case kocherga::ServiceID::NodeExecuteCommand:
+        default:
+        {
+            FAIL("UNEXPECTED SERVICE REQUEST");
+            return false;
+        }
+        }
     }
 
-    void publishHeartbeat(const kocherga::TransferID transfer_id, const std::byte* const payload) override
-    {
-        store(Output::HeartbeatMessage, Transfer(transfer_id, HeartbeatLength, payload));
-    }
+    void cancelRequest() override { request_canceled_ = true; }
 
-    void publishLogRecord(const kocherga::TransferID transfer_id,
-                          const std::size_t          payload_length,
-                          const std::byte* const     payload) override
+    void publishMessage(const kocherga::SubjectID  subject_id,
+                        const kocherga::TransferID transfer_id,
+                        const std::size_t          payload_length,
+                        const std::byte* const     payload) override
     {
-        store(Output::LogRecordMessage, Transfer(transfer_id, payload_length, payload));
+        switch (subject_id)
+        {
+        case kocherga::SubjectID::NodeHeartbeat:
+        {
+            store(Output::HeartbeatMessage, Transfer(transfer_id, payload_length, payload));
+            break;
+        }
+        case kocherga::SubjectID::DiagnosticRecord:
+        {
+            store(Output::LogRecordMessage, Transfer(transfer_id, payload_length, payload));
+            break;
+        }
+        case kocherga::SubjectID::PnPNodeIDAllocationData:
+        case kocherga::SubjectID::PnPNodeIDAllocationDataMTU8:
+        default:
+        {
+            FAIL("UNEXPECTED MESSAGE");
+            break;
+        }
+        }
     }
 
     void store(const Output ses, const Transfer& tr)
     {
+        INFO("output: " << static_cast<std::uint32_t>(ses));
+        INFO("transfer: " << tr.toString());
         REQUIRE(outputs_.find(ses) == std::end(outputs_));
         outputs_[ses] = tr;
     }
 
     std::chrono::microseconds  last_poll_at_{};
     bool                       file_read_result_ = true;
+    bool                       request_canceled_ = false;
     std::map<Output, Transfer> outputs_;
     std::map<Input, Transfer>  inputs_;
 };

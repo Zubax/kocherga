@@ -303,11 +303,13 @@ private:
         (void) parser_;
     }
 
-    [[nodiscard]] auto requestFileRead(const NodeID           server_node_id,
-                                       const TransferID       transfer_id,
-                                       const std::size_t      payload_length,
-                                       const std::byte* const payload) -> bool override
+    [[nodiscard]] auto sendRequest(const ServiceID        service_id,
+                                   const NodeID           server_node_id,
+                                   const TransferID       transfer_id,
+                                   const std::size_t      payload_length,
+                                   const std::byte* const payload) -> bool override
     {
+        (void) service_id;
         (void) server_node_id;
         (void) transfer_id;
         (void) payload_length;
@@ -315,16 +317,14 @@ private:
         return false;
     }
 
-    void publishHeartbeat(const TransferID transfer_id, const std::byte* const payload) override
-    {
-        (void) transfer_id;
-        (void) payload;
-    }
+    void cancelRequest() override {}
 
-    void publishLogRecord(const TransferID       transfer_id,
-                          const std::size_t      payload_length,
-                          const std::byte* const payload) override
+    void publishMessage(const SubjectID        subject_id,
+                        const TransferID       transfer_id,
+                        const std::size_t      payload_length,
+                        const std::byte* const payload) override
     {
+        (void) subject_id;
         (void) transfer_id;
         (void) payload_length;
         (void) payload;
@@ -335,10 +335,8 @@ private:
         return detail::transmit([this](const std::uint8_t b) { return port_.send(b); }, tr);
     }
 
-    static constexpr std::size_t ParserBufferSize = 512;
-
-    ISerialPort&                     port_;
-    detail::Parser<ParserBufferSize> parser_;
+    ISerialPort&                                    port_;
+    detail::Parser<MaxSerializedRepresentationSize> parser_;
 };
 
 }  // namespace kocherga::serial

@@ -174,7 +174,7 @@ private:
         }
     }
 
-    void onBeforeFirstWrite() override
+    void beginWrite() override
     {
         checkFileHealth();
         if (upgrade_in_progress_)
@@ -184,7 +184,7 @@ private:
         upgrade_in_progress_ = true;
     }
 
-    void onAfterLastWrite() override
+    void endWrite() override
     {
         checkFileHealth();
         if (!upgrade_in_progress_)
