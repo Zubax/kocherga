@@ -70,14 +70,15 @@ struct Transfer
         NodeID        destination = AnonymousNodeID;
         std::uint16_t data_spec{};
         TransferID    transfer_id{};
-    } metadata;
+    };
+    Metadata            meta{};
     std::size_t         payload_len = 0;
     const std::uint8_t* payload     = nullptr;
 };
 
 /// UAVCAN/serial stream parser. Extracts UAVCAN/serial frames from raw stream of bytes.
 template <std::size_t MaxPayloadSize>
-class Parser
+class StreamParser
 {
 public:
     /// If the byte completed a transfer, it will be returned.
@@ -219,7 +220,7 @@ template <typename Callback>
 [[nodiscard]] inline auto transmit(const Callback& send_byte, const Transfer& tr) -> bool
 {
     CRC32C     crc;
-    const auto out = [&send_byte, &crc](const std::uint8_t b) -> bool {
+    const auto out = [&send_byte, &crc](const std::uint8_t b) {
         crc.update(b);
         if ((b == detail::FrameDelimiter) || (b == detail::EscapePrefix))
         {
@@ -230,13 +231,13 @@ template <typename Callback>
     const auto out2 = [&out](const std::uint16_t bb) {
         return out(static_cast<std::uint8_t>(bb)) && out(static_cast<std::uint8_t>(bb >> BitsPerByte));
     };
-    bool ok = send_byte(FrameDelimiter) && out(FrameFormatVersion) && out(tr.metadata.priority) &&
-              out2(tr.metadata.source) && out2(tr.metadata.destination) && out2(tr.metadata.data_spec);
+    bool ok = send_byte(FrameDelimiter) && out(FrameFormatVersion) && out(tr.meta.priority) && out2(tr.meta.source) &&
+              out2(tr.meta.destination) && out2(tr.meta.data_spec);
     for (auto i = 0U; i < sizeof(std::uint64_t); i++)
     {
         ok = ok && out(0);
     }
-    auto tmp_transfer_id = tr.metadata.transfer_id;
+    auto tmp_transfer_id = tr.meta.transfer_id;
     for (auto i = 0U; i < sizeof(std::uint64_t); i++)
     {
         ok = ok && out(static_cast<std::uint8_t>(tmp_transfer_id));
@@ -254,7 +255,8 @@ template <typename Callback>
     auto ptr = tr.payload;
     for (std::size_t i = 0U; i < tr.payload_len; i++)
     {
-        ok = ok && out(*ptr++);
+        ok = ok && out(*ptr);
+        ++ptr;
     }
     for (const auto x : crc.getBytes())
     {
@@ -292,7 +294,7 @@ public:
     explicit SerialNode(ISerialPort& port) : port_(port) {}
 
     /// Resets the state of the frame parser. Call it when the communication channel is reinitialized.
-    void reset() { parser_.reset(); }
+    void reset() { stream_parser_.reset(); }
 
 private:
     void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
@@ -300,7 +302,7 @@ private:
         (void) reactor;
         (void) uptime;
         (void) port_;
-        (void) parser_;
+        (void) stream_parser_;
     }
 
     [[nodiscard]] auto sendRequest(const ServiceID        service_id,
@@ -335,8 +337,8 @@ private:
         return detail::transmit([this](const std::uint8_t b) { return port_.send(b); }, tr);
     }
 
-    ISerialPort&                                    port_;
-    detail::Parser<MaxSerializedRepresentationSize> parser_;
+    ISerialPort&                                          port_;
+    detail::StreamParser<MaxSerializedRepresentationSize> stream_parser_;
 };
 
 }  // namespace kocherga::serial

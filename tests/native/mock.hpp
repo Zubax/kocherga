@@ -110,7 +110,7 @@ public:
 private:
     void poll(kocherga::IReactor& reactor, const std::chrono::microseconds uptime) override
     {
-        const auto proc = [&](const Output ses, const kocherga::ServiceID service_id, const Transfer& tr) {
+        const auto proc = [&reactor, this](const Output ses, const kocherga::ServiceID service_id, const Transfer& tr) {
             std::vector<std::byte> buffer(kocherga::MaxSerializedRepresentationSize);
             const auto             size = reactor.processRequest(service_id,
                                                      *tr.remote_node_id,
