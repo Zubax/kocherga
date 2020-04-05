@@ -147,15 +147,7 @@ public:
                 }
                 else
                 {
-                    const auto buf_offset = offset_ - HeaderSize;
-                    if (buf_offset < buf_.size())
-                    {
-                        buf_.at(buf_offset) = bt;
-                    }
-                    else
-                    {
-                        inside_ = false;
-                    }
+                    acceptPayload(bt);
                 }
                 ++offset_;
             }
@@ -208,6 +200,19 @@ private:
             // at this moment. The main purpose of the header CRC is to permit such early-stage frame processing.
             // This specialized implementation requires none of that.
             crc_ = {};
+        }
+    }
+
+    void acceptPayload(const std::uint8_t bt)
+    {
+        const auto buf_offset = offset_ - HeaderSize;
+        if (buf_offset < buf_.size())
+        {
+            buf_.at(buf_offset) = bt;
+        }
+        else
+        {
+            inside_ = false;
         }
     }
 

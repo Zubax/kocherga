@@ -59,14 +59,14 @@ TEST_CASE("serial::StreamParser")
     REQUIRE(tr->meta.source == 123);
     REQUIRE(tr->meta.destination == 456);
     REQUIRE(tr->meta.data_spec == 4321);
-    REQUIRE(tr->meta.transfer_id == 12345678901234567890ULL);
+    REQUIRE(tr->meta.transfer_id == 12'345'678'901'234'567'890ULL);
     REQUIRE(!tr->meta.isRequest());
     REQUIRE(!tr->meta.isResponse());
 
     // VALID RESPONSE
     chunk = {
         0,                                               // Version
-        1,                                               // Priority
+        2,                                               // Priority
         0x8E, 0x71, 0x01,                                // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x8E, 0x61, 0xC0,                                // Data specifier    response 158 (escaped)
@@ -79,7 +79,7 @@ TEST_CASE("serial::StreamParser")
     chunk = {
         // Same as above but unescaped to compute the CRC.
         0,                                               // Version
-        1,                                               // Priority
+        2,                                               // Priority
         0x8E, 0x01,                                      // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x9E, 0xC0,                                      // Data specifier    response 158 (escaped)
@@ -95,18 +95,18 @@ TEST_CASE("serial::StreamParser")
     REQUIRE(tr);
     REQUIRE(tr->payload_len == 1);
     REQUIRE((*tr->payload) == 0x9E);  // Escaped
-    REQUIRE(tr->meta.priority == 1);
+    REQUIRE(tr->meta.priority == 2);
     REQUIRE(tr->meta.source == 398);
     REQUIRE(tr->meta.destination == tr->meta.AnonymousNodeID);
     REQUIRE(tr->meta.data_spec == 0xC09E);
-    REQUIRE(tr->meta.transfer_id == 12345678901234567890ULL);
+    REQUIRE(tr->meta.transfer_id == 12'345'678'901'234'567'890ULL);
     REQUIRE(!tr->meta.isRequest());
     REQUIRE(tr->meta.isResponse() == 158);
 
     // BAD VERSION
     chunk = {
         123,                                             // Version
-        1,                                               // Priority
+        3,                                               // Priority
         0x8E, 0x71, 0x01,                                // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x8E, 0x61, 0xC0,                                // Data specifier    response 158 (escaped)
@@ -119,7 +119,7 @@ TEST_CASE("serial::StreamParser")
     chunk = {
         // Same as above but unescaped to compute the CRC.
         123,                                             // Version
-        1,                                               // Priority
+        3,                                               // Priority
         0x8E, 0x01,                                      // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x9E, 0xC0,                                      // Data specifier    response 158 (escaped)
@@ -136,7 +136,7 @@ TEST_CASE("serial::StreamParser")
     // MULTIFRAME TRANSFERS NOT SUPPORTED
     chunk = {
         0,                                               // Version
-        2,                                               // Priority
+        4,                                               // Priority
         0x8E, 0x71, 0x01,                                // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x8E, 0x61, 0xC0,                                // Data specifier    response 158 (escaped)
@@ -149,7 +149,7 @@ TEST_CASE("serial::StreamParser")
     chunk = {
         // Same as above but unescaped to compute the CRC.
         0,                                               // Version
-        2,                                               // Priority
+        4,                                               // Priority
         0x8E, 0x01,                                      // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x9E, 0xC0,                                      // Data specifier    response 158 (escaped)
@@ -166,7 +166,7 @@ TEST_CASE("serial::StreamParser")
     // PAYLOAD TOO LARGE
     chunk = {
         0,                                               // Version
-        1,                                               // Priority
+        6,                                               // Priority
         0x8E, 0x71, 0x01,                                // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x8E, 0x61, 0xC0,                                // Data specifier    response 158 (escaped)
@@ -179,7 +179,7 @@ TEST_CASE("serial::StreamParser")
     chunk = {
         // Same as above but unescaped to compute the CRC.
         0,                                               // Version
-        1,                                               // Priority
+        6,                                               // Priority
         0x8E, 0x01,                                      // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x9E, 0xC0,                                      // Data specifier    response 158 (escaped)
@@ -196,7 +196,7 @@ TEST_CASE("serial::StreamParser")
     // DOUBLE ESCAPING
     chunk = {
         0,                                               // Version
-        1,                                               // Priority
+        7,                                               // Priority
         0x8E, 0x8E, 0x71, 0x01,                          // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x8E, 0x61, 0xC0,                                // Data specifier    response 158 (escaped)
@@ -209,7 +209,7 @@ TEST_CASE("serial::StreamParser")
     chunk = {
         // Same as above but unescaped to compute the CRC.
         0,                                               // Version
-        1,                                               // Priority
+        7,                                               // Priority
         0x8E, 0x01,                                      // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x9E, 0xC0,                                      // Data specifier    response 158 (escaped)
@@ -226,7 +226,7 @@ TEST_CASE("serial::StreamParser")
     // HEADER CRC ERROR
     chunk = {
         0,                                               // Version
-        1,                                               // Priority
+        5,                                               // Priority
         0x8E, 0x71, 0x01,                                // Source NID        398 (escaped)
         0xFF, 0xFF,                                      // Destination NID   broadcast
         0x8E, 0x61, 0xC0,                                // Data specifier    response 158 (escaped)
@@ -253,12 +253,12 @@ TEST_CASE("serial::transmit")
     StreamParser<10>             sp;
     std::array<std::uint8_t, 90> buf{};
     std::optional<Transfer>      rx;
-    std::vector<std::uint8_t>    log;
+    std::vector<std::uint8_t>    history;
 
-    const auto feed = [&sp, &rx, &log](const auto bt) {
+    const auto feed = [&sp, &rx, &history](const auto bt) {
         if (!rx)
         {
-            log.push_back(bt);
+            history.push_back(bt);
             rx = sp.update(bt);
             return true;
         }
@@ -273,7 +273,7 @@ TEST_CASE("serial::transmit")
                              0x8E9E,
                              0x9E8E,
                              0x8042,
-                             12345678901234567890ULL,
+                             12'345'678'901'234'567'890ULL,
                          },
                          5,
                          buf.data(),
@@ -283,11 +283,11 @@ TEST_CASE("serial::transmit")
     REQUIRE(rx->meta.source == 0x8E9E);
     REQUIRE(rx->meta.destination == 0x9E8E);
     REQUIRE(rx->meta.data_spec == 0x8042);
-    REQUIRE(rx->meta.transfer_id == 12345678901234567890ULL);
+    REQUIRE(rx->meta.transfer_id == 12'345'678'901'234'567'890ULL);
     REQUIRE(0x42 == (*rx->meta.isRequest()));
     REQUIRE(!rx->meta.isResponse());
     REQUIRE(std::equal(std::begin(buf), std::begin(buf) + 5, rx->payload));
-    std::cout << "transmit:" << std::endl << util::makeHexDump(log) << std::endl;
+    std::cout << "transmit:" << std::endl << util::makeHexDump(history) << std::endl;
     const std::vector<std::uint8_t> reference{
         0x9e,                                            // Head delimiter
         0x00,                                            // Version
@@ -303,11 +303,11 @@ TEST_CASE("serial::transmit")
         0x44, 0xe5, 0x04, 0xd9,                          // Payload CRC
         0x9e,                                            // Tail delimiter
     };
-    REQUIRE_THAT(log, Catch::Matchers::Equals(reference));
+    REQUIRE_THAT(history, Catch::Matchers::Equals(reference));
 
     // Transmission fails on the first byte because the result is not cleared.
     REQUIRE(!transmit(feed, *rx));
-    log.clear();
+    history.clear();
     rx = {};
 
     std::uint8_t fail_after = 0;
@@ -331,7 +331,7 @@ TEST_CASE("serial::transmit")
                                   static_cast<std::uint16_t>(i | 0x8E00U),
                                   static_cast<std::uint16_t>(i | 0x9E00U),
                                   0x8E9EU,
-                                  0x9E8E9E8EU,
+                                  0x9E8E'9E8EU,
                               },
                               std::min<std::size_t>(buf.size(), i),
                               buf.data(),
