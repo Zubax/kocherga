@@ -62,14 +62,32 @@ struct Transfer
 {
     struct Metadata
     {
-        static constexpr std::uint8_t DefaultPriority = 7U;  // Lowest.
-        static constexpr NodeID       AnonymousNodeID = 0xFFFFU;
+        static constexpr std::uint8_t DefaultPriority      = 7U;  // Lowest.
+        static constexpr NodeID       AnonymousNodeID      = 0xFFFFU;
+        static constexpr PortID       DataSpecRequestMask  = 0x8000U;
+        static constexpr PortID       DataSpecResponseMask = 0xC000U;
 
         std::uint8_t  priority    = DefaultPriority;
         NodeID        source      = AnonymousNodeID;
         NodeID        destination = AnonymousNodeID;
         std::uint16_t data_spec{};
         TransferID    transfer_id{};
+
+        [[nodiscard]] auto isRequest() const -> std::optional<PortID>
+        {
+            if ((data_spec & DataSpecRequestMask) == DataSpecRequestMask)
+            {
+                return data_spec & static_cast<PortID>(~DataSpecRequestMask);
+            }
+            return {};
+        }
+
+        [[nodiscard]] auto isResponse() const -> std::optional<PortID>
+        {
+            return ((data_spec & DataSpecResponseMask) == DataSpecResponseMask)
+                       ? std::optional<PortID>(data_spec & static_cast<PortID>(~DataSpecResponseMask))
+                       : std::nullopt;
+        }
     };
     Metadata            meta{};
     std::size_t         payload_len = 0;
@@ -91,11 +109,11 @@ public:
         {
             if (inside_ && (offset_ >= CRC32C::Size) && crc_.isResidueCorrect())
             {
-                out.emplace({
+                out = Transfer{
                     meta_,
                     offset_ - CRC32C::Size,
                     buf_.data(),
-                });
+                };
             }
             reset();
             inside_ = true;
@@ -189,7 +207,7 @@ private:
     {
         if ((range.first <= offset_) && (offset_ <= range.second))
         {
-            fld |= static_cast<Field>(bt) << (BitsPerByte * (offset_ - range.first));
+            fld |= static_cast<Field>(static_cast<Field>(bt) << (BitsPerByte * (offset_ - range.first)));
         }
     }
 
@@ -299,37 +317,105 @@ public:
 private:
     void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
     {
-        (void) reactor;
-        (void) uptime;
-        (void) port_;
-        (void) stream_parser_;
+        for (auto i = 0U; i < MaxBytesToProcessPerPoll; i++)
+        {
+            if (auto bt = port_.receive())
+            {
+                if (const auto tr = stream_parser_.update(*bt))
+                {
+                    processReceivedTransfer(reactor, uptime, *tr);
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
     }
 
-    [[nodiscard]] auto sendRequest(const ServiceID        service_id,
-                                   const NodeID           server_node_id,
-                                   const TransferID       transfer_id,
-                                   const std::size_t      payload_length,
-                                   const std::byte* const payload) -> bool override
+    void processReceivedTransfer(IReactor& reactor, const std::chrono::microseconds uptime, const detail::Transfer& tr)
     {
-        (void) service_id;
-        (void) server_node_id;
-        (void) transfer_id;
-        (void) payload_length;
-        (void) payload;
+        if (const auto resp_id = tr.meta.isResponse())
+        {
+            if (pending_request_meta_ && local_node_id_)
+            {
+                const bool match = (resp_id == pending_request_meta_->service_id) &&
+                                   (tr.meta.source == pending_request_meta_->server_node_id) &&
+                                   (tr.meta.destination == *local_node_id_) &&
+                                   (tr.meta.transfer_id == pending_request_meta_->transfer_id);
+                if (match)
+                {
+                    reactor.processResponse(tr.payload_len, tr.payload);
+                    pending_request_meta_.reset();
+                }
+            }
+        }
+        else if (const auto req_id = tr.meta.isRequest())
+        {
+            if (local_node_id_ && (tr.meta.destination == (*local_node_id_)))
+            {
+                std::array<std::uint8_t, MaxSerializedRepresentationSize> buf{};
+                if (const auto size =
+                        reactor.processRequest(*req_id, tr.meta.source, tr.payload_len, tr.payload, buf.data()))
+                {
+                    detail::Transfer::Metadata meta{};
+                    meta.priority    = tr.meta.priority;
+                    meta.source      = *local_node_id_;
+                    meta.destination = tr.meta.source;
+                    meta.data_spec   = static_cast<PortID>(*req_id) | detail::Transfer::Metadata::DataSpecResponseMask;
+                    meta.transfer_id = tr.meta.transfer_id;
+                    (void) transmit({meta, *size, buf.data()});
+                }
+            }
+        }
+        else
+        {
+            (void) uptime;
+        }
+    }
+
+    [[nodiscard]] auto sendRequest(const ServiceID           service_id,
+                                   const NodeID              server_node_id,
+                                   const TransferID          transfer_id,
+                                   const std::size_t         payload_length,
+                                   const std::uint8_t* const payload) -> bool override
+    {
+        if (local_node_id_)
+        {
+            detail::Transfer::Metadata meta{};
+            meta.source      = *local_node_id_;
+            meta.destination = server_node_id;
+            meta.data_spec   = static_cast<PortID>(service_id) | detail::Transfer::Metadata::DataSpecRequestMask;
+            meta.transfer_id = transfer_id;
+            if (transmit({meta, payload_length, payload}))
+            {
+                pending_request_meta_ = PendingRequestMetadata{
+                    server_node_id,
+                    static_cast<PortID>(service_id),
+                    transfer_id,
+                };
+                return true;
+            }
+        }
         return false;
     }
 
-    void cancelRequest() override {}
+    void cancelRequest() override { pending_request_meta_.reset(); }
 
-    void publishMessage(const SubjectID        subject_id,
-                        const TransferID       transfer_id,
-                        const std::size_t      payload_length,
-                        const std::byte* const payload) override
+    auto publishMessage(const SubjectID           subject_id,
+                        const TransferID          transfer_id,
+                        const std::size_t         payload_length,
+                        const std::uint8_t* const payload) -> bool override
     {
-        (void) subject_id;
-        (void) transfer_id;
-        (void) payload_length;
-        (void) payload;
+        if (local_node_id_)
+        {
+            detail::Transfer::Metadata meta{};
+            meta.source      = *local_node_id_;
+            meta.data_spec   = static_cast<PortID>(subject_id);
+            meta.transfer_id = transfer_id;
+            return transmit({meta, payload_length, payload});
+        }
+        return false;
     }
 
     [[nodiscard]] auto transmit(const detail::Transfer& tr) -> bool
@@ -337,8 +423,19 @@ private:
         return detail::transmit([this](const std::uint8_t b) { return port_.send(b); }, tr);
     }
 
+    struct PendingRequestMetadata
+    {
+        NodeID     server_node_id{};
+        PortID     service_id{};
+        TransferID transfer_id{};
+    };
+
+    static constexpr auto MaxBytesToProcessPerPoll = MaxSerializedRepresentationSize * 3U;
+
     ISerialPort&                                          port_;
     detail::StreamParser<MaxSerializedRepresentationSize> stream_parser_;
+    std::optional<NodeID>                                 local_node_id_;
+    std::optional<PendingRequestMetadata>                 pending_request_meta_;
 };
 
 }  // namespace kocherga::serial

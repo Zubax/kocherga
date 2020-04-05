@@ -92,8 +92,8 @@ struct SystemInfo
     const char* node_name = "";
 
     /// CoA normally points into a specific region of ROM, but this is not required. Set 0/nullptr if not available.
-    std::uint8_t     certificate_of_authenticity_len = 0;
-    const std::byte* certificate_of_authenticity     = nullptr;
+    std::uint8_t        certificate_of_authenticity_len = 0;
+    const std::uint8_t* certificate_of_authenticity     = nullptr;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -111,15 +111,15 @@ class IReactor
 {
 public:
     /// Returns the size of the response payload. Returns an empty option if no response should be sent.
-    [[nodiscard]] virtual auto processRequest(const ServiceID        service_id,
-                                              const NodeID           client_node_id,
-                                              const std::size_t      request_length,
-                                              const std::byte* const request,
-                                              std::byte* const       out_response) -> std::optional<std::size_t> = 0;
+    [[nodiscard]] virtual auto processRequest(const PortID              service_id,
+                                              const NodeID              client_node_id,
+                                              const std::size_t         request_length,
+                                              const std::uint8_t* const request,
+                                              std::uint8_t* const       out_response) -> std::optional<std::size_t> = 0;
 
     /// The service-ID is not communicated back because there may be at most one request pending at a time.
     /// Hence, the bootloader core knows what response it is by checking which request was sent last.
-    virtual void processResponse(const std::size_t response_length, const std::byte* const response) = 0;
+    virtual void processResponse(const std::size_t response_length, const std::uint8_t* const response) = 0;
 
     virtual ~IReactor()        = default;
     IReactor()                 = default;
@@ -148,22 +148,22 @@ public:
     /// Send a request. The response will be delivered later asynchronously via IReactor.
     /// There may be AT MOST one pending request at a time.
     /// The return value is True on success and False if the request could not be sent (aborts the update process).
-    [[nodiscard]] virtual auto sendRequest(const ServiceID        service_id,
-                                           const NodeID           server_node_id,
-                                           const TransferID       transfer_id,
-                                           const std::size_t      payload_length,
-                                           const std::byte* const payload) -> bool = 0;
+    [[nodiscard]] virtual auto sendRequest(const ServiceID           service_id,
+                                           const NodeID              server_node_id,
+                                           const TransferID          transfer_id,
+                                           const std::size_t         payload_length,
+                                           const std::uint8_t* const payload) -> bool = 0;
 
     /// Cancel the request that was previously set pending by sendRequest(); no longer expect the response.
     /// This method is invoked when the request has timed out.
     virtual void cancelRequest() = 0;
 
-    /// Publish a message. If an error occurred, it shall be ignored or reported using other means.
-    /// Such lax error handling policy is implemented because the bootloader need not react to transient failures.
-    virtual void publishMessage(const SubjectID        subject_id,
-                                const TransferID       transfer_id,
-                                const std::size_t      payload_length,
-                                const std::byte* const payload) = 0;
+    /// Publish a message.
+    /// The return value is True on success and False if the message could not be sent (does not abort the update).
+    [[nodiscard]] virtual auto publishMessage(const SubjectID           subject_id,
+                                              const TransferID          transfer_id,
+                                              const std::size_t         payload_length,
+                                              const std::uint8_t* const payload) -> bool = 0;
 
     virtual ~INode()     = default;
     INode()              = default;
@@ -236,7 +236,7 @@ class CRC64
 public:
     static constexpr std::size_t Size = 8U;
 
-    void update(const std::byte* const data, const std::size_t len)
+    void update(const std::uint8_t* const data, const std::size_t len)
     {
         auto bytes = data;
         for (auto remaining = len; remaining > 0; remaining--)
@@ -263,14 +263,14 @@ public:
 
     /// The current CRC value represented as a big-endian sequence of bytes.
     /// This method is designed for inserting the computed CRC value after the data.
-    [[nodiscard]] auto getBytes() const -> std::array<std::byte, Size>
+    [[nodiscard]] auto getBytes() const -> std::array<std::uint8_t, Size>
     {
-        auto                        x = get();
-        std::array<std::byte, Size> out{};
-        const auto                  rend = std::rend(out);
+        auto                           x = get();
+        std::array<std::uint8_t, Size> out{};
+        const auto                     rend = std::rend(out);
         for (auto it = std::rbegin(out); it != rend; ++it)
         {
-            *it = static_cast<std::byte>(static_cast<std::uint8_t>(x));
+            *it = static_cast<std::uint8_t>(x);
             x >>= BitsPerByte;
         }
         return out;
@@ -352,14 +352,15 @@ private:
                                         const std::size_t   image_size,
                                         const std::uint64_t image_crc) const -> bool
     {
-        std::array<std::byte, ROMBufferSize> buffer{};
-        CRC64                                crc;
-        std::size_t                          offset = 0U;
+        std::array<std::uint8_t, ROMBufferSize> buffer{};
+        CRC64                                   crc;
+        std::size_t                             offset = 0U;
         // Read large chunks until the CRC field is reached (in most cases it will fit in just one chunk).
         while (offset < crc_storage_offset)
         {
-            const auto res =
-                backend_.read(offset, buffer.data(), std::min(std::size(buffer), crc_storage_offset - offset));
+            const auto res = backend_.read(offset,
+                                           reinterpret_cast<std::byte*>(buffer.data()),
+                                           std::min(std::size(buffer), crc_storage_offset - offset));
             if (res > 0)
             {
                 offset += res;
@@ -371,13 +372,15 @@ private:
             }
         }
         // Fill CRC with zero.
-        static const std::array<std::byte, CRC64::Size> dummy{};
+        static const std::array<std::uint8_t, CRC64::Size> dummy{};
         offset += CRC64::Size;
         crc.update(dummy.data(), CRC64::Size);
         // Read the rest of the image in large chunks.
         while (offset < image_size)
         {
-            const auto res = backend_.read(offset, buffer.data(), std::min(std::size(buffer), image_size - offset));
+            const auto res = backend_.read(offset,
+                                           reinterpret_cast<std::byte*>(buffer.data()),
+                                           std::min(std::size(buffer), image_size - offset));
             if (res > 0)
             {
                 offset += res;
@@ -563,7 +566,7 @@ public:
                                                fls.server_node_id,
                                                fls.read_transfer_id,
                                                fls.path_length + length_minus_path,
-                                               reinterpret_cast<const std::byte*>(buf.data()));
+                                               buf.data());
             if (out)
             {
                 fls.response_deadline_ = last_poll_at_ + ServiceResponseTimeout;
@@ -592,35 +595,33 @@ public:
         buf[8] = text_length;
         for (INode* const node : nodes_)
         {
-            node->publishMessage(SubjectID::DiagnosticRecord,
-                                 tid_log_record_,
-                                 text_length + 9U,
-                                 reinterpret_cast<const std::byte*>(buf.data()));
+            // Ignore transient errors.
+            (void) node->publishMessage(SubjectID::DiagnosticRecord, tid_log_record_, text_length + 9U, buf.data());
         }
         ++tid_log_record_;
     }
 
 private:
-    [[nodiscard]] auto processRequest(const ServiceID        service_id,
-                                      const NodeID           client_node_id,
-                                      const std::size_t      request_length,
-                                      const std::byte* const request,
-                                      std::byte* const       out_response) -> std::optional<std::size_t> override
+    [[nodiscard]] auto processRequest(const PortID              service_id,
+                                      const NodeID              client_node_id,
+                                      const std::size_t         request_length,
+                                      const std::uint8_t* const request,
+                                      std::uint8_t* const       out_response) -> std::optional<std::size_t> override
     {
         std::optional<std::size_t> out;
         switch (service_id)
         {
-        case ServiceID::NodeExecuteCommand:
+        case static_cast<PortID>(ServiceID::NodeExecuteCommand):
         {
             out = processExecuteCommandRequest(client_node_id, request_length, request, out_response);
             break;
         }
-        case ServiceID::NodeGetInfo:
+        case static_cast<PortID>(ServiceID::NodeGetInfo):
         {
             out = processNodeInfoRequest(out_response);
             break;
         }
-        case ServiceID::FileRead:
+        case static_cast<PortID>(ServiceID::FileRead):
         default:
         {
             break;
@@ -629,10 +630,10 @@ private:
         return out;
     }
 
-    auto processExecuteCommandRequest(const NodeID           client_node_id,
-                                      const std::size_t      request_length,
-                                      const std::byte* const request,
-                                      std::byte* const       out_response) -> std::size_t
+    auto processExecuteCommandRequest(const NodeID              client_node_id,
+                                      const std::size_t         request_length,
+                                      const std::uint8_t* const request,
+                                      std::uint8_t* const       out_response) -> std::size_t
     {
         auto result = dsdl::ExecuteCommand::Status::InternalError;
         if (request_length >= dsdl::ExecuteCommand::RequestSizeMin)
@@ -668,14 +669,14 @@ private:
             }
         }
         (void) std::memset(out_response, 0, dsdl::ExecuteCommand::ResponseSize);
-        *out_response = static_cast<std::byte>(result);
+        *out_response = static_cast<std::uint8_t>(result);
         return dsdl::ExecuteCommand::ResponseSize;
     }
 
-    [[nodiscard]] auto processNodeInfoRequest(std::byte* const out_response) const -> std::size_t
+    [[nodiscard]] auto processNodeInfoRequest(std::uint8_t* const out_response) const -> std::size_t
     {
         const auto app_info = controller_.getAppInfo();
-        const auto base_ptr = reinterpret_cast<std::uint8_t*>(out_response);
+        const auto base_ptr = out_response;
         auto       ptr      = base_ptr;
         *ptr++              = UAVCANSpecificationVersion.at(0);
         *ptr++              = UAVCANSpecificationVersion.at(1);
@@ -738,7 +739,7 @@ private:
         return static_cast<std::size_t>(ptr - base_ptr);
     }
 
-    void processResponse(const std::size_t response_length, const std::byte* const response) override
+    void processResponse(const std::size_t response_length, const std::uint8_t* const response) override
     {
         if (file_loc_spec_ && (response_length >= dsdl::File::ReadResponseSizeMin))
         {
@@ -746,15 +747,15 @@ private:
             if (fls.response_deadline_ && (fls.local_node_index == current_node_index_))
             {
                 fls.response_deadline_.reset();
-                static const std::array<std::byte, 2>   zero_error{};
-                std::optional<dsdl::File::ReadResponse> argument;
+                static const std::array<std::uint8_t, 2> zero_error{};
+                std::optional<dsdl::File::ReadResponse>  argument;
                 if (std::equal(std::begin(zero_error), std::end(zero_error), response))  // Error = OK
                 {
                     argument = dsdl::File::ReadResponse{
                         static_cast<std::uint16_t>(
                             static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[2])) |
                             static_cast<std::uint16_t>(static_cast<std::uint16_t>(response[3]) << BitsPerByte)),
-                        &response[4],
+                        reinterpret_cast<const std::byte*>(&response[4]),
                     };
                 }
                 if (argument && (argument->data_length > dsdl::File::ReadResponseDataCapacity))
@@ -782,10 +783,8 @@ private:
         }};
         for (INode* const node : nodes_)
         {
-            node->publishMessage(SubjectID::NodeHeartbeat,
-                                 tid_heartbeat_,
-                                 buf.size(),
-                                 reinterpret_cast<std::byte*>(buf.data()));
+            // Ignore transient errors.
+            (void) node->publishMessage(SubjectID::NodeHeartbeat, tid_heartbeat_, buf.size(), buf.data());
         }
         ++tid_heartbeat_;
     }
@@ -1116,7 +1115,7 @@ public:
     /// The amount of memory required to store the data. This is the size of the container plus 8 bytes for the CRC.
     static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;
 
-    explicit VolatileStorage(std::byte* const location) : ptr_(location) {}
+    explicit VolatileStorage(std::uint8_t* const location) : ptr_(location) {}
 
     /// Checks if the data is available and reads it, then erases the storage to prevent deja-vu.
     /// Returns an empty option if no data is available (in that case the storage is not erased).
@@ -1149,7 +1148,7 @@ protected:
 
     static constexpr std::uint8_t EraseFillValue = 0xCA;
 
-    std::byte* const ptr_;
+    std::uint8_t* const ptr_;
 };
 
 }  // namespace kocherga

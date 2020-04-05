@@ -11,11 +11,11 @@ namespace
 {
 inline auto getSysInfo()
 {
-    static constexpr auto               coa_capacity = 222U;
-    std::array<std::byte, coa_capacity> coa{};
+    static constexpr auto                  coa_capacity = 222U;
+    std::array<std::uint8_t, coa_capacity> coa{};
     for (auto i = 0U; i < coa_capacity; i++)
     {
-        coa.at(i) = static_cast<std::byte>(coa.size() - i);
+        coa.at(i) = static_cast<std::uint8_t>(coa.size() - i);
     }
     return kocherga::SystemInfo{
         kocherga::SemanticVersion{33, 11},

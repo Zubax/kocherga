@@ -72,11 +72,11 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     using mock::Node;
     using mock::Transfer;
 
-    static constexpr auto               coa_capacity = 222U;
-    std::array<std::byte, coa_capacity> coa{};
+    static constexpr auto                  coa_capacity = 222U;
+    std::array<std::uint8_t, coa_capacity> coa{};
     for (auto i = 0U; i < coa_capacity; i++)
     {
-        coa.at(i) = static_cast<std::byte>(coa.size() - i);
+        coa.at(i) = static_cast<std::uint8_t>(coa.size() - i);
     }
 
     const kocherga::SystemInfo sys_info{
@@ -170,7 +170,7 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
                      3210));
 
     // Invalid request serialization. File location specifier not updated.
-    nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest, Transfer(333, std::vector<std::byte>(), 3210));
+    nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest, Transfer(333, std::vector<std::uint8_t>(), 3210));
     ts = std::chrono::microseconds{1'700'000};
     pres.poll(ts);
     for (const auto& n : nodes)
@@ -198,7 +198,7 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
             Transfer(444, {0, 0, 0, 0, 0, 0, 0}, 2222));
 
     // Node info request; app info not available. SR generation not shown.
-    nodes.at(0).pushInput(Node::Input::NodeInfoRequest, Transfer(555, std::vector<std::byte>{}, 3333));
+    nodes.at(0).pushInput(Node::Input::NodeInfoRequest, Transfer(555, std::vector<std::uint8_t>{}, 3333));
     ts = std::chrono::microseconds{1'900'000};
     pres.poll(ts);
     for (const auto& n : nodes)
@@ -240,7 +240,7 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
         2,
         {3, 11},
     });
-    nodes.at(1).pushInput(Node::Input::NodeInfoRequest, Transfer(666, std::vector<std::byte>{}, 1111));
+    nodes.at(1).pushInput(Node::Input::NodeInfoRequest, Transfer(666, std::vector<std::uint8_t>{}, 1111));
     ts = std::chrono::microseconds{1'910'000};
     pres.poll(ts);
     for (const auto& n : nodes)

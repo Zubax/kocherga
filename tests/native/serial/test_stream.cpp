@@ -6,6 +6,6 @@
 #include "catch.hpp"
 #include <numeric>
 
-TEST_CASE("serial::Parser") {}
+TEST_CASE("serial::StreamParser") {}
 
 TEST_CASE("serial::transmit") {}

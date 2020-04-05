@@ -16,25 +16,17 @@ struct Transfer
 {
     std::optional<kocherga::NodeID> remote_node_id;
     kocherga::TransferID            transfer_id{};
-    std::vector<std::byte>          payload;
+    std::vector<std::uint8_t>       payload;
 
     Transfer() = default;
     Transfer(const kocherga::TransferID            arg_transfer_id,
-             const std::vector<std::byte>&         arg_payload,
+             const std::vector<std::uint8_t>&      arg_payload,
              const std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
         remote_node_id(arg_remote_node_id), transfer_id(arg_transfer_id), payload(arg_payload)
     {}
     Transfer(const kocherga::TransferID            arg_transfer_id,
-             const std::vector<std::uint8_t>&      arg_payload,
-             const std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
-        Transfer(arg_transfer_id,
-                 arg_payload.size(),
-                 reinterpret_cast<const std::byte*>(arg_payload.data()),
-                 arg_remote_node_id)
-    {}
-    Transfer(const kocherga::TransferID            arg_transfer_id,
              const std::size_t                     arg_payload_length,
-             const std::byte* const                arg_payload,
+             const std::uint8_t* const             arg_payload,
              const std::optional<kocherga::NodeID> arg_remote_node_id = std::optional<kocherga::NodeID>()) :
         remote_node_id(arg_remote_node_id), transfer_id(arg_transfer_id)
     {
@@ -111,8 +103,9 @@ private:
     void poll(kocherga::IReactor& reactor, const std::chrono::microseconds uptime) override
     {
         const auto proc = [&reactor, this](const Output ses, const kocherga::ServiceID service_id, const Transfer& tr) {
-            std::vector<std::byte> buffer(kocherga::MaxSerializedRepresentationSize);
-            const auto             size = reactor.processRequest(service_id,
+            std::vector<std::uint8_t> buffer(kocherga::MaxSerializedRepresentationSize);
+            //
+            const auto size = reactor.processRequest(static_cast<kocherga::PortID>(service_id),
                                                      *tr.remote_node_id,
                                                      tr.payload.size(),
                                                      tr.payload.data(),
@@ -157,7 +150,7 @@ private:
                                    const kocherga::NodeID     server_node_id,
                                    const kocherga::TransferID transfer_id,
                                    const std::size_t          payload_length,
-                                   const std::byte* const     payload) -> bool override
+                                   const std::uint8_t* const  payload) -> bool override
     {
         switch (service_id)
         {
@@ -178,21 +171,24 @@ private:
 
     void cancelRequest() override { request_canceled_ = true; }
 
-    void publishMessage(const kocherga::SubjectID  subject_id,
-                        const kocherga::TransferID transfer_id,
-                        const std::size_t          payload_length,
-                        const std::byte* const     payload) override
+    [[nodiscard]] auto publishMessage(const kocherga::SubjectID  subject_id,
+                                      const kocherga::TransferID transfer_id,
+                                      const std::size_t          payload_length,
+                                      const std::uint8_t* const  payload) -> bool override
     {
+        bool out = false;
         switch (subject_id)
         {
         case kocherga::SubjectID::NodeHeartbeat:
         {
             store(Output::HeartbeatMessage, Transfer(transfer_id, payload_length, payload));
+            out = true;
             break;
         }
         case kocherga::SubjectID::DiagnosticRecord:
         {
             store(Output::LogRecordMessage, Transfer(transfer_id, payload_length, payload));
+            out = true;
             break;
         }
         case kocherga::SubjectID::PnPNodeIDAllocationData:
@@ -203,6 +199,7 @@ private:
             break;
         }
         }
+        return out;
     }
 
     void store(const Output ses, const Transfer& tr)
