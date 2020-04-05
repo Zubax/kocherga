@@ -294,7 +294,7 @@ private:
 class AppLocator final
 {
 public:
-    AppLocator(const IROMBackend& backend, const std::uint32_t max_app_size) :
+    AppLocator(const IROMBackend& backend, const std::size_t max_app_size) :
         max_app_size_(max_app_size), backend_(backend)
     {}
 
@@ -329,7 +329,7 @@ private:
         static constexpr std::size_t MagicSize = 8U;
         static constexpr std::size_t CRCOffset = MagicSize;
 
-        [[nodiscard]] auto isValid(const std::uint32_t max_app_size) const -> bool
+        [[nodiscard]] auto isValid(const std::size_t max_app_size) const -> bool
         {
             return (magic == ReferenceMagic) && (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
                    ((app_info.image_size % MagicSize) == 0);
@@ -393,8 +393,8 @@ private:
 
     static constexpr std::size_t ROMBufferSize = 256;
 
-    const std::uint32_t max_app_size_;
-    const IROMBackend&  backend_;
+    const std::size_t  max_app_size_;
+    const IROMBackend& backend_;
 };
 
 /// These DSDL-derived definitions substitute for the lack of code generation.
