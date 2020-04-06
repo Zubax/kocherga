@@ -191,8 +191,8 @@ private:
             out = true;
             break;
         }
-        case kocherga::SubjectID::PnPNodeIDAllocationData:
-        case kocherga::SubjectID::PnPNodeIDAllocationDataMTU8:
+        case kocherga::SubjectID::PnPNodeIDAllocationData_v1:
+        case kocherga::SubjectID::PnPNodeIDAllocationData_v2:
         default:
         {
             FAIL("UNEXPECTED MESSAGE");

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kocherga.hpp"
+#include <cstdlib>
 
 namespace kocherga::serial
 {
@@ -334,7 +335,9 @@ public:
 class SerialNode : public kocherga::INode
 {
 public:
-    explicit SerialNode(ISerialPort& port) : port_(port) {}
+    SerialNode(ISerialPort& port, const SystemInfo::UniqueID& local_unique_id) :
+        unique_id_(local_unique_id), port_(port)
+    {}
 
     /// Resets the state of the frame parser. Call it when the communication channel is reinitialized.
     void reset() { stream_parser_.reset(); }
@@ -348,7 +351,7 @@ private:
             {
                 if (const auto tr = stream_parser_.update(*bt))
                 {
-                    processReceivedTransfer(reactor, uptime, *tr);
+                    processReceivedTransfer(reactor, *tr);
                 }
             }
             else
@@ -356,9 +359,26 @@ private:
                 break;
             }
         }
+
+        if ((!local_node_id_) && (uptime >= pnp_next_request_at_))
+        {
+            using kocherga::detail::dsdl::PnPNodeIDAllocation;
+            const std::chrono::microseconds delay{
+                std::rand() *
+                std::chrono::duration_cast<std::chrono::microseconds>(PnPNodeIDAllocation::MaxRequestInterval).count() /
+                RAND_MAX};
+            pnp_next_request_at_ = uptime + delay;
+            std::array<std::uint8_t, PnPNodeIDAllocation::MessageSize_v2> buf{};
+            std::uint8_t*                                                 ptr = buf.data();
+            *ptr++ = std::numeric_limits<std::uint8_t>::max();
+            *ptr++ = std::numeric_limits<std::uint8_t>::max();
+            (void) std::memcpy(ptr, unique_id_.data(), unique_id_.size());
+            (void) publishMessage(SubjectID::PnPNodeIDAllocationData_v2, pnp_transfer_id_, buf.size(), buf.data());
+            ++pnp_transfer_id_;
+        }
     }
 
-    void processReceivedTransfer(IReactor& reactor, const std::chrono::microseconds uptime, const detail::Transfer& tr)
+    void processReceivedTransfer(IReactor& reactor, const detail::Transfer& tr)
     {
         if (const auto resp_id = tr.meta.isResponse())
         {
@@ -397,7 +417,22 @@ private:
         }
         else
         {
-            (void) uptime;
+            if ((!local_node_id_) &&  // If node-ID is not yet allocated, check if this is an allocation response.
+                (tr.meta.data_spec == static_cast<PortID>(SubjectID::PnPNodeIDAllocationData_v2)) &&
+                (tr.meta.source == detail::Transfer::Metadata::AnonymousNodeID) &&
+                (tr.meta.destination == detail::Transfer::Metadata::AnonymousNodeID))
+            {
+                const std::uint8_t* ptr     = tr.payload;
+                NodeID              node_id = *ptr;
+                ++ptr;
+                node_id |= static_cast<NodeID>((*ptr) << detail::BitsPerByte);
+                ++ptr;
+                const bool uid_match = std::equal(std::begin(unique_id_), std::end(unique_id_), ptr);
+                if (uid_match)
+                {
+                    local_node_id_ = node_id;
+                }
+            }
         }
     }
 
@@ -459,10 +494,15 @@ private:
 
     static constexpr auto MaxBytesToProcessPerPoll = MaxSerializedRepresentationSize * 3U;
 
+    const SystemInfo::UniqueID unique_id_;
+
     ISerialPort&                                          port_;
     detail::StreamParser<MaxSerializedRepresentationSize> stream_parser_;
     std::optional<NodeID>                                 local_node_id_;
     std::optional<PendingRequestMetadata>                 pending_request_meta_;
+
+    std::chrono::microseconds pnp_next_request_at_{0};
+    std::uint64_t             pnp_transfer_id_ = 0;
 };
 
 }  // namespace kocherga::serial

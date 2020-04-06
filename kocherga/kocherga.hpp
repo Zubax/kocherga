@@ -24,10 +24,10 @@ using PortID     = std::uint16_t;
 /// UAVCAN subjects used by Kocherga.
 enum class SubjectID : PortID
 {
-    NodeHeartbeat               = 32'085,
-    PnPNodeIDAllocationData     = 32'741,
-    PnPNodeIDAllocationDataMTU8 = 32'742,
-    DiagnosticRecord            = 32'760,
+    NodeHeartbeat              = 32'085,
+    PnPNodeIDAllocationData_v2 = 32'741,
+    PnPNodeIDAllocationData_v1 = 32'742,
+    DiagnosticRecord           = 32'760,
 };
 
 /// UAVCAN services used by Kocherga.
@@ -86,8 +86,9 @@ struct SystemInfo
 {
     SemanticVersion hardware_version{};
 
-    static constexpr std::size_t          UIDCapacity = 16;
-    std::array<std::uint8_t, UIDCapacity> unique_id{};
+    static constexpr std::size_t UniqueIDSize = 16;
+    using UniqueID                            = std::array<std::uint8_t, UniqueIDSize>;
+    UniqueID unique_id{};
 
     const char* node_name = "";
 
@@ -467,6 +468,13 @@ struct File
 
         [[nodiscard]] auto isSuccessful() const { return data != nullptr; }
     };
+};
+
+struct PnPNodeIDAllocation
+{
+    static constexpr std::chrono::seconds MaxRequestInterval{2};
+
+    static constexpr std::size_t MessageSize_v2 = 18;
 };
 
 }  // namespace dsdl
