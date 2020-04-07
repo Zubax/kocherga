@@ -512,14 +512,16 @@ public:
         system_info_(system_info), nodes_{nodes}, controller_(controller)
     {}
 
-    auto trigger(const INode* const node, const NodeID file_server_node_id, const char* const app_image_file_path)
-        -> bool
+    auto trigger(const INode* const        node,
+                 const NodeID              file_server_node_id,
+                 const std::size_t         app_image_file_path_length,
+                 const std::uint8_t* const app_image_file_path) -> bool
     {
-        for (auto i = 0U; i < NumNodes; i++)
+        for (std::uint8_t i = 0U; i < NumNodes; i++)
         {
             if (nodes_.at(i) == node)
             {
-                beginUpdate(i, file_server_node_id, app_image_file_path);
+                beginUpdate(i, file_server_node_id, app_image_file_path_length, app_image_file_path);
                 return true;
             }
         }
@@ -527,10 +529,12 @@ public:
     }
 
     template <std::uint8_t NodeIndex>
-    void trigger(const NodeID file_server_node_id, const char* const app_image_file_path)
+    void trigger(const NodeID              file_server_node_id,
+                 const std::size_t         app_image_file_path_length,
+                 const std::uint8_t* const app_image_file_path)
     {
         static_assert(NodeIndex < NumNodes, "trigger<NodeIndex>(...): Node index out of range.");
-        beginUpdate(NodeIndex, file_server_node_id, app_image_file_path);
+        beginUpdate(NodeIndex, file_server_node_id, app_image_file_path_length, app_image_file_path);
     }
 
     void poll(const std::chrono::microseconds uptime)
