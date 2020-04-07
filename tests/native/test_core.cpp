@@ -455,7 +455,7 @@ TEST_CASE("Bootloader-trigger")
     // MANUAL UPDATE TRIGGER
     const auto path =
         reinterpret_cast<const std::uint8_t*>("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img");
-    bl.trigger<1>(0, 65, path);
+    bl.trigger<2>(2222, 65, path);
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
     REQUIRE(!bl.poll(1'100ms));
     REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal, 1));
@@ -466,23 +466,24 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(nodes.at(1).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(nodes.at(2).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
     //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img')))))
-    const auto received = *nodes.at(1).popOutput(Node::Output::FileReadRequest);
+    const auto received = *nodes.at(2).popOutput(Node::Output::FileReadRequest);
     const auto reference =
         Transfer(1,
                  {0,   0,   0,   0,   0,   65, 103, 111, 111, 100, 45,  108, 101, 45, 51,  114, 100, 45,
                   101, 110, 116, 114, 121, 45, 53,  46,  54,  46,  51,  51,  51,  51, 51,  51,  51,  51,
                   51,  51,  51,  51,  51,  51, 51,  51,  46,  54,  48,  99,  99,  57, 54,  52,  53,  54,
                   56,  98,  102, 98,  54,  98, 48,  44,  100, 105, 114, 116, 121, 46, 105, 109, 103},
-                 0);
+                 2222);
     std::cout << received.toString() << reference.toString() << std::endl;
     REQUIRE(received == reference);
 
     // READ RESPONSE
     // The serialized representation was constructed manually from the binary file:
     //      good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img
-    nodes.at(1).pushInput(Node::Input::FileReadResponse,
+    nodes.at(2).pushInput(Node::Input::FileReadResponse,
                           Transfer(0,
                                    {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 33,  32,
                                     32,  32,  32,  199, 196, 192, 111, 20,  21,  68,  94,  136, 122, 46,  208, 126, 177,
@@ -492,7 +493,7 @@ TEST_CASE("Bootloader-trigger")
                                     32,  105, 109, 97,  103, 101, 32,  103, 111, 101, 115, 32,  104, 101, 114, 101, 0,
                                     0,   0,   0,   0,   0,   0,   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
                                     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-                                   0));
+                                   2222));
     (void) bl.poll(1'300ms);  // Results will appear on the SECOND poll.
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'400ms));
@@ -514,6 +515,6 @@ TEST_CASE("Bootloader-trigger")
     // BAD TRIGGER, GOOD TRIGGER
     REQUIRE(bl.trigger(&nodes.at(0), 0, 65, path));
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
-    mock::Node stray_node;
+    const mock::Node stray_node;
     REQUIRE(!bl.trigger(&stray_node, 0, 65, path));
 }
