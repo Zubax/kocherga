@@ -63,7 +63,7 @@ struct Transfer
 {
     struct Metadata
     {
-        static constexpr std::uint8_t DefaultPriority      = 7U;  // Lowest.
+        static constexpr std::uint8_t DefaultPriority      = 6U;  // Second to lowest.
         static constexpr NodeID       AnonymousNodeID      = 0xFFFFU;
         static constexpr PortID       DataSpecServiceFlag  = 0x8000U;
         static constexpr PortID       DataSpecResponseFlag = 0x4000U;
@@ -363,10 +363,9 @@ private:
         if ((!local_node_id_) && (uptime >= pnp_next_request_at_))
         {
             using kocherga::detail::dsdl::PnPNodeIDAllocation;
-            const std::chrono::microseconds delay{
-                std::rand() *
-                std::chrono::duration_cast<std::chrono::microseconds>(PnPNodeIDAllocation::MaxRequestInterval).count() /
-                RAND_MAX};
+            constexpr std::int64_t interval_usec =
+                std::chrono::duration_cast<std::chrono::microseconds>(PnPNodeIDAllocation::MaxRequestInterval).count();
+            const std::chrono::microseconds delay{(std::rand() * interval_usec) / RAND_MAX};  // NOSONAR rand() ok
             pnp_next_request_at_ = uptime + delay;
             std::array<std::uint8_t, PnPNodeIDAllocation::MessageSize_v2> buf{};
             std::uint8_t*                                                 ptr = buf.data();
@@ -425,7 +424,7 @@ private:
                 const std::uint8_t* ptr     = tr.payload;
                 NodeID              node_id = *ptr;
                 ++ptr;
-                node_id |= static_cast<NodeID>((*ptr) << detail::BitsPerByte);
+                node_id |= static_cast<NodeID>(static_cast<NodeID>(*ptr) << detail::BitsPerByte);
                 ++ptr;
                 const bool uid_match = std::equal(std::begin(unique_id_), std::end(unique_id_), ptr);
                 if (uid_match)

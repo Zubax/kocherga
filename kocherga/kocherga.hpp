@@ -512,6 +512,27 @@ public:
         system_info_(system_info), nodes_{nodes}, controller_(controller)
     {}
 
+    auto trigger(const INode* const node, const NodeID file_server_node_id, const char* const app_image_file_path)
+        -> bool
+    {
+        for (auto i = 0U; i < NumNodes; i++)
+        {
+            if (nodes_.at(i) == node)
+            {
+                beginUpdate(i, file_server_node_id, app_image_file_path);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    template <std::uint8_t NodeIndex>
+    void trigger(const NodeID file_server_node_id, const char* const app_image_file_path)
+    {
+        static_assert(NodeIndex < NumNodes, "trigger<NodeIndex>(...): Node index out of range.");
+        beginUpdate(NodeIndex, file_server_node_id, app_image_file_path);
+    }
+
     void poll(const std::chrono::microseconds uptime)
     {
         last_poll_at_ = uptime;
@@ -526,11 +547,11 @@ public:
         if (file_loc_spec_)
         {
             FileLocationSpecifier& fls = *file_loc_spec_;
-            if (fls.response_deadline_ && (uptime > *fls.response_deadline_))
+            if (fls.response_deadline && (uptime > *fls.response_deadline))
             {
                 INode* const nd = nodes_.at(fls.local_node_index);
                 nd->cancelRequest();
-                fls.response_deadline_.reset();
+                fls.response_deadline.reset();
                 controller_.handleFileReadResult({});
             }
         }
@@ -565,19 +586,19 @@ public:
 
             static constexpr auto  length_minus_path = 6U;
             FileLocationSpecifier& fls               = *file_loc_spec_;
-            buf.at(length_minus_path - 1U)           = fls.path_length;
+            buf.at(length_minus_path - 1U)           = static_cast<std::uint8_t>(fls.path_length);
             (void) std::memmove(&buf.at(length_minus_path), fls.path.data(), fls.path_length);
             INode* const node = nodes_.at(fls.local_node_index);
 
-            fls.read_transfer_id++;
+            read_transfer_id_++;
             const bool out = node->sendRequest(ServiceID::FileRead,
                                                fls.server_node_id,
-                                               fls.read_transfer_id,
+                                               read_transfer_id_,
                                                fls.path_length + length_minus_path,
                                                buf.data());
             if (out)
             {
-                fls.response_deadline_ = last_poll_at_ + ServiceResponseTimeout;
+                fls.response_deadline = last_poll_at_ + ServiceResponseTimeout;
             }
             return out;
         }
@@ -660,16 +681,9 @@ private:
             }
             else if (command == static_cast<std::uint16_t>(dsdl::ExecuteCommand::Command::BeginSoftwareUpdate))
             {
-                controller_.beginUpdate();
-                FileLocationSpecifier fls{};
-                fls.local_node_index = current_node_index_;
-                fls.server_node_id   = client_node_id;
-                fls.path_length =
-                    static_cast<std::uint8_t>(std::min(static_cast<std::size_t>(*ptr), std::size(fls.path)));
-                ++ptr;
-                (void) std::memmove(fls.path.data(), ptr, fls.path_length);
-                file_loc_spec_ = fls;
-                result         = dsdl::ExecuteCommand::Status::Success;
+                const std::size_t path_length = *ptr++;
+                beginUpdate(current_node_index_, client_node_id, path_length, ptr);
+                result = dsdl::ExecuteCommand::Status::Success;
             }
             else
             {
@@ -752,9 +766,9 @@ private:
         if (file_loc_spec_ && (response_length >= dsdl::File::ReadResponseSizeMin))
         {
             FileLocationSpecifier& fls = *file_loc_spec_;
-            if (fls.response_deadline_ && (fls.local_node_index == current_node_index_))
+            if (fls.response_deadline && (fls.local_node_index == current_node_index_))
             {
-                fls.response_deadline_.reset();
+                fls.response_deadline.reset();
                 static const std::array<std::uint8_t, 2> zero_error{};
                 std::optional<dsdl::File::ReadResponse>  argument;
                 if (std::equal(std::begin(zero_error), std::end(zero_error), response))  // Error = OK
@@ -801,11 +815,30 @@ private:
     {
         std::uint8_t                                       local_node_index{};
         NodeID                                             server_node_id{};
-        TransferID                                         read_transfer_id{};
-        std::uint8_t                                       path_length{};
+        std::size_t                                        path_length{};
         std::array<std::uint8_t, dsdl::File::PathCapacity> path{};
-        std::optional<std::chrono::microseconds>           response_deadline_{};
+        std::optional<std::chrono::microseconds>           response_deadline{};
     };
+
+    void beginUpdate(const std::uint8_t        local_node_index,
+                     const NodeID              file_server_node_id,
+                     const std::size_t         app_image_file_path_length,
+                     const std::uint8_t* const app_image_file_path)
+    {
+        FileLocationSpecifier fls{};
+        fls.local_node_index = local_node_index;
+        fls.server_node_id   = file_server_node_id;
+        fls.path_length      = std::min(app_image_file_path_length, std::size(fls.path));
+        (void) std::memmove(fls.path.data(), app_image_file_path, fls.path_length);
+
+        if (file_loc_spec_ && file_loc_spec_->response_deadline)
+        {
+            nodes_.at(file_loc_spec_->local_node_index)->cancelRequest();
+        }
+        file_loc_spec_      = fls;
+        current_node_index_ = fls.local_node_index;
+        controller_.beginUpdate();
+    }
 
     const SystemInfo                   system_info_;
     const std::array<INode*, NumNodes> nodes_;
@@ -816,6 +849,7 @@ private:
     std::uint8_t current_node_index_ = 0;
 
     std::optional<FileLocationSpecifier> file_loc_spec_;
+    TransferID                           read_transfer_id_ = 0;
 
     TransferID tid_heartbeat_  = 0;
     TransferID tid_log_record_ = 0;
@@ -965,6 +999,27 @@ public:
         }
 
         return final_;
+    }
+
+    /// Manual trigger: commence the application update process without waiting for an external node to trigger it.
+    /// This is normally used when the application commands the bootloader to begin the update directly.
+    /// Returns false if the node is not among those passed to the constructor; otherwise true.
+    /// The path is truncated if too long.
+    auto trigger(const INode* const        node,
+                 const NodeID              file_server_node_id,
+                 const std::size_t         app_image_file_path_length,
+                 const std::uint8_t* const app_image_file_path) -> bool
+    {
+        return presentation_.trigger(node, file_server_node_id, app_image_file_path_length, app_image_file_path);
+    }
+
+    /// Like the overload, but the node is specified by index at compile time, so the call cannot fail at runtime.
+    template <std::uint8_t NodeIndex>
+    void trigger(const NodeID              file_server_node_id,
+                 const std::size_t         app_image_file_path_length,
+                 const std::uint8_t* const app_image_file_path)
+    {
+        presentation_.template trigger<NodeIndex>(file_server_node_id, app_image_file_path_length, app_image_file_path);
     }
 
     /// Returns the information about the installed application, if there is one. Otherwise, returns an empty option.
