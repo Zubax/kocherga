@@ -13,7 +13,7 @@ cd "${0%/*}" || die "Couldn't cd into this script's directory"
 
 SCRIPT=../../tools/kocherga_image.py
 
-$SCRIPT self-test || die "Self-test unsuccesful"
+$SCRIPT self-test || die "Self-test unsuccessful"
 echo
 
 $SCRIPT demo-le.bin -vv --assign-vcs-commit=0xbadc_0ffe_e0dd_f00d --assign-dirty=1

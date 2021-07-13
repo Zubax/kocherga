@@ -12,6 +12,7 @@
       <w>ffee</w>
       <w>ffff</w>
       <w>gcov</w>
+      <w>kirienko</w>
       <w>kocherga</w>
       <w>kochergá</w>
       <w>nosonar</w>
@@ -20,8 +21,10 @@
       <w>pyuavcan</w>
       <w>sidrane</w>
       <w>telega</w>
+      <w>uavcan</w>
       <w>vcan</w>
       <w>vssc</w>
+      <w>zubax</w>
     </words>
   </dictionary>
 </component>
