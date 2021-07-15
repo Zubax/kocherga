@@ -40,38 +40,55 @@ boot-up time. The definition of the application descriptor data structure is giv
 The byte order is native for the target platform; external tools can determine it by checking the value of the magic.
 If the image contains more than one descriptor, only that which is located at the lower offset will be used.
 
-    uint64 magic        # Constant value used for locating the descriptor and detecting the byte order.
-    uint64 image_crc    # Shall be set to zero when building the image.
-    uint64 image_size   # Shall be set to zero when building the image.
-    uint64 vcs_commit   # The version control system revision identifier, e.g., a git hash.
-    void32
-    bool debug_build    # Set if this is a debug image, not a released one.
-    bool dirty_build    # Set if the image is built from an uncommitted revision of the sources.
-    void14
+    uint64   magic                  # Constant value used for locating the descriptor and detecting the byte order.
+    uint8[8] signature              # Set to "APDesc00"; used for compatibility with legacy deployments.
+    uint64   image_crc64we          # Shall be set to zero when building the image.
+    uint32   image_size             # Shall be set to zero when building the image.
+    void32                          # Used to contain 32-bit vcs_revision_id, now deprecated; see replacement below.
     uint8[2] version_major_minor
+    uint8    flags                  # See below.
+    void8
+    uint32   timestamp_utc          # UTC UNIX timestamp when the application was built.
+    uint64   vcs_revision_id        # The version control system revision identifier, e.g., a git hash.
+    void64
+    void64
 
-    uint64 MAGIC = 0x5E44_1514_6FC0_C4C7  # A random magic number. Used for byte order detection.
+    uint8 FLAG_RELEASE = 1          # Set if this is a release build, not debug.
+    uint8 FLAG_DIRTY   = 2          # Set if the image is built from an uncommitted revision of the sources.
+
+    uint64 MAGIC = 0x5E4415146FC0C4C7
+
+In the hex editor, the structure appears as follows:
+
+      | 01234567 89ABCDEF
+    --+
+     0| MMMMMMMM AAAAAAAA
+    16| CCCCCCCC SSSS----
+    32| JNF-TTTT VVVVVVVV
+    48| -------- --------
+    64| -------- --------
 
 Every field except image size and image CRC can be set either at compile time or by this script. By default, the
 script only sets the size and the CRC, leaving all other fields at their original values; the user can specify which
 other fields to overwrite by setting the appropriate command-line options when invoking the script.
 
-The image size and image CRC shall be zeroed at compile time (this implies that the magic shall be followed by
-16 zero bytes); the values will be assigned by this script always. Structures where these fields are non-zero are
-ignored by the script (considered invalid) in order to support the use case where images containing valid magics
-are nested (e.g., when the application image contains a bootloader image).
+The image size and image CRC shall be zeroed at compile time (this implies that the magic with the signature
+shall be followed by 12 zero bytes); the values will be assigned by this script always.
+Structures where these fields are non-zero are ignored by the script (considered invalid) in order to support the
+use case where images containing valid magics are nested (e.g., when the application image contains a bootloader image).
 
 The script does not modify the source image file; instead, it copies the data into a new file which is named using
 the following naming convention:
-    <basename>-<major>.<minor>.<commit>.<crc>[,flag[,flag...]].app.bin
+    <basename>-<major>.<minor>.<revision>.<crc>.app[.flag[.flag[.flag]]].bin
 Where:
-    basename     -- the name of the input file without extension.
+    basename     -- the name of the input file without extension (may contain "-" as well).
     major, minor -- application version number pair in the output descriptor (decimal).
-    commit       -- the VCS commit in the output descriptor (hexadecimal, 16 chars).
+    revision     -- the VCS revision ID in the output descriptor (hexadecimal, 16 chars).
     crc          -- the image CRC; it is also the unique identifier of this build (hexadecimal, 16 chars).
-    flag         -- comma-separated flag names: 'dirty', 'debug', etc.
+    flag         -- list of flag names: 'dirty', etc.
 For example, an input file named 'com.zubax.telega-1.bin' results in:
-    com.zubax.telega-1-1.2.1122334455667788.1122334455667788,dirty,debug.app.bin
+    com.zubax.telega-1-1.2.1122334455667788.1122334455667788.app.release.dirty.bin
+This format is compatible with the automatic firmware update server implemented in the Yakut CLI tool.
 
 The script can be requested to copy the same descriptor into additional files. In this case, it would re-use the same
 descriptor instead of computing it anew for every additional file. This feature is designed for patching ELF files
@@ -79,17 +96,16 @@ after linking to simplify debugging: after an ELF file is patched in this way, i
 target and it will boot successfully by virtue of having the correct application descriptor copied over from the raw
 binary image. This procedure is called "side-patching".
 
-This script has no external dependencies. The minimal required version of Python is 3.7.
-The script can be used as a module as well.
+This script has no external dependencies. The script can be used as a module as well.
 """
 
+from __future__ import annotations
 import os
 import sys
 import typing
 import struct
 import logging
 import argparse
-import operator
 import functools
 import dataclasses
 
@@ -99,63 +115,65 @@ _logger = logging.getLogger(__name__)
 @dataclasses.dataclass
 class Flags:
     # The flags shall be listed here from the least significant bit upwards. The serialization is automated.
-    debug: bool
+    release: bool
     dirty: bool
 
     def pack(self) -> int:
-        return functools.reduce(operator.or_,
+        return functools.reduce(lambda a, b: a | b,
                                 ((1 << i) for i, f in enumerate(dataclasses.fields(self)) if getattr(self, f.name)),
                                 0)
 
     @staticmethod
-    def unpack(value: int) -> 'Flags':
+    def unpack(value: int) -> Flags:
         return Flags(**{
             f.name: (value & (1 << idx)) != 0
             for idx, f in enumerate(dataclasses.fields(Flags))
         })
 
-    def __str__(self) -> str:
-        return ','.join(f.name for f in dataclasses.fields(self) if getattr(self, f.name))
-
 
 @dataclasses.dataclass
 class AppDescriptor:
-    SIZE = 40
+    SIZE = 64
     ALIGNMENT = 8
     MAGIC = 0x5E44_1514_6FC0_C4C7
+    SIGNATURE = b'APDesc00'
 
     image_crc: int
     image_size: int
-    vcs_commit: int
-    flags: Flags
     version: typing.Tuple[int, int]
+    flags: Flags
+    timestamp_utc: int
+    vcs_revision_id: int
 
     def pack(self, byte_order: str) -> bytes:
         return self._get_marshaller(byte_order).pack(
             self.MAGIC,
+            self.SIGNATURE,
             self.image_crc,
             self.image_size,
-            self.vcs_commit,
-            self.flags.pack(),
             *self.version,
+            self.flags.pack(),
+            self.timestamp_utc,
+            self.vcs_revision_id,
         )
 
     @staticmethod
     def unpack_from(image: typing.Union[bytes, bytearray, memoryview],
                     byte_order: str,
-                    offset: int = 0) -> typing.Optional['AppDescriptor']:
+                    offset: int = 0) -> typing.Optional[AppDescriptor]:
         try:
-            magic, image_crc, image_size, vcs_commit, flags, v_major, v_minor \
+            magic, signature, image_crc, image_size, v_major, v_minor, flags, ts_utc, vcs_revision_id \
                 = AppDescriptor._get_marshaller(byte_order).unpack_from(image, offset)
         except struct.error:
             return None
         return AppDescriptor(
             image_crc=image_crc,
             image_size=image_size,
-            vcs_commit=vcs_commit,
-            flags=Flags.unpack(flags),
             version=(v_major, v_minor),
-        ) if magic == AppDescriptor.MAGIC else None
+            flags=Flags.unpack(flags),
+            timestamp_utc=ts_utc,
+            vcs_revision_id=vcs_revision_id,
+        ) if magic == AppDescriptor.MAGIC and signature == AppDescriptor.SIGNATURE else None
 
     @staticmethod
     def get_search_prefix(byte_order: str, uninitialized_only: bool = False) -> bytes:
@@ -164,20 +182,21 @@ class AppDescriptor:
         If the uninitialized_only flag is set, the search prefix will match only unpopulated descriptors where
         the CRC and the size are zero. Otherwise, any descriptor will match.
         """
-        return AppDescriptor.MAGIC.to_bytes(8, byte_order) + (bytes(8) * 2 if uninitialized_only else b'')
+        tail = bytes(12) if uninitialized_only else b''
+        return AppDescriptor.MAGIC.to_bytes(8, byte_order) + AppDescriptor.SIGNATURE + tail
 
     @staticmethod
     def _get_marshaller(byte_order: str) -> struct.Struct:
         byte_order = {'big': '>', 'little': '<'}[byte_order]
-        out = struct.Struct(byte_order + 'Q QQQ 4x H BB')
+        out = struct.Struct(byte_order + 'Q 8s Q L 4x BB B x L Q 16x')
         assert out.size == AppDescriptor.SIZE
         return out
 
     def __str__(self) -> str:
-        out = f'{self.version[0]}.{self.version[1]}.{self.vcs_commit:016x}.{self.image_crc:016x}'
-        flags = str(self.flags)
-        if flags:
-            out += ',' + flags
+        out = f'{self.version[0]}.{self.version[1]}.{self.vcs_revision_id:016x}.{self.image_crc:016x}.app'
+        for flag, value in dataclasses.asdict(self.flags).items():
+            if value:
+                out += f".{flag}"
         return out
 
 
@@ -244,7 +263,7 @@ class ImageModel:
 
     @staticmethod
     def construct_from_image(image: typing.Union[memoryview, bytes, bytearray],
-                             uninitialized_only: bool = False) -> typing.Optional['ImageModel']:
+                             uninitialized_only: bool = False) -> typing.Optional[ImageModel]:
         """
         The byte order will be detected automatically.
         :param image: The source application image.
@@ -337,7 +356,7 @@ class CRCComputer:
         assert len(self._TABLE) == 256
         self._crc = 0
 
-    def add(self, data: typing.Iterable[int]) -> 'CRCComputer':
+    def add(self, data: typing.Iterable[int]) -> CRCComputer:
         mask = self._MASK
         val = self._crc ^ mask
         table = self._TABLE
@@ -359,7 +378,7 @@ def _parse_version(x: str) -> typing.Tuple[int, int]:
 
 def _get_output_file_name(input_file_name: str, descriptor: AppDescriptor) -> str:
     base_stem = os.path.basename(input_file_name).rsplit('.', 1)[0]
-    return f'{base_stem}-{descriptor}.app.bin'
+    return f'{base_stem}-{descriptor}.bin'
 
 
 def _main() -> int:
@@ -368,24 +387,23 @@ def _main() -> int:
                         metavar='PATH',
                         help='The name of the firmware image binary file where the descriptor should be written. '
                              'Use the special value "self-test" to run the self-test and exit immediately afterwards.')
-
     # Field setter options.
-    parser.add_argument('--assign-vcs-commit', type=lambda x: int(x, 0), metavar='VCS_COMMIT',
-                        help='Overwrite the VCS commit field. Hexadecimals accepted if prefixed with "0x".')
     parser.add_argument('--assign-version', type=_parse_version, metavar='MAJOR.MINOR',
                         help='Overwrite the version fields, major and minor. Values can be dot- or comma-separated.')
-    parser.add_argument('--assign-debug', type=int, metavar='FLAG',
-                        help='Overwrite the debug build flag in the app descriptor.')
-    parser.add_argument('--assign-dirty', type=int, metavar='FLAG',
+    parser.add_argument('--assign-flag-release', type=int, metavar='FLAG',
+                        help='Overwrite the release build flag in the app descriptor.')
+    parser.add_argument('--assign-flag-dirty', type=int, metavar='FLAG',
                         help='Overwrite the dirty build flag in the app descriptor.')
-
+    parser.add_argument('--assign-timestamp', type=lambda x: int(x, 0), metavar='TIMESTAMP',
+                        help='Overwrite the build timestamp. The value should be a UNIX timestamp in UTC.')
+    parser.add_argument('--assign-vcs-revision-id', type=lambda x: int(x, 0), metavar='VCS_REVISION_ID',
+                        help='Overwrite the VCS revision ID field. Hexadecimals accepted if prefixed with "0x".')
     # Other options.
     parser.add_argument('--verbose', '-v', action='count', default=0,
                         help='Enable verbose output. Twice for extra verbosity.')
     parser.add_argument('--side-patch', default=[], action='append', metavar='PATH',
                         help='File(s) where the same descriptor will be copied into (e.g., ELF executables). '
                              'Use multiple times to patch several files at once.')
-
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -413,16 +431,18 @@ def _main() -> int:
     # Populate the fields as requested. The size and CRC are managed automatically by the image model class.
     desc = model.app_descriptor
     _logger.debug(f'Original app descriptor: {desc!r}')
-    if args.assign_vcs_commit is not None:
-        desc.vcs_commit = int(args.assign_vcs_commit)
     if args.assign_version is not None:
         assert len(args.assign_version) == 2
         assert isinstance(args.assign_version[0], int) and isinstance(args.assign_version[1], int)
         desc.version = args.assign_version
-    if args.assign_debug is not None:
-        desc.flags.debug = bool(args.assign_debug)
-    if args.assign_dirty is not None:
-        desc.flags.dirty = bool(args.assign_dirty)
+    if args.assign_flag_release is not None:
+        desc.flags.release = bool(args.assign_flag_release)
+    if args.assign_flag_dirty is not None:
+        desc.flags.dirty = bool(args.assign_flag_dirty)
+    if args.assign_timestamp is not None:
+        desc.timestamp_utc = int(args.assign_timestamp)
+    if args.assign_vcs_revision_id is not None:
+        desc.vcs_revision_id = int(args.assign_vcs_revision_id)
 
     # Update the image and recompute the CRC with the new fields in the descriptor.
     model.app_descriptor = desc
@@ -470,115 +490,143 @@ def _test() -> None:
     else:
         assert False
 
-    assert Flags(debug=False, dirty=False).pack() == 0
-    assert Flags(debug=True, dirty=False).pack() == 1
-    assert Flags(debug=False, dirty=True).pack() == 2
-    assert Flags(debug=True, dirty=True).pack() == 3
-    assert Flags.unpack(0) == Flags(debug=False, dirty=False)
-    assert Flags.unpack(1) == Flags(debug=True, dirty=False)
-    assert Flags.unpack(2) == Flags(debug=False, dirty=True)
-    assert Flags.unpack(3) == Flags(debug=True, dirty=True)
-    assert str(Flags(debug=False, dirty=False)) == ''
-    assert str(Flags(debug=True, dirty=False)) == 'debug'
-    assert str(Flags(debug=False, dirty=True)) == 'dirty'
-    assert str(Flags(debug=True, dirty=True)) == 'debug,dirty'
+    assert Flags(release=False, dirty=False).pack() == 0
+    assert Flags(release=True, dirty=False).pack() == 1
+    assert Flags(release=False, dirty=True).pack() == 2
+    assert Flags(release=True, dirty=True).pack() == 3
+    assert Flags.unpack(0) == Flags(release=False, dirty=False)
+    assert Flags.unpack(1) == Flags(release=True, dirty=False)
+    assert Flags.unpack(2) == Flags(release=False, dirty=True)
+    assert Flags.unpack(3) == Flags(release=True, dirty=True)
 
     desc = AppDescriptor(
         image_crc=0,
         image_size=0,
-        vcs_commit=0,
-        flags=Flags.unpack(0),
         version=(0, 0),
+        flags=Flags.unpack(0),
+        timestamp_utc=0,
+        vcs_revision_id=0,
     )
-    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') +
-            (0).to_bytes(8, 'little') +
-            (0).to_bytes(8, 'little') +
-            (0).to_bytes(8, 'little') +
+    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') + b"APDesc00" +
+            (0).to_bytes(8, 'little') +             # CRC
+            (0).to_bytes(4, 'little') +             # Size
             bytes(4) +
-            (0).to_bytes(2, 'little') +
-            bytes([0, 0]) == desc.pack('little'))
+            bytes([0, 0]) +                         # Version
+            bytes([0]) +                            # Flags
+            bytes(1) +
+            (0).to_bytes(4, 'little') +             # Timestamp
+            (0).to_bytes(8, 'little') +             # Revision
+            bytes(16)
+            == desc.pack('little'))
     desc.image_crc = 0xdeadbeef_0ddc0ffe
     desc.image_size = 0xaabbccdd
-    desc.vcs_commit = 0x1122334455667788
-    desc.flags.dirty = True
     desc.version = 42, 95
-    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') +
-            0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +
-            0xaabbccdd.to_bytes(8, 'little') +
-            0x1122334455667788.to_bytes(8, 'little') +
+    desc.flags.dirty = True
+    desc.timestamp_utc = 1234567890
+    desc.vcs_revision_id = 0x1122334455667788
+    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') + b"APDesc00" +
+            0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +     # CRC
+            0xaabbccdd.to_bytes(4, 'little') +              # Size
             bytes(4) +
-            (2).to_bytes(2, 'little') +
-            bytes([42, 95]) == desc.pack('little'))
-    assert (AppDescriptor.MAGIC.to_bytes(8, 'big') +
-            0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +
-            0xaabbccdd.to_bytes(8, 'big') +
-            0x1122334455667788.to_bytes(8, 'big') +
+            bytes([42, 95]) +                               # Version
+            bytes([2]) +                                    # Flags
+            bytes(1) +
+            (1234567890).to_bytes(4, 'little') +            # Timestamp
+            0x1122334455667788.to_bytes(8, 'little') +      # Revision
+            bytes(16)
+            == desc.pack('little'))
+    assert (AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+            0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +        # CRC
+            0xaabbccdd.to_bytes(4, 'big') +                 # Size
             bytes(4) +
-            (2).to_bytes(2, 'big') +
-            bytes([42, 95]) == desc.pack('big'))
+            bytes([42, 95]) +                               # Version
+            bytes([2]) +                                    # Flags
+            bytes(1) +
+            (1234567890).to_bytes(4, 'big') +               # Timestamp
+            0x1122334455667788.to_bytes(8, 'big') +         # Revision
+            bytes(16)
+            == desc.pack('big'))
 
     desc = AppDescriptor.unpack_from(
-        AppDescriptor.MAGIC.to_bytes(8, 'little') +
-        0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +
-        0xaabbccdd.to_bytes(8, 'little') +
-        0x1122334455667788.to_bytes(8, 'little') +
+        AppDescriptor.MAGIC.to_bytes(8, 'little') + b"APDesc00" +
+        0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +     # CRC
+        0xaabbccdd.to_bytes(4, 'little') +              # Size
         bytes(4) +
-        (2).to_bytes(2, 'little') +
-        bytes([42, 95]),
+        bytes([42, 95]) +                               # Version
+        bytes([2]) +                                    # Flags
+        bytes(1) +
+        (1234567890).to_bytes(4, 'little') +            # Timestamp
+        0x1122334455667788.to_bytes(8, 'little') +      # Revision
+        bytes(16),
         'little',
     )
     assert desc.image_crc == 0xdeadbeef_0ddc0ffe
     assert desc.image_size == 0xaabbccdd
-    assert desc.vcs_commit == 0x1122334455667788
-    assert not desc.flags.debug
-    assert desc.flags.dirty
     assert desc.version == (42, 95)
+    assert not desc.flags.release
+    assert desc.flags.dirty
+    assert desc.timestamp_utc == 1234567890
+    assert desc.vcs_revision_id == 0x1122334455667788
 
     desc = AppDescriptor.unpack_from(
-        AppDescriptor.MAGIC.to_bytes(8, 'big') +
-        0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +
-        0xaabbccdd.to_bytes(8, 'big') +
-        0x1122334455667788.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+        0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +        # CRC
+        0xaabbccdd.to_bytes(4, 'big') +                 # Size
         bytes(4) +
-        (2).to_bytes(2, 'big') +
-        bytes([42, 95]),
+        bytes([42, 95]) +                               # Version
+        bytes([2]) +                                    # Flags
+        bytes(1) +
+        (1234567890).to_bytes(4, 'big') +               # Timestamp
+        0x1122334455667788.to_bytes(8, 'big') +         # Revision
+        bytes(16),
         'big',
     )
     assert desc.image_crc == 0xdeadbeef_0ddc0ffe
     assert desc.image_size == 0xaabbccdd
-    assert desc.vcs_commit == 0x1122334455667788
-    assert not desc.flags.debug
-    assert desc.flags.dirty
     assert desc.version == (42, 95)
+    assert not desc.flags.release
+    assert desc.flags.dirty
+    assert desc.timestamp_utc == 1234567890
+    assert desc.vcs_revision_id == 0x1122334455667788
 
     assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, 'big'), 'big')
+    assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, 'little') + AppDescriptor.SIGNATURE, 'little')
 
-    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe,dirty'
+    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe.app.dirty'
     desc.flags.dirty = False
-    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe'
+    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe.app'
+    desc.flags.dirty = True
+    desc.flags.release = True
+    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe.app.release.dirty'
 
     im = ImageModel.construct_from_image(
         b'BEFORE MODEL    ' +
-        AppDescriptor.MAGIC.to_bytes(8, 'big') +
-        (0).to_bytes(8, 'big') +  # CRC
-        (0).to_bytes(8, 'big') +  # Size
-        0x1122334455667788.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+        (0).to_bytes(8, 'big') +                        # CRC
+        (0).to_bytes(4, 'big') +                        # Size
         bytes(4) +
-        (2).to_bytes(2, 'big') +
-        bytes([42, 95]) +
+        bytes([42, 95]) +                               # Version
+        bytes([2]) +                                    # Flags
+        bytes(1) +
+        (1234567890).to_bytes(4, 'big') +               # Timestamp
+        0x1122334455667788.to_bytes(8, 'big') +         # Revision
+        bytes(16) +
         b'AFTER MODEL',
         uninitialized_only=True,
     )
     assert im
     crc = CRCComputer().add(
         b'BEFORE MODEL    ' +
-        AppDescriptor.MAGIC.to_bytes(8, 'big') +
-        (0).to_bytes(8, 'big') +  # CRC
-        (72).to_bytes(8, 'big') +  # Size
-        0x1122334455667788.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+        (0).to_bytes(8, 'big') +                        # CRC
+        (96).to_bytes(4, 'big') +                       # Size
         bytes(4) +
-        (2).to_bytes(2, 'big') +
-        bytes([42, 95]) +
+        bytes([42, 95]) +                               # Version
+        bytes([2]) +                                    # Flags
+        bytes(1) +
+        (1234567890).to_bytes(4, 'big') +               # Timestamp
+        0x1122334455667788.to_bytes(8, 'big') +         # Revision
+        bytes(16) +
         b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5
     ).value
     assert im.byte_order == 'big'
@@ -586,61 +634,72 @@ def _test() -> None:
     assert im.app_descriptor == AppDescriptor(
         image_crc=0,
         image_size=0,
-        vcs_commit=0x1122334455667788,
-        flags=Flags.unpack(2),
         version=(42, 95),
+        flags=Flags.unpack(2),
+        timestamp_utc=1234567890,
+        vcs_revision_id=0x1122334455667788,
     )
     assert not im.validate_app_descriptor()
     im.update()
     assert im.validate_app_descriptor()
     assert im.app_descriptor == AppDescriptor(
         image_crc=crc,
-        image_size=72,
-        vcs_commit=0x1122334455667788,
-        flags=Flags.unpack(2),
+        image_size=96,
         version=(42, 95),
+        flags=Flags.unpack(2),
+        timestamp_utc=1234567890,
+        vcs_revision_id=0x1122334455667788,
     )
     assert (b'BEFORE MODEL    ' +
-            AppDescriptor.MAGIC.to_bytes(8, 'big') +
-            crc.to_bytes(8, 'big') +  # CRC
-            (72).to_bytes(8, 'big') +  # Size
-            0x1122334455667788.to_bytes(8, 'big') +
+            AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+            crc.to_bytes(8, 'big') +                        # CRC
+            (96).to_bytes(4, 'big') +                       # Size
             bytes(4) +
-            (2).to_bytes(2, 'big') +
-            bytes([42, 95]) +
+            bytes([42, 95]) +                               # Version
+            bytes([2]) +                                    # Flags
+            bytes(1) +
+            (1234567890).to_bytes(4, 'big') +               # Timestamp
+            0x1122334455667788.to_bytes(8, 'big') +         # Revision
+            bytes(16) +
             b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5) == im.image
     desc = im.app_descriptor
     desc.version = 1, 5
-    desc.flags.debug = True
+    desc.flags.release = True
     im.app_descriptor = desc
     assert not im.validate_app_descriptor()
     im.update()
     assert im.validate_app_descriptor()
     crc = CRCComputer().add(
         b'BEFORE MODEL    ' +
-        AppDescriptor.MAGIC.to_bytes(8, 'big') +
-        (0).to_bytes(8, 'big') +  # CRC
-        (72).to_bytes(8, 'big') +  # Size
-        0x1122334455667788.to_bytes(8, 'big') +
+        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+        (0).to_bytes(8, 'big') +                            # CRC
+        (96).to_bytes(4, 'big') +                           # Size
         bytes(4) +
-        (3).to_bytes(2, 'big') +
-        bytes([1, 5]) +
+        bytes([1, 5]) +                                     # Version
+        bytes([3]) +                                        # Flags
+        bytes(1) +
+        (1234567890).to_bytes(4, 'big') +                   # Timestamp
+        0x1122334455667788.to_bytes(8, 'big') +             # Revision
+        bytes(16) +
         b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5
     ).value
     assert (b'BEFORE MODEL    ' +
-            AppDescriptor.MAGIC.to_bytes(8, 'big') +
-            crc.to_bytes(8, 'big') +  # CRC
-            (72).to_bytes(8, 'big') +  # Size
-            0x1122334455667788.to_bytes(8, 'big') +
+            AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
+            crc.to_bytes(8, 'big') +                        # CRC
+            (96).to_bytes(4, 'big') +                       # Size
             bytes(4) +
-            (3).to_bytes(2, 'big') +
-            bytes([1, 5]) +
+            bytes([1, 5]) +                                 # Version
+            bytes([3]) +                                    # Flags
+            bytes(1) +
+            (1234567890).to_bytes(4, 'big') +               # Timestamp
+            0x1122334455667788.to_bytes(8, 'big') +         # Revision
+            bytes(16) +
             b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5) == im.image
 
     assert _get_output_file_name(
         'firmware-1.bin',
         desc,
-    ) == f'firmware-1-1.5.1122334455667788.{desc.image_crc:016x},debug,dirty.app.bin'
+    ) == f'firmware-1-1.5.1122334455667788.{desc.image_crc:016x}.app.release.dirty.bin'
 
 
 if __name__ == '__main__':
