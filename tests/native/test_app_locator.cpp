@@ -10,7 +10,7 @@
 TEST_CASE("AppLocator-good-simple")
 {
     const util::FileROMBackend rom(
-        util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img"));
+        util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin"));
 
     const kocherga::detail::AppLocator loc_ok(rom, 1024U);
 
@@ -32,7 +32,7 @@ TEST_CASE("AppLocator-good-simple")
 TEST_CASE("AppLocator-good-3rd-entry")
 {
     const util::FileROMBackend rom(
-        util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img"));
+        util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin"));
 
     const kocherga::detail::AppLocator loc_ok(rom, 1024U);
 
@@ -53,14 +53,14 @@ TEST_CASE("AppLocator-good-3rd-entry")
 
 TEST_CASE("AppLocator-bad-crc-x3")
 {
-    const util::FileROMBackend rom(util::getImagePath("bad-le-crc-x3.img"));
+    const util::FileROMBackend rom(util::getImagePath("bad-le-crc-x3.bin"));
     REQUIRE(!kocherga::detail::AppLocator(rom, 1024U).identifyApplication());
     REQUIRE(!kocherga::detail::AppLocator(rom, 100U).identifyApplication());
 }
 
 TEST_CASE("AppLocator-bad-short")
 {
-    const util::FileROMBackend rom(util::getImagePath("bad-le-short.img"));
+    const util::FileROMBackend rom(util::getImagePath("bad-le-short.bin"));
     REQUIRE(!kocherga::detail::AppLocator(rom, 1024U).identifyApplication());
     REQUIRE(!kocherga::detail::AppLocator(rom, 10U).identifyApplication());
 }

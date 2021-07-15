@@ -65,7 +65,7 @@ TEST_CASE("Bootloader-fast-boot")
     using std::chrono_literals::operator""ms;
 
     const auto           sys = getSysInfo();
-    const auto           img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img");
+    const auto           img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
     util::FileROMBackend rom(img);
     std::array<mock::Node, 3> nodes;
     kocherga::Bootloader<3>   bl(rom,
@@ -92,7 +92,7 @@ TEST_CASE("Bootloader-boot-delay")
     using std::chrono_literals::operator""ms;
 
     const auto           sys = getSysInfo();
-    const auto           img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img");
+    const auto           img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     util::FileROMBackend rom(img);
     mock::Node           node;
     kocherga::Bootloader<1> bl(rom, sys, {&node}, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
@@ -122,7 +122,7 @@ TEST_CASE("Bootloader-linger-reboot")
     using mock::Transfer;
 
     const auto           sys = getSysInfo();
-    const auto           img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img");
+    const auto           img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
     util::FileROMBackend rom(img);
     std::array<mock::Node, 2> nodes;
     kocherga::Bootloader<2>   bl(rom,
@@ -157,7 +157,7 @@ TEST_CASE("Bootloader-update-valid")
     using kocherga::detail::dsdl::Heartbeat;
 
     const auto sys = getSysInfo();
-    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img");
+    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
     util::FileROMBackend      rom("rom.img.tmp");
     std::array<mock::Node, 2> nodes;
@@ -182,7 +182,7 @@ TEST_CASE("Bootloader-update-valid")
     // REQUEST UPDATE
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
     //    uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE,
-    //    'good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img'))))
+    //    'good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin'))))
     nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(444,
                                    {253, 255, 65,  103, 111, 111, 100, 45, 108, 101, 45,  51,  114, 100, 45,  101, 110,
@@ -201,7 +201,7 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(nodes.at(1).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
-    //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img')))))
+    //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
     const auto received = *nodes.at(1).popOutput(Node::Output::FileReadRequest);
     const auto reference =
         Transfer(1,
@@ -214,8 +214,7 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(received == reference);
 
     // READ RESPONSE
-    // The serialized representation was constructed manually from the binary file:
-    //      good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img
+    // The serialized representation was constructed manually from the binary file
     nodes.at(1).pushInput(Node::Input::FileReadResponse,
                           Transfer(0,
                                    {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 33,  32,
@@ -254,7 +253,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     using kocherga::detail::dsdl::Heartbeat;
 
     const auto sys = getSysInfo();
-    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img");
+    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
     util::FileROMBackend      rom("rom.img.tmp");
     std::array<mock::Node, 1> nodes;
@@ -279,7 +278,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
 
     // REQUEST UPDATE
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
-    //    uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, 'bad-le-crc-x3.img'))))
+    //    uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, 'bad-le-crc-x3.bin'))))
     nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(111,
                                    {253, 255, 17, 98, 97,  100, 45, 108, 101, 45,
@@ -296,7 +295,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(!bl.poll(2'200ms));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
-    //      uavcan.file.Path_1_0('bad-le-crc-x3.img')))))
+    //      uavcan.file.Path_1_0('bad-le-crc-x3.bin')))))
     auto received = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
     auto reference =
         Transfer(1,
@@ -306,7 +305,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(received == reference);
 
     // READ RESPONSE
-    // The serialized representation was constructed manually from the binary file: bad-le-crc-x3.img
+    // The serialized representation was constructed manually from the binary file: bad-le-crc-x3.bin
     nodes.at(0).pushInput(Node::Input::FileReadResponse,
                           Transfer(0,
                                    {
@@ -430,7 +429,7 @@ TEST_CASE("Bootloader-trigger")
     using kocherga::detail::dsdl::Heartbeat;
 
     const auto sys = getSysInfo();
-    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img");
+    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
     util::FileROMBackend      rom("rom.img.tmp");
     std::array<mock::Node, 3> nodes;
@@ -454,7 +453,7 @@ TEST_CASE("Bootloader-trigger")
 
     // MANUAL UPDATE TRIGGER
     const auto path =
-        reinterpret_cast<const std::uint8_t*>("good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img");
+        reinterpret_cast<const std::uint8_t*>("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     bl.trigger<2>(2222, 65, path);
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
     REQUIRE(!bl.poll(1'100ms));
@@ -468,7 +467,7 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
-    //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.60cc964568bfb6b0,dirty.img')))))
+    //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
     const auto received = *nodes.at(2).popOutput(Node::Output::FileReadRequest);
     const auto reference =
         Transfer(1,
@@ -481,8 +480,7 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(received == reference);
 
     // READ RESPONSE
-    // The serialized representation was constructed manually from the binary file:
-    //      good-le-simple-3.1.badc0ffee0ddf00d.be8cb17ed02e7a88,debug.img
+    // The serialized representation was constructed manually from the binary file
     nodes.at(2).pushInput(Node::Input::FileReadResponse,
                           Transfer(0,
                                    {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 33,  32,
