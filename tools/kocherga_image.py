@@ -119,16 +119,13 @@ class Flags:
     dirty: bool
 
     def pack(self) -> int:
-        return functools.reduce(lambda a, b: a | b,
-                                ((1 << i) for i, f in enumerate(dataclasses.fields(self)) if getattr(self, f.name)),
-                                0)
+        return functools.reduce(
+            lambda a, b: a | b, ((1 << i) for i, f in enumerate(dataclasses.fields(self)) if getattr(self, f.name)), 0
+        )
 
     @staticmethod
     def unpack(value: int) -> Flags:
-        return Flags(**{
-            f.name: (value & (1 << idx)) != 0
-            for idx, f in enumerate(dataclasses.fields(Flags))
-        })
+        return Flags(**{f.name: (value & (1 << idx)) != 0 for idx, f in enumerate(dataclasses.fields(Flags))})
 
 
 @dataclasses.dataclass
@@ -136,7 +133,7 @@ class AppDescriptor:
     SIZE = 64
     ALIGNMENT = 8
     MAGIC = 0x5E44_1514_6FC0_C4C7
-    SIGNATURE = b'APDesc00'
+    SIGNATURE = b"APDesc00"
 
     image_crc: int
     image_size: int
@@ -158,22 +155,35 @@ class AppDescriptor:
         )
 
     @staticmethod
-    def unpack_from(image: typing.Union[bytes, bytearray, memoryview],
-                    byte_order: str,
-                    offset: int = 0) -> typing.Optional[AppDescriptor]:
+    def unpack_from(
+        image: typing.Union[bytes, bytearray, memoryview], byte_order: str, offset: int = 0
+    ) -> typing.Optional[AppDescriptor]:
         try:
-            magic, signature, image_crc, image_size, v_major, v_minor, flags, ts_utc, vcs_revision_id \
-                = AppDescriptor._get_marshaller(byte_order).unpack_from(image, offset)
+            (
+                magic,
+                signature,
+                image_crc,
+                image_size,
+                v_major,
+                v_minor,
+                flags,
+                ts_utc,
+                vcs_revision_id,
+            ) = AppDescriptor._get_marshaller(byte_order).unpack_from(image, offset)
         except struct.error:
             return None
-        return AppDescriptor(
-            image_crc=image_crc,
-            image_size=image_size,
-            version=(v_major, v_minor),
-            flags=Flags.unpack(flags),
-            timestamp_utc=ts_utc,
-            vcs_revision_id=vcs_revision_id,
-        ) if magic == AppDescriptor.MAGIC and signature == AppDescriptor.SIGNATURE else None
+        return (
+            AppDescriptor(
+                image_crc=image_crc,
+                image_size=image_size,
+                version=(v_major, v_minor),
+                flags=Flags.unpack(flags),
+                timestamp_utc=ts_utc,
+                vcs_revision_id=vcs_revision_id,
+            )
+            if magic == AppDescriptor.MAGIC and signature == AppDescriptor.SIGNATURE
+            else None
+        )
 
     @staticmethod
     def get_search_prefix(byte_order: str, uninitialized_only: bool = False) -> bytes:
@@ -182,18 +192,18 @@ class AppDescriptor:
         If the uninitialized_only flag is set, the search prefix will match only unpopulated descriptors where
         the CRC and the size are zero. Otherwise, any descriptor will match.
         """
-        tail = bytes(12) if uninitialized_only else b''
+        tail = bytes(12) if uninitialized_only else b""
         return AppDescriptor.MAGIC.to_bytes(8, byte_order) + AppDescriptor.SIGNATURE + tail
 
     @staticmethod
     def _get_marshaller(byte_order: str) -> struct.Struct:
-        byte_order = {'big': '>', 'little': '<'}[byte_order]
-        out = struct.Struct(byte_order + 'Q 8s Q L 4x BB B x L Q 16x')
+        byte_order = {"big": ">", "little": "<"}[byte_order]
+        out = struct.Struct(byte_order + "Q 8s Q L 4x BB B x L Q 16x")
         assert out.size == AppDescriptor.SIZE
         return out
 
     def __str__(self) -> str:
-        out = f'{self.version[0]}.{self.version[1]}.{self.vcs_revision_id:016x}.{self.image_crc:016x}.app'
+        out = f"{self.version[0]}.{self.version[1]}.{self.vcs_revision_id:016x}.{self.image_crc:016x}.app"
         for flag, value in dataclasses.asdict(self.flags).items():
             if value:
                 out += f".{flag}"
@@ -201,25 +211,22 @@ class AppDescriptor:
 
 
 class ImageModel:
-    PADDING_BYTE = b'\x00'
+    PADDING_BYTE = b"\x00"
 
-    def __init__(self,
-                 image: bytearray,
-                 app_descriptor_offset: int,
-                 byte_order: str):
+    def __init__(self, image: bytearray, app_descriptor_offset: int, byte_order: str):
         """Do not construct instances manually. Use the factory method instead."""
         self._image = bytearray(image)
         self._offset = int(app_descriptor_offset)
         self._byte_order = str(byte_order)
 
         if AppDescriptor.unpack_from(self._image, self._byte_order, self._offset) is None:
-            raise ValueError('The provided image does not contain an app descriptor at the specified offset')
+            raise ValueError("The provided image does not contain an app descriptor at the specified offset")
 
         if len(self._image) % AppDescriptor.ALIGNMENT != 0 or self._offset % AppDescriptor.ALIGNMENT != 0:
-            raise ValueError('Bad alignment')
+            raise ValueError("Bad alignment")
 
         if len(self._image) <= AppDescriptor.SIZE or not (0 <= self._offset < len(self._image)):
-            raise ValueError('Bad sizing')
+            raise ValueError("Bad sizing")
 
     @property
     def byte_order(self) -> str:
@@ -236,12 +243,12 @@ class ImageModel:
     @property
     def app_descriptor(self) -> AppDescriptor:
         desc = AppDescriptor.unpack_from(self._image, self._byte_order, self._offset)
-        assert desc is not None, 'Internal protocol violation'
+        assert desc is not None, "Internal protocol violation"
         return desc
 
     @app_descriptor.setter
     def app_descriptor(self, value: AppDescriptor) -> None:
-        self._image[self._offset:self._offset + AppDescriptor.SIZE] = value.pack(self._byte_order)
+        self._image[self._offset : self._offset + AppDescriptor.SIZE] = value.pack(self._byte_order)
 
     def update(self) -> None:
         """
@@ -250,20 +257,21 @@ class ImageModel:
         desc = self.app_descriptor
         desc.image_crc = 0
         desc.image_size = len(self._image)
-        self._image[self._offset:self._offset + AppDescriptor.SIZE] = desc.pack(self._byte_order)
+        self._image[self._offset : self._offset + AppDescriptor.SIZE] = desc.pack(self._byte_order)
         desc.image_crc = CRCComputer().add(self._image).value
-        self._image[self._offset:self._offset + AppDescriptor.SIZE] = desc.pack(self._byte_order)
+        self._image[self._offset : self._offset + AppDescriptor.SIZE] = desc.pack(self._byte_order)
 
     def validate_app_descriptor(self) -> bool:
         image = bytearray(self.image)
         desc = self.app_descriptor
         expected_crc, desc.image_crc = desc.image_crc, 0
-        image[self._offset:self._offset + AppDescriptor.SIZE] = desc.pack(self._byte_order)
+        image[self._offset : self._offset + AppDescriptor.SIZE] = desc.pack(self._byte_order)
         return expected_crc == CRCComputer().add(image).value
 
     @staticmethod
-    def construct_from_image(image: typing.Union[memoryview, bytes, bytearray],
-                             uninitialized_only: bool = False) -> typing.Optional[ImageModel]:
+    def construct_from_image(
+        image: typing.Union[memoryview, bytes, bytearray], uninitialized_only: bool = False
+    ) -> typing.Optional[ImageModel]:
         """
         The byte order will be detected automatically.
         :param image: The source application image.
@@ -278,7 +286,7 @@ class ImageModel:
 
         offset: int
         byte_order: str
-        for bo in ['big', 'little']:
+        for bo in ["big", "little"]:
             offset = image.find(AppDescriptor.get_search_prefix(bo, uninitialized_only=uninitialized_only))
             if (offset >= 0) and (offset % AppDescriptor.ALIGNMENT == 0):  # TODO Look further if invalid
                 byte_order = bo
@@ -297,6 +305,7 @@ class ImageModel:
 
 class CRCComputer:
     _MASK = 0xFFFFFFFFFFFFFFFF
+    # fmt: off
     _TABLE = [
         0x0000000000000000, 0x42F0E1EBA9EA3693, 0x85E1C3D753D46D26, 0xC711223CFA3E5BB5, 0x493366450E42ECDF,
         0x0BC387AEA7A8DA4C, 0xCCD2A5925D9681F9, 0x8E224479F47CB76A, 0x9266CC8A1C85D9BE, 0xD0962D61B56FEF2D,
@@ -351,6 +360,7 @@ class CRCComputer:
         0x913F6188692D6F4B, 0xD3CF8063C0C759D8, 0x5DEDC41A34BBEEB2, 0x1F1D25F19D51D821, 0xD80C07CD676F8394,
         0x9AFCE626CE85B507,
     ]
+    # fmt: on
 
     def __init__(self):
         assert len(self._TABLE) == 256
@@ -372,65 +382,92 @@ class CRCComputer:
 
 
 def _parse_version(x: str) -> typing.Tuple[int, int]:
-    major, minor = (int(v) for v in x.replace(',', '.').split('.'))
+    major, minor = (int(v) for v in x.replace(",", ".").split("."))
     return major, minor
 
 
 def _get_output_file_name(input_file_name: str, descriptor: AppDescriptor) -> str:
-    base_stem = os.path.basename(input_file_name).rsplit('.', 1)[0]
-    return f'{base_stem}-{descriptor}.bin'
+    base_stem = os.path.basename(input_file_name).rsplit(".", 1)[0]
+    return f"{base_stem}-{descriptor}.bin"
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, description=globals()['__doc__'])
-    parser.add_argument('firmware_image',
-                        metavar='PATH',
-                        help='The name of the firmware image binary file where the descriptor should be written. '
-                             'Use the special value "self-test" to run the self-test and exit immediately afterwards.')
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, description=globals()["__doc__"])
+    parser.add_argument(
+        "firmware_image",
+        metavar="PATH",
+        help="The name of the firmware image binary file where the descriptor should be written. "
+        'Use the special value "self-test" to run the self-test and exit immediately afterwards.',
+    )
     # Field setter options.
-    parser.add_argument('--assign-version', type=_parse_version, metavar='MAJOR.MINOR',
-                        help='Overwrite the version fields, major and minor. Values can be dot- or comma-separated.')
-    parser.add_argument('--assign-flag-release', type=int, metavar='FLAG',
-                        help='Overwrite the release build flag in the app descriptor.')
-    parser.add_argument('--assign-flag-dirty', type=int, metavar='FLAG',
-                        help='Overwrite the dirty build flag in the app descriptor.')
-    parser.add_argument('--assign-timestamp', type=lambda x: int(x, 0), metavar='TIMESTAMP',
-                        help='Overwrite the build timestamp. The value should be a UNIX timestamp in UTC.')
-    parser.add_argument('--assign-vcs-revision-id', type=lambda x: int(x, 0), metavar='VCS_REVISION_ID',
-                        help='Overwrite the VCS revision ID field. Hexadecimals accepted if prefixed with "0x".')
+    parser.add_argument(
+        "--assign-version",
+        type=_parse_version,
+        metavar="MAJOR.MINOR",
+        help="Overwrite the version fields, major and minor. Values can be dot- or comma-separated.",
+    )
+    parser.add_argument(
+        "--assign-flag-release",
+        type=int,
+        metavar="FLAG",
+        help="Overwrite the release build flag in the app descriptor.",
+    )
+    parser.add_argument(
+        "--assign-flag-dirty", type=int, metavar="FLAG", help="Overwrite the dirty build flag in the app descriptor."
+    )
+    parser.add_argument(
+        "--assign-timestamp",
+        type=lambda x: int(x, 0),
+        metavar="TIMESTAMP",
+        help="Overwrite the build timestamp. The value should be a UNIX timestamp in UTC.",
+    )
+    parser.add_argument(
+        "--assign-vcs-revision-id",
+        type=lambda x: int(x, 0),
+        metavar="VCS_REVISION_ID",
+        help='Overwrite the VCS revision ID field. Hexadecimals accepted if prefixed with "0x".',
+    )
     # Other options.
-    parser.add_argument('--verbose', '-v', action='count', default=0,
-                        help='Enable verbose output. Twice for extra verbosity.')
-    parser.add_argument('--side-patch', default=[], action='append', metavar='PATH',
-                        help='File(s) where the same descriptor will be copied into (e.g., ELF executables). '
-                             'Use multiple times to patch several files at once.')
+    parser.add_argument(
+        "--verbose", "-v", action="count", default=0, help="Enable verbose output. Twice for extra verbosity."
+    )
+    parser.add_argument(
+        "--side-patch",
+        default=[],
+        action="append",
+        metavar="PATH",
+        help="File(s) where the same descriptor will be copied into (e.g., ELF executables). "
+        "Use multiple times to patch several files at once.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
         stream=sys.stderr,
-        format='%(message)s',
+        format="%(message)s",
         level={
             0: logging.WARNING,
             1: logging.INFO,
         }.get(args.verbose, logging.DEBUG),
     )
 
-    if args.firmware_image == 'self-test':
+    if args.firmware_image == "self-test":
         _test()
         return 0
 
     # Read the input file. All operations done in-memory.
-    with open(args.firmware_image, 'rb') as in_file:
+    with open(args.firmware_image, "rb") as in_file:
         model = ImageModel.construct_from_image(in_file.read(), uninitialized_only=True)
         if not model:
             existing_model = ImageModel.construct_from_image(in_file.read())
-            _logger.fatal(f'An uninitialized app descriptor could not be found in {args.firmware_image!r}. '
-                          f'Existing app descriptor: {existing_model.app_descriptor if existing_model else None!r}')
+            _logger.fatal(
+                f"An uninitialized app descriptor could not be found in {args.firmware_image!r}. "
+                f"Existing app descriptor: {existing_model.app_descriptor if existing_model else None!r}"
+            )
             return 1
 
     # Populate the fields as requested. The size and CRC are managed automatically by the image model class.
     desc = model.app_descriptor
-    _logger.debug(f'Original app descriptor: {desc!r}')
+    _logger.debug(f"Original app descriptor: {desc!r}")
     if args.assign_version is not None:
         assert len(args.assign_version) == 2
         assert isinstance(args.assign_version[0], int) and isinstance(args.assign_version[1], int)
@@ -448,43 +485,43 @@ def _main() -> int:
     model.app_descriptor = desc
     del desc
     model.update()
-    assert len(model.image) == model.app_descriptor.image_size, 'Internal logic error'
-    assert model.validate_app_descriptor(), 'Internal logic error: output image validation failed'
-    _logger.info(f'Detected byte order:   {model.byte_order}')
-    _logger.info(f'App descriptor offset: {model.app_descriptor_offset}')
-    _logger.info(f'Final app descriptor:  {model.app_descriptor!r}')
+    assert len(model.image) == model.app_descriptor.image_size, "Internal logic error"
+    assert model.validate_app_descriptor(), "Internal logic error: output image validation failed"
+    _logger.info(f"Detected byte order:   {model.byte_order}")
+    _logger.info(f"App descriptor offset: {model.app_descriptor_offset}")
+    _logger.info(f"Final app descriptor:  {model.app_descriptor!r}")
 
     # Write the resulting image into the output file.
     out_name = _get_output_file_name(args.firmware_image, model.app_descriptor)
-    with open(out_name, 'wb') as out_file:
-        assert model.validate_app_descriptor(), 'Internal logic error: output image validation failed'
+    with open(out_name, "wb") as out_file:
+        assert model.validate_app_descriptor(), "Internal logic error: output image validation failed"
         out_file.write(model.image)
-    _logger.info(f'Output image written into {out_name!r}')
+    _logger.info(f"Output image written into {out_name!r}")
 
     # Perform the side-patching.
     for path in args.side_patch:
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             data = bytearray(f.read())
         offset = data.find(AppDescriptor.get_search_prefix(model.byte_order, uninitialized_only=True))
         if offset < 0:
-            _logger.fatal(f'Side-patching failure: an uninitialized app descriptor could not be found in {path!r}')
+            _logger.fatal(f"Side-patching failure: an uninitialized app descriptor could not be found in {path!r}")
             return 1
-        _logger.info(f'Side-patching {path!r} at offset {offset} bytes')
-        data[offset:offset + AppDescriptor.SIZE] = model.app_descriptor.pack(model.byte_order)
-        with open(path, 'wb') as f:
+        _logger.info(f"Side-patching {path!r} at offset {offset} bytes")
+        data[offset : offset + AppDescriptor.SIZE] = model.app_descriptor.pack(model.byte_order)
+        with open(path, "wb") as f:
             f.write(data)
 
     return 0
 
 
 def _test() -> None:
-    assert 0x62ec59e3f1a4f00a == CRCComputer().add(b'123456').add(b'').add(b'789').value
+    assert 0x62EC59E3F1A4F00A == CRCComputer().add(b"123456").add(b"").add(b"789").value
 
-    assert (1, 4) == _parse_version('1,4')
-    assert (1, 4) == _parse_version('1.4')
-    assert (1, 4) == _parse_version(' 1 , 4 ')
+    assert (1, 4) == _parse_version("1,4")
+    assert (1, 4) == _parse_version("1.4")
+    assert (1, 4) == _parse_version(" 1 , 4 ")
     try:
-        _parse_version('1,4,7')
+        _parse_version("1,4,7")
     except ValueError:
         pass
     else:
@@ -507,61 +544,68 @@ def _test() -> None:
         timestamp_utc=0,
         vcs_revision_id=0,
     )
-    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') + b"APDesc00" +
-            (0).to_bytes(8, 'little') +             # CRC
-            (0).to_bytes(4, 'little') +             # Size
-            bytes(4) +
-            bytes([0, 0]) +                         # Version
-            bytes([0]) +                            # Flags
-            bytes(1) +
-            (0).to_bytes(4, 'little') +             # Timestamp
-            (0).to_bytes(8, 'little') +             # Revision
-            bytes(16)
-            == desc.pack('little'))
-    desc.image_crc = 0xdeadbeef_0ddc0ffe
-    desc.image_size = 0xaabbccdd
+    assert (
+        AppDescriptor.MAGIC.to_bytes(8, "little")
+        + b"APDesc00"
+        + (0).to_bytes(8, "little")
+        + (0).to_bytes(4, "little")
+        + bytes(4)
+        + bytes([0, 0])
+        + bytes([0])
+        + bytes(1)
+        + (0).to_bytes(4, "little")
+        + (0).to_bytes(8, "little")
+        + bytes(16)
+    ) == desc.pack("little")
+    desc.image_crc = 0xDEADBEEF_0DDC0FFE
+    desc.image_size = 0xAABBCCDD
     desc.version = 42, 95
     desc.flags.dirty = True
     desc.timestamp_utc = 1234567890
     desc.vcs_revision_id = 0x1122334455667788
-    assert (AppDescriptor.MAGIC.to_bytes(8, 'little') + b"APDesc00" +
-            0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +     # CRC
-            0xaabbccdd.to_bytes(4, 'little') +              # Size
-            bytes(4) +
-            bytes([42, 95]) +                               # Version
-            bytes([2]) +                                    # Flags
-            bytes(1) +
-            (1234567890).to_bytes(4, 'little') +            # Timestamp
-            0x1122334455667788.to_bytes(8, 'little') +      # Revision
-            bytes(16)
-            == desc.pack('little'))
-    assert (AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-            0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +        # CRC
-            0xaabbccdd.to_bytes(4, 'big') +                 # Size
-            bytes(4) +
-            bytes([42, 95]) +                               # Version
-            bytes([2]) +                                    # Flags
-            bytes(1) +
-            (1234567890).to_bytes(4, 'big') +               # Timestamp
-            0x1122334455667788.to_bytes(8, 'big') +         # Revision
-            bytes(16)
-            == desc.pack('big'))
+    assert (
+        AppDescriptor.MAGIC.to_bytes(8, "little")
+        + b"APDesc00"
+        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "little")
+        + 0xAABBCCDD .to_bytes(4, "little")
+        + bytes(4)
+        + bytes([42, 95])
+        + bytes([2])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "little")
+        + 0x1122334455667788 .to_bytes(8, "little")
+        + bytes(16)
+    ) == desc.pack("little")
+    assert (
+        AppDescriptor.MAGIC.to_bytes(8, "big")
+        + b"APDesc00"
+        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "big")
+        + 0xAABBCCDD .to_bytes(4, "big")
+        + bytes(4)
+        + bytes([42, 95])
+        + bytes([2])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "big")
+        + 0x1122334455667788 .to_bytes(8, "big")
+        + bytes(16)
+    ) == desc.pack("big")
 
     desc = AppDescriptor.unpack_from(
-        AppDescriptor.MAGIC.to_bytes(8, 'little') + b"APDesc00" +
-        0xdeadbeef_0ddc0ffe.to_bytes(8, 'little') +     # CRC
-        0xaabbccdd.to_bytes(4, 'little') +              # Size
-        bytes(4) +
-        bytes([42, 95]) +                               # Version
-        bytes([2]) +                                    # Flags
-        bytes(1) +
-        (1234567890).to_bytes(4, 'little') +            # Timestamp
-        0x1122334455667788.to_bytes(8, 'little') +      # Revision
-        bytes(16),
-        'little',
+        AppDescriptor.MAGIC.to_bytes(8, "little")
+        + b"APDesc00"
+        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "little")
+        + 0xAABBCCDD .to_bytes(4, "little")
+        + bytes(4)
+        + bytes([42, 95])
+        + bytes([2])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "little")
+        + 0x1122334455667788 .to_bytes(8, "little")
+        + bytes(16),
+        "little",
     )
-    assert desc.image_crc == 0xdeadbeef_0ddc0ffe
-    assert desc.image_size == 0xaabbccdd
+    assert desc.image_crc == 0xDEADBEEF_0DDC0FFE
+    assert desc.image_size == 0xAABBCCDD
     assert desc.version == (42, 95)
     assert not desc.flags.release
     assert desc.flags.dirty
@@ -569,67 +613,75 @@ def _test() -> None:
     assert desc.vcs_revision_id == 0x1122334455667788
 
     desc = AppDescriptor.unpack_from(
-        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-        0xdeadbeef_0ddc0ffe.to_bytes(8, 'big') +        # CRC
-        0xaabbccdd.to_bytes(4, 'big') +                 # Size
-        bytes(4) +
-        bytes([42, 95]) +                               # Version
-        bytes([2]) +                                    # Flags
-        bytes(1) +
-        (1234567890).to_bytes(4, 'big') +               # Timestamp
-        0x1122334455667788.to_bytes(8, 'big') +         # Revision
-        bytes(16),
-        'big',
+        AppDescriptor.MAGIC.to_bytes(8, "big")
+        + b"APDesc00"
+        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "big")
+        + 0xAABBCCDD .to_bytes(4, "big")
+        + bytes(4)
+        + bytes([42, 95])
+        + bytes([2])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "big")
+        + 0x1122334455667788 .to_bytes(8, "big")
+        + bytes(16),
+        "big",
     )
-    assert desc.image_crc == 0xdeadbeef_0ddc0ffe
-    assert desc.image_size == 0xaabbccdd
+    assert desc.image_crc == 0xDEADBEEF_0DDC0FFE
+    assert desc.image_size == 0xAABBCCDD
     assert desc.version == (42, 95)
     assert not desc.flags.release
     assert desc.flags.dirty
     assert desc.timestamp_utc == 1234567890
     assert desc.vcs_revision_id == 0x1122334455667788
 
-    assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, 'big'), 'big')
-    assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, 'little') + AppDescriptor.SIGNATURE, 'little')
+    assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, "big"), "big")
+    assert not AppDescriptor.unpack_from(AppDescriptor.MAGIC.to_bytes(8, "little") + AppDescriptor.SIGNATURE, "little")
 
-    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe.app.dirty'
+    assert str(desc) == "42.95.1122334455667788.deadbeef0ddc0ffe.app.dirty"
     desc.flags.dirty = False
-    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe.app'
+    assert str(desc) == "42.95.1122334455667788.deadbeef0ddc0ffe.app"
     desc.flags.dirty = True
     desc.flags.release = True
-    assert str(desc) == '42.95.1122334455667788.deadbeef0ddc0ffe.app.release.dirty'
+    assert str(desc) == "42.95.1122334455667788.deadbeef0ddc0ffe.app.release.dirty"
 
     im = ImageModel.construct_from_image(
-        b'BEFORE MODEL    ' +
-        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-        (0).to_bytes(8, 'big') +                        # CRC
-        (0).to_bytes(4, 'big') +                        # Size
-        bytes(4) +
-        bytes([42, 95]) +                               # Version
-        bytes([2]) +                                    # Flags
-        bytes(1) +
-        (1234567890).to_bytes(4, 'big') +               # Timestamp
-        0x1122334455667788.to_bytes(8, 'big') +         # Revision
-        bytes(16) +
-        b'AFTER MODEL',
+        b"BEFORE MODEL    "
+        + AppDescriptor.MAGIC.to_bytes(8, "big")
+        + b"APDesc00"
+        + (0).to_bytes(8, "big")
+        + (0).to_bytes(4, "big")
+        + bytes(4)
+        + bytes([42, 95])
+        + bytes([2])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "big")
+        + 0x1122334455667788 .to_bytes(8, "big")
+        + bytes(16)
+        + b"AFTER MODEL",
         uninitialized_only=True,
     )
     assert im
-    crc = CRCComputer().add(
-        b'BEFORE MODEL    ' +
-        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-        (0).to_bytes(8, 'big') +                        # CRC
-        (96).to_bytes(4, 'big') +                       # Size
-        bytes(4) +
-        bytes([42, 95]) +                               # Version
-        bytes([2]) +                                    # Flags
-        bytes(1) +
-        (1234567890).to_bytes(4, 'big') +               # Timestamp
-        0x1122334455667788.to_bytes(8, 'big') +         # Revision
-        bytes(16) +
-        b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5
-    ).value
-    assert im.byte_order == 'big'
+    crc = (
+        CRCComputer()
+        .add(
+            b"BEFORE MODEL    "
+            + AppDescriptor.MAGIC.to_bytes(8, "big")
+            + b"APDesc00"
+            + (0).to_bytes(8, "big")
+            + (96).to_bytes(4, "big")
+            + bytes(4)
+            + bytes([42, 95])
+            + bytes([2])
+            + bytes(1)
+            + (1234567890).to_bytes(4, "big")
+            + 0x1122334455667788 .to_bytes(8, "big")
+            + bytes(16)
+            + b"AFTER MODEL"
+            + ImageModel.PADDING_BYTE * 5
+        )
+        .value
+    )
+    assert im.byte_order == "big"
     assert im.app_descriptor_offset == 16
     assert im.app_descriptor == AppDescriptor(
         image_crc=0,
@@ -650,18 +702,22 @@ def _test() -> None:
         timestamp_utc=1234567890,
         vcs_revision_id=0x1122334455667788,
     )
-    assert (b'BEFORE MODEL    ' +
-            AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-            crc.to_bytes(8, 'big') +                        # CRC
-            (96).to_bytes(4, 'big') +                       # Size
-            bytes(4) +
-            bytes([42, 95]) +                               # Version
-            bytes([2]) +                                    # Flags
-            bytes(1) +
-            (1234567890).to_bytes(4, 'big') +               # Timestamp
-            0x1122334455667788.to_bytes(8, 'big') +         # Revision
-            bytes(16) +
-            b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5) == im.image
+    assert (
+        b"BEFORE MODEL    "
+        + AppDescriptor.MAGIC.to_bytes(8, "big")
+        + b"APDesc00"
+        + crc.to_bytes(8, "big")
+        + (96).to_bytes(4, "big")
+        + bytes(4)
+        + bytes([42, 95])
+        + bytes([2])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "big")
+        + 0x1122334455667788 .to_bytes(8, "big")
+        + bytes(16)
+        + b"AFTER MODEL"
+        + ImageModel.PADDING_BYTE * 5
+    ) == im.image
     desc = im.app_descriptor
     desc.version = 1, 5
     desc.flags.release = True
@@ -669,38 +725,51 @@ def _test() -> None:
     assert not im.validate_app_descriptor()
     im.update()
     assert im.validate_app_descriptor()
-    crc = CRCComputer().add(
-        b'BEFORE MODEL    ' +
-        AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-        (0).to_bytes(8, 'big') +                            # CRC
-        (96).to_bytes(4, 'big') +                           # Size
-        bytes(4) +
-        bytes([1, 5]) +                                     # Version
-        bytes([3]) +                                        # Flags
-        bytes(1) +
-        (1234567890).to_bytes(4, 'big') +                   # Timestamp
-        0x1122334455667788.to_bytes(8, 'big') +             # Revision
-        bytes(16) +
-        b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5
-    ).value
-    assert (b'BEFORE MODEL    ' +
-            AppDescriptor.MAGIC.to_bytes(8, 'big') + b"APDesc00" +
-            crc.to_bytes(8, 'big') +                        # CRC
-            (96).to_bytes(4, 'big') +                       # Size
-            bytes(4) +
-            bytes([1, 5]) +                                 # Version
-            bytes([3]) +                                    # Flags
-            bytes(1) +
-            (1234567890).to_bytes(4, 'big') +               # Timestamp
-            0x1122334455667788.to_bytes(8, 'big') +         # Revision
-            bytes(16) +
-            b'AFTER MODEL' + ImageModel.PADDING_BYTE * 5) == im.image
+    crc = (
+        CRCComputer()
+        .add(
+            b"BEFORE MODEL    "
+            + AppDescriptor.MAGIC.to_bytes(8, "big")
+            + b"APDesc00"
+            + (0).to_bytes(8, "big")
+            + (96).to_bytes(4, "big")
+            + bytes(4)
+            + bytes([1, 5])
+            + bytes([3])
+            + bytes(1)
+            + (1234567890).to_bytes(4, "big")
+            + 0x1122334455667788 .to_bytes(8, "big")
+            + bytes(16)
+            + b"AFTER MODEL"
+            + ImageModel.PADDING_BYTE * 5
+        )
+        .value
+    )
+    assert (
+        b"BEFORE MODEL    "
+        + AppDescriptor.MAGIC.to_bytes(8, "big")
+        + b"APDesc00"
+        + crc.to_bytes(8, "big")
+        + (96).to_bytes(4, "big")
+        + bytes(4)
+        + bytes([1, 5])
+        + bytes([3])
+        + bytes(1)
+        + (1234567890).to_bytes(4, "big")
+        + 0x1122334455667788 .to_bytes(8, "big")
+        + bytes(16)
+        + b"AFTER MODEL"
+        + ImageModel.PADDING_BYTE * 5
+    ) == im.image
 
-    assert _get_output_file_name(
-        'firmware-1.bin',
-        desc,
-    ) == f'firmware-1-1.5.1122334455667788.{desc.image_crc:016x}.app.release.dirty.bin'
+    assert (
+        _get_output_file_name(
+            "firmware-1.bin",
+            desc,
+        )
+        == f"firmware-1-1.5.1122334455667788.{desc.image_crc:016x}.app.release.dirty.bin"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(_main())
