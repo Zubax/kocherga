@@ -78,7 +78,7 @@ TEST_CASE("Bootloader-fast-boot")
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
 
     auto ai = *bl.getAppInfo();
-    REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
+    REQUIRE(0x452A'4267'971A'3928ULL == ai.image_crc);
     REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
@@ -101,7 +101,7 @@ TEST_CASE("Bootloader-boot-delay")
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
 
     auto ai = *bl.getAppInfo();
-    REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
+    REQUIRE(0x8B61'938E'E5F9'0B1FULL == ai.image_crc);
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
@@ -135,7 +135,7 @@ TEST_CASE("Bootloader-linger-reboot")
     REQUIRE(bl.getState() == kocherga::State::BootCanceled);  // LINGER -- NO BOOT
 
     auto ai = *bl.getAppInfo();
-    REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
+    REQUIRE(0x452A'4267'971A'3928ULL == ai.image_crc);
     REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
@@ -172,7 +172,7 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Advisory, 0));
 
     auto ai = *bl.getAppInfo();
-    REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
+    REQUIRE(0x8B61'938E'E5F9'0B1FULL == ai.image_crc);
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
@@ -236,7 +236,7 @@ TEST_CASE("Bootloader-update-valid")
 
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
-    REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
+    REQUIRE(0x452A'4267'971A'3928ULL == ai.image_crc);
     REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
@@ -269,7 +269,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal, 0));
 
     auto ai = *bl.getAppInfo();
-    REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
+    REQUIRE(0x8B61'938E'E5F9'0B1FULL == ai.image_crc);
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
@@ -444,7 +444,7 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
 
     auto ai = *bl.getAppInfo();
-    REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
+    REQUIRE(0x8B61'938E'E5F9'0B1FULL == ai.image_crc);
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
@@ -503,7 +503,7 @@ TEST_CASE("Bootloader-trigger")
 
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
-    REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
+    REQUIRE(0x452A'4267'971A'3928ULL == ai.image_crc);
     REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));

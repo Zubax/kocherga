@@ -16,8 +16,8 @@ TEST_CASE("AppLocator-good-simple")
 
     auto info = loc_ok.identifyApplication();
     REQUIRE(info);
-    REQUIRE(info->image_size == 104);
-    REQUIRE(info->image_crc == 0xBE8C'B17E'D02E'7A88ULL);
+    REQUIRE(info->image_size == 144);
+    REQUIRE(info->image_crc == 0x452A'4267'971A'3928ULL);
     REQUIRE(info->vcs_revision_id == 0xBADC'0FFE'E0DD'F00DULL);
     REQUIRE(info->isDebugBuild());
     REQUIRE(!info->isDirtyBuild());
@@ -37,8 +37,8 @@ TEST_CASE("AppLocator-good-3rd-entry")
 
     auto info = loc_ok.identifyApplication();
     REQUIRE(info);
-    REQUIRE(info->image_size == 336);
-    REQUIRE(info->image_crc == 0x60CC'9645'68BF'B6B0ULL);
+    REQUIRE(info->image_size == 576);
+    REQUIRE(info->image_crc == 0x8B61'938E'E5F9'0B1FULL);
     REQUIRE(info->vcs_revision_id == 0x3333'3333'3333'3333ULL);
     REQUIRE(!info->isDebugBuild());
     REQUIRE(info->isDirtyBuild());

@@ -46,10 +46,10 @@ static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};
 
 /// The service response timeout used by the bootloader.
 /// This value applies when the bootloader invokes uavcan.file.Read during the update.
-static constexpr std::chrono::seconds ServiceResponseTimeout{5};
+static constexpr std::chrono::microseconds ServiceResponseTimeout{5'000'000};
 
 /// The largest transfer size used by the bootloader. Use this to size the buffers in transport implementations.
-static constexpr std::size_t MaxSerializedRepresentationSize = 313;
+static constexpr std::size_t MaxSerializedRepresentationSize = 600;
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -417,12 +417,12 @@ private:
 /// These DSDL-derived definitions substitute for the lack of code generation.
 namespace dsdl
 {
-static constexpr std::size_t NameCapacity = 50;
+static constexpr std::size_t NameCapacity = 255;
 
 struct Heartbeat
 {
-    static constexpr std::size_t          Size = 7;
-    static constexpr std::chrono::seconds Period{1};
+    static constexpr std::size_t               Size = 7;
+    static constexpr std::chrono::microseconds Period{1'000'000};
 
     static constexpr std::uint8_t ModeSoftwareUpdate = 3;
 
@@ -463,13 +463,13 @@ struct Diagnostic
         Critical = 6,
     };
 
-    static constexpr std::size_t RecordSize = 121;
+    static constexpr std::size_t RecordSize = 257;
 };
 
 struct File
 {
-    static constexpr std::size_t PathCapacity             = 112;
-    static constexpr std::size_t ReadRequestCapacity      = 118;
+    static constexpr std::size_t PathCapacity             = 255;
+    static constexpr std::size_t ReadRequestCapacity      = PathCapacity + 6;
     static constexpr std::size_t ReadResponseSizeMin      = 4;
     static constexpr std::size_t ReadResponseDataCapacity = 256;
 
@@ -485,7 +485,7 @@ struct File
 
 struct PnPNodeIDAllocation
 {
-    static constexpr std::chrono::seconds MaxRequestInterval{2};
+    static constexpr std::chrono::microseconds MaxRequestInterval{2'000'000};
 
     static constexpr std::size_t MessageSize_v2 = 18;
 };
@@ -581,7 +581,7 @@ public:
     }
 
     void setNodeHealth(const dsdl::Heartbeat::Health value) { node_health_ = value; }
-    void setNodeVSSC(const std::uint32_t value) { node_vssc_ = value; }
+    void setNodeVSSC(const std::uint8_t value) { node_vssc_ = value; }
 
     /// The timeout will be managed by the presenter automatically.
     [[nodiscard]] auto requestFileRead(const std::uint64_t offset) -> bool
@@ -670,7 +670,7 @@ private:
         case static_cast<PortID>(ServiceID::FileRead):
         default:
         {
-            break;
+            break;  // Unknown services ignored.
         }
         }
         return out;
@@ -808,17 +808,15 @@ private:
 
     void publishHeartbeat(const std::chrono::microseconds uptime)
     {
-        const auto hmv = (node_vssc_ << 5U) | static_cast<std::uint32_t>(dsdl::Heartbeat::ModeSoftwareUpdate << 2U) |
-                         static_cast<std::uint32_t>(node_health_);
         const auto ut = static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(uptime).count());
         std::array<std::uint8_t, dsdl::Heartbeat::Size> buf{{
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 0U)),
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 1U)),
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 2U)),
             static_cast<std::uint8_t>(ut >> (BitsPerByte * 3U)),
-            static_cast<std::uint8_t>(hmv >> (BitsPerByte * 0U)),
-            static_cast<std::uint8_t>(hmv >> (BitsPerByte * 1U)),
-            static_cast<std::uint8_t>(hmv >> (BitsPerByte * 2U)),
+            static_cast<std::uint8_t>(node_health_),
+            static_cast<std::uint8_t>(dsdl::Heartbeat::ModeSoftwareUpdate),
+            static_cast<std::uint8_t>(node_vssc_),
         }};
         for (INode* const node : nodes_)
         {
@@ -873,7 +871,7 @@ private:
 
     std::chrono::microseconds next_heartbeat_deadline_{dsdl::Heartbeat::Period};
     dsdl::Heartbeat::Health   node_health_ = dsdl::Heartbeat::Health::Nominal;
-    std::uint32_t             node_vssc_   = 0;
+    std::uint8_t              node_vssc_   = 0;
 };
 
 }  // namespace detail
@@ -987,7 +985,7 @@ public:
         {
             request_read_ = false;
             ++read_request_count_;
-            presentation_.setNodeVSSC(read_request_count_);  // Indicate progress.
+            presentation_.setNodeVSSC(static_cast<std::uint8_t>(read_request_count_));  // Indicate progress.
             if (!presentation_.requestFileRead(rom_offset_))
             {
                 presentation_.publishLogRecord(detail::dsdl::Diagnostic::Severity::Critical,

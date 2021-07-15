@@ -102,7 +102,7 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     //      mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE, health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY,
     //      uptime=1, vendor_specific_status_code=0x7dead))))
     pres.setNodeHealth(kocherga::detail::dsdl::Heartbeat::Health::Advisory);
-    pres.setNodeVSSC(0x7'DEAD);
+    pres.setNodeVSSC(132);
     ts = std::chrono::microseconds{1'500'000};
     pres.poll(ts);
     for (auto& n : nodes)
