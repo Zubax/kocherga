@@ -16,6 +16,7 @@ Checks: >-
   -google-readability-todo,
   -readability-avoid-const-params-in-decls,
   -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
   -llvm-header-guard,
   -google-runtime-references,
   -misc-non-private-member-variables-in-classes,

@@ -291,8 +291,8 @@ template <typename Callback>
     {
         ok = ok && out(x);
     }
-    crc      = {};
-    auto ptr = tr.payload;
+    crc             = {};
+    const auto* ptr = tr.payload;
     for (std::size_t i = 0U; i < tr.payload_len; i++)
     {
         ok = ok && out(*ptr);
@@ -328,7 +328,7 @@ public:
     ISerialPort(const ISerialPort&)  = delete;
     ISerialPort(const ISerialPort&&) = delete;
     auto operator=(const ISerialPort&) -> ISerialPort& = delete;
-    auto operator=(const ISerialPort &&) -> ISerialPort& = delete;
+    auto operator=(const ISerialPort&&) -> ISerialPort& = delete;
 };
 
 /// Kocherga node implementing the UAVCAN/serial transport.

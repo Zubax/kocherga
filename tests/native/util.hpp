@@ -240,7 +240,7 @@ public:
 /// A safe wrapper over the standard getenv() that returns an empty option if the variable is not set.
 inline auto getEnvironmentVariable(const std::string& name) -> std::optional<std::string>
 {
-    if (const auto st = std::getenv(name.c_str()); st != nullptr)  // NOSONAR getenv is considered unsafe.
+    if (auto* const st = std::getenv(name.c_str()); st != nullptr)  // NOSONAR getenv is considered unsafe.
     {
         return std::string(st);
     }

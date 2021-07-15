@@ -64,9 +64,9 @@ TEST_CASE("Bootloader-fast-boot")
 {
     using std::chrono_literals::operator""ms;
 
-    const auto           sys = getSysInfo();
-    const auto           img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
-    util::FileROMBackend rom(img);
+    const auto sys = getSysInfo();
+    const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
+    util::FileROMBackend      rom(img);
     std::array<mock::Node, 3> nodes;
     kocherga::Bootloader<3>   bl(rom,
                                sys,
@@ -79,7 +79,7 @@ TEST_CASE("Bootloader-fast-boot")
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
-    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_commit);
+    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
     REQUIRE(ai.isDebugBuild());
@@ -91,10 +91,10 @@ TEST_CASE("Bootloader-boot-delay")
     using std::chrono_literals::operator""s;
     using std::chrono_literals::operator""ms;
 
-    const auto           sys = getSysInfo();
-    const auto           img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
-    util::FileROMBackend rom(img);
-    mock::Node           node;
+    const auto sys = getSysInfo();
+    const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
+    util::FileROMBackend    rom(img);
+    mock::Node              node;
     kocherga::Bootloader<1> bl(rom, sys, {&node}, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
 
     REQUIRE(!bl.poll(500ms));
@@ -102,7 +102,7 @@ TEST_CASE("Bootloader-boot-delay")
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
-    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_commit);
+    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
     REQUIRE(!ai.isDebugBuild());
@@ -121,9 +121,9 @@ TEST_CASE("Bootloader-linger-reboot")
     using mock::Node;
     using mock::Transfer;
 
-    const auto           sys = getSysInfo();
-    const auto           img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
-    util::FileROMBackend rom(img);
+    const auto sys = getSysInfo();
+    const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
+    util::FileROMBackend      rom(img);
     std::array<mock::Node, 2> nodes;
     kocherga::Bootloader<2>   bl(rom,
                                sys,
@@ -136,7 +136,7 @@ TEST_CASE("Bootloader-linger-reboot")
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
-    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_commit);
+    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
     REQUIRE(ai.isDebugBuild());
@@ -173,7 +173,7 @@ TEST_CASE("Bootloader-update-valid")
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
-    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_commit);
+    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
     REQUIRE(!ai.isDebugBuild());
@@ -237,7 +237,7 @@ TEST_CASE("Bootloader-update-valid")
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
     REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
-    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_commit);
+    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
     REQUIRE(ai.isDebugBuild());
@@ -270,7 +270,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
-    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_commit);
+    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
     REQUIRE(!ai.isDebugBuild());
@@ -445,14 +445,14 @@ TEST_CASE("Bootloader-trigger")
 
     auto ai = *bl.getAppInfo();
     REQUIRE(0x60CC'9645'68BF'B6B0ULL == ai.image_crc);
-    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_commit);
+    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
     REQUIRE(!ai.isDebugBuild());
     REQUIRE(ai.isDirtyBuild());
 
     // MANUAL UPDATE TRIGGER
-    const auto path =
+    const auto* const path =
         reinterpret_cast<const std::uint8_t*>("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     bl.trigger<2>(2222, 65, path);
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
@@ -504,7 +504,7 @@ TEST_CASE("Bootloader-trigger")
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
     REQUIRE(0xBE8C'B17E'D02E'7A88ULL == ai.image_crc);
-    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_commit);
+    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
     REQUIRE(ai.isDebugBuild());

@@ -39,7 +39,7 @@ enum class ServiceID : PortID
 };
 
 /// Version of the library, major and minor.
-static constexpr SemanticVersion Version{{1, 0}};
+[[maybe_unused]] static constexpr SemanticVersion Version{{1, 0}};
 
 /// Version of the UAVCAN specification implemented by this library, major and minor.
 static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};
@@ -56,20 +56,25 @@ static constexpr std::size_t MaxSerializedRepresentationSize = 313;
 /// The structure is mapped to the ROM.
 struct AppInfo
 {
-    static constexpr std::uint8_t Size = 32;
+    static constexpr std::uint8_t Size = 48;
 
-    std::uint64_t   image_crc;   ///< CRC-64-WE of the firmware padded to 8 bytes computed with this field =0.
-    std::uint64_t   image_size;  ///< Size of the application image in bytes.
-    std::uint64_t   vcs_commit;  ///< Version control system revision ID (e.g., git commit hash).
-    std::uint32_t   reserved;    ///< Zero when writing, ignore when reading.
-    std::uint16_t   flags;       ///< Flags; see the constants. Unused flags shall not be set.
-    SemanticVersion version;     ///< Semantic version numbers, major then minor.
+    template <std::size_t Size>
+    using Skip = std::array<std::byte, Size>;
 
-    /// Bit mask values of the flags field.
+    std::uint64_t             image_crc;        ///< CRC-64-WE padded to 8 bytes computed with this field =0.
+    std::uint32_t             image_size;       ///< Size of the application image in bytes.
+    [[maybe_unused]] Skip<4>  _reserved_a;      ///< Used to contain 32-bit vcs_revision_id.
+    SemanticVersion           version;          ///< Semantic version numbers, major then minor.
+    std::uint8_t              flags;            ///< Flags; see the constants. Unused flags shall not be set.
+    [[maybe_unused]] Skip<1>  _reserved_b;      ///< Write zero, ignore when reading.
+    std::uint32_t             timestamp_utc;    ///< UTC UNIX timestamp when the application was built.
+    std::uint64_t             vcs_revision_id;  ///< Version control system revision ID (e.g., git commit hash).
+    [[maybe_unused]] Skip<16> _reserved_c;      ///< Write zero, ignore when reading.
+
     struct Flags
     {
-        static constexpr std::uint16_t DebugBuild = 1U;
-        static constexpr std::uint16_t DirtyBuild = 2U;
+        static constexpr std::uint8_t DebugBuild = 1U;
+        static constexpr std::uint8_t DirtyBuild = 2U;
     };
 
     [[nodiscard]] auto isDebugBuild() const { return (flags & Flags::DebugBuild) != 0; }
@@ -127,7 +132,7 @@ public:
     IReactor(const IReactor&)  = delete;
     IReactor(const IReactor&&) = delete;
     auto operator=(const IReactor&) -> IReactor& = delete;
-    auto operator=(const IReactor &&) -> IReactor& = delete;
+    auto operator=(const IReactor&&) -> IReactor& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -171,7 +176,7 @@ public:
     INode(const INode&)  = delete;
     INode(const INode&&) = delete;
     auto operator=(const INode&) -> INode& = delete;
-    auto operator=(const INode &&) -> INode& = delete;
+    auto operator=(const INode&&) -> INode& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -217,7 +222,7 @@ public:
     IROMBackend(const IROMBackend&) = delete;
     IROMBackend(IROMBackend&&)      = delete;
     auto operator=(const IROMBackend&) -> IROMBackend& = delete;
-    auto operator=(IROMBackend &&) -> IROMBackend& = delete;
+    auto operator=(IROMBackend&&) -> IROMBackend& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -239,7 +244,7 @@ public:
 
     void update(const std::uint8_t* const data, const std::size_t len)
     {
-        auto bytes = data;
+        const auto* bytes = data;
         for (auto remaining = len; remaining > 0; remaining--)
         {
             crc_ ^= static_cast<std::uint64_t>(*bytes) << InputShift;
@@ -327,12 +332,15 @@ private:
     class AppDescriptor final
     {
     public:
-        static constexpr std::size_t MagicSize = 8U;
-        static constexpr std::size_t CRCOffset = MagicSize;
+        static constexpr std::size_t MagicSize     = 8U;
+        static constexpr std::size_t SignatureSize = 8U;
+        static constexpr std::size_t CRCOffset     = MagicSize + SignatureSize;
 
         [[nodiscard]] auto isValid(const std::size_t max_app_size) const -> bool
         {
-            return (magic == ReferenceMagic) && (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
+            return (magic == ReferenceMagic) &&
+                   std::equal(signature.begin(), signature.end(), ReferenceSignature.begin()) &&
+                   (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
                    ((app_info.image_size % MagicSize) == 0);
         }
 
@@ -341,13 +349,18 @@ private:
     private:
         /// The magic is also used for byte order detection.
         /// The value of the magic was obtained from a random number generator, it does not mean anything.
-        static constexpr std::uint64_t ReferenceMagic = 0x5E44'1514'6FC0'C4C7ULL;
+        static constexpr std::uint64_t                           ReferenceMagic = 0x5E44'1514'6FC0'C4C7ULL;
+        static constexpr std::array<std::uint8_t, SignatureSize> ReferenceSignature{
+            {'A', 'P', 'D', 'e', 's', 'c', '0', '0'}};
 
-        std::uint64_t magic;
-        AppInfo       app_info;
+        std::uint64_t                           magic;
+        std::array<std::uint8_t, SignatureSize> signature;
+        AppInfo                                 app_info;
     };
     static_assert(std::is_trivial_v<AppDescriptor>, "Check your compiler");
-    static_assert((AppInfo::Size + AppDescriptor::MagicSize) == sizeof(AppDescriptor), "Check your compiler");
+    static_assert((AppInfo::Size + AppDescriptor::MagicSize + AppDescriptor::SignatureSize) == sizeof(AppDescriptor),
+                  "Check your compiler");
+    static_assert(64 == sizeof(AppDescriptor), "Check your compiler");
 
     [[nodiscard]] auto validateImageCRC(const std::size_t   crc_storage_offset,
                                         const std::size_t   image_size,
@@ -500,7 +513,7 @@ public:
     IController(const IController&)  = delete;
     IController(const IController&&) = delete;
     auto operator=(const IController&) -> IController& = delete;
-    auto operator=(const IController &&) -> IController& = delete;
+    auto operator=(const IController&&) -> IController& = delete;
 };
 
 /// Unifies multiple INode and performs DSDL serialization. Manages the network at the presentation layer.
@@ -615,8 +628,8 @@ public:
         buf[7]                   = static_cast<std::uint8_t>(severity);
         std::uint8_t text_length = 0;
         const char*  ch          = text;
-        const auto   buf_end     = std::end(buf);
-        for (auto it = std::begin(buf) + 9; it != buf_end; ++it)
+        auto* const  buf_end     = std::end(buf);
+        for (auto it = std::begin(buf) + 9; it != buf_end; ++it)  // NOLINT
         {
             if ('\0' == *ch)
             {
@@ -671,8 +684,8 @@ private:
         auto result = dsdl::ExecuteCommand::Status::InternalError;
         if (request_length >= dsdl::ExecuteCommand::RequestSizeMin)
         {
-            auto ptr     = request;
-            auto command = static_cast<std::uint16_t>(*ptr);
+            const auto* ptr     = request;
+            auto        command = static_cast<std::uint16_t>(*ptr);
             ++ptr;
             command = static_cast<std::uint16_t>(
                 command | static_cast<std::uint16_t>(static_cast<std::uint16_t>(*ptr) << BitsPerByte));
@@ -701,22 +714,22 @@ private:
 
     [[nodiscard]] auto processNodeInfoRequest(std::uint8_t* const out_response) const -> std::size_t
     {
-        const auto app_info = controller_.getAppInfo();
-        const auto base_ptr = out_response;
-        auto       ptr      = base_ptr;
-        *ptr++              = UAVCANSpecificationVersion.at(0);
-        *ptr++              = UAVCANSpecificationVersion.at(1);
-        *ptr++              = system_info_.hardware_version.at(0);
-        *ptr++              = system_info_.hardware_version.at(1);
+        const auto  app_info = controller_.getAppInfo();
+        auto* const base_ptr = out_response;
+        auto*       ptr      = base_ptr;
+        *ptr++               = UAVCANSpecificationVersion.at(0);
+        *ptr++               = UAVCANSpecificationVersion.at(1);
+        *ptr++               = system_info_.hardware_version.at(0);
+        *ptr++               = system_info_.hardware_version.at(1);
         if (app_info)
         {
-            *ptr++                   = app_info->version.at(0);
-            *ptr++                   = app_info->version.at(1);
-            std::uint64_t vcs_commit = app_info->vcs_commit;
+            *ptr++                        = app_info->version.at(0);
+            *ptr++                        = app_info->version.at(1);
+            std::uint64_t vcs_revision_id = app_info->vcs_revision_id;
             for (auto i = 0U; i < sizeof(std::uint64_t); i++)
             {
-                *ptr++ = static_cast<std::uint8_t>(vcs_commit);
-                vcs_commit >>= BitsPerByte;
+                *ptr++ = static_cast<std::uint8_t>(vcs_revision_id);
+                vcs_revision_id >>= BitsPerByte;
             }
         }
         else

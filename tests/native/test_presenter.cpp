@@ -10,7 +10,7 @@
 
 /// GENERATION OF REFERENCE SERIALIZED REPRESENTATIONS.
 /// Prepare the DSDL-generated packages:
-///     $ pyuavcan -vv dsdl-gen-pkg https://github.com/UAVCAN/public_regulated_data_types/archive/master.zip
+///     $ yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/master.zip
 /// Run PyUAVCAN:
 ///     >>> import pyuavcan, uavcan.node, uavcan.diagnostic, uavcan.file
 ///     >>> list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.Heartbeat_1_0(
@@ -235,10 +235,13 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     controller.setAppInfo(kocherga::AppInfo{
         0xBADC'0FFE'E0DD'F00DULL,
         0xD'EADBULL,
-        0xDEAD'DEAD'DEAD'DEADULL,
-        0,
-        2,
+        {},
         {3, 11},
+        2,
+        {},
+        1234567890,
+        0xDEAD'DEAD'DEAD'DEADULL,
+        {},
     });
     nodes.at(1).pushInput(Node::Input::NodeInfoRequest, Transfer(666, std::vector<std::uint8_t>{}, 1111));
     ts = std::chrono::microseconds{1'910'000};
