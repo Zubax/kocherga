@@ -19,7 +19,7 @@ TEST_CASE("AppLocator-good-simple")
     REQUIRE(info->image_size == 144);
     REQUIRE(info->image_crc == 0x452A'4267'971A'3928ULL);
     REQUIRE(info->vcs_revision_id == 0xBADC'0FFE'E0DD'F00DULL);
-    REQUIRE(info->isDebugBuild());
+    REQUIRE(info->isReleaseBuild());
     REQUIRE(!info->isDirtyBuild());
     REQUIRE(info->version.at(0) == 3);
     REQUIRE(info->version.at(1) == 1);
@@ -40,7 +40,7 @@ TEST_CASE("AppLocator-good-3rd-entry")
     REQUIRE(info->image_size == 576);
     REQUIRE(info->image_crc == 0x8B61'938E'E5F9'0B1FULL);
     REQUIRE(info->vcs_revision_id == 0x3333'3333'3333'3333ULL);
-    REQUIRE(!info->isDebugBuild());
+    REQUIRE(!info->isReleaseBuild());
     REQUIRE(info->isDirtyBuild());
     REQUIRE(info->version.at(0) == 5);
     REQUIRE(info->version.at(1) == 6);

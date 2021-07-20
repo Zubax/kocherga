@@ -31,23 +31,21 @@ inline auto checkHeartbeat(std::array<mock::Node, NumNodes>&               nodes
                            const std::optional<kocherga::TransferID>       tid,
                            const std::uint32_t                             uptime,
                            const kocherga::detail::dsdl::Heartbeat::Health health,
-                           const std::uint32_t                             vssc) -> bool
+                           const std::uint8_t                              vssc) -> bool
 {
     using kocherga::detail::dsdl::Heartbeat;
     for (auto& n : nodes)
     {
-        const mock::Transfer tr  = *n.popOutput(mock::Node::Output::HeartbeatMessage);
-        const auto           hmv = (vssc << 5U) | static_cast<std::uint32_t>(Heartbeat::ModeSoftwareUpdate << 2U) |
-                         static_cast<std::uint32_t>(health);
+        const mock::Transfer tr = *n.popOutput(mock::Node::Output::HeartbeatMessage);
         const mock::Transfer ref(tid ? *tid : tr.transfer_id,
                                  {
                                      static_cast<std::uint8_t>(uptime >> 0U),
                                      static_cast<std::uint8_t>(uptime >> 8U),
                                      static_cast<std::uint8_t>(uptime >> 16U),
                                      static_cast<std::uint8_t>(uptime >> 24U),
-                                     static_cast<std::uint8_t>(hmv >> 0U),
-                                     static_cast<std::uint8_t>(hmv >> 8U),
-                                     static_cast<std::uint8_t>(hmv >> 24U),
+                                     static_cast<std::uint8_t>(health),
+                                     static_cast<std::uint8_t>(Heartbeat::ModeSoftwareUpdate),
+                                     static_cast<std::uint8_t>(vssc),
                                  });
         if (tr != ref)
         {
@@ -82,7 +80,7 @@ TEST_CASE("Bootloader-fast-boot")
     REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
-    REQUIRE(ai.isDebugBuild());
+    REQUIRE(ai.isReleaseBuild());
     REQUIRE(!ai.isDirtyBuild());
 }
 
@@ -105,7 +103,7 @@ TEST_CASE("Bootloader-boot-delay")
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
-    REQUIRE(!ai.isDebugBuild());
+    REQUIRE(!ai.isReleaseBuild());
     REQUIRE(ai.isDirtyBuild());
 
     REQUIRE(!bl.poll(900ms));
@@ -139,7 +137,7 @@ TEST_CASE("Bootloader-linger-reboot")
     REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
     REQUIRE(3 == ai.version.at(0));
     REQUIRE(1 == ai.version.at(1));
-    REQUIRE(ai.isDebugBuild());
+    REQUIRE(ai.isReleaseBuild());
     REQUIRE(!ai.isDirtyBuild());
 
     nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest, Transfer(444, {255, 255, 0}, 2222));
@@ -176,19 +174,20 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
-    REQUIRE(!ai.isDebugBuild());
+    REQUIRE(!ai.isReleaseBuild());
     REQUIRE(ai.isDirtyBuild());
 
     // REQUEST UPDATE
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
-    //    uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE,
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
+    //    uavcan.node.ExecuteCommand_1_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE,
     //    'good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin'))))
     nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(444,
-                                   {253, 255, 65,  103, 111, 111, 100, 45, 108, 101, 45,  51,  114, 100, 45,  101, 110,
-                                    116, 114, 121, 45,  53,  46,  54,  46, 51,  51,  51,  51,  51,  51,  51,  51,  51,
-                                    51,  51,  51,  51,  51,  51,  51,  46, 54,  48,  99,  99,  57,  54,  52,  53,  54,
-                                    56,  98,  102, 98,  54,  98,  48,  44, 100, 105, 114, 116, 121, 46,  105, 109, 103},
+                                   {253, 255, 69,  103, 111, 111, 100, 45,  108, 101, 45,  51, 114, 100, 45,
+                                    101, 110, 116, 114, 121, 45,  53,  46,  54,  46,  51,  51, 51,  51,  51,
+                                    51,  51,  51,  51,  51,  51,  51,  51,  51,  51,  51,  46, 56,  98,  54,
+                                    49,  57,  51,  56,  101, 101, 53,  102, 57,  48,  98,  49, 102, 46,  97,
+                                    112, 112, 46,  100, 105, 114, 116, 121, 46,  98,  105, 110},
                                    0));
     REQUIRE(!bl.poll(2'100ms));
     REQUIRE(checkHeartbeat(nodes, 1, 2, Heartbeat::Health::Nominal, 0));
@@ -200,15 +199,15 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(nodes.at(1).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
-    //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
+    //      uavcan.file.Path_2_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
     const auto received = *nodes.at(1).popOutput(Node::Output::FileReadRequest);
     const auto reference =
         Transfer(1,
-                 {0,   0,   0,   0,   0,   65, 103, 111, 111, 100, 45,  108, 101, 45, 51,  114, 100, 45,
-                  101, 110, 116, 114, 121, 45, 53,  46,  54,  46,  51,  51,  51,  51, 51,  51,  51,  51,
-                  51,  51,  51,  51,  51,  51, 51,  51,  46,  54,  48,  99,  99,  57, 54,  52,  53,  54,
-                  56,  98,  102, 98,  54,  98, 48,  44,  100, 105, 114, 116, 121, 46, 105, 109, 103},
+                 {0,   0,   0,   0,   0,  69, 103, 111, 111, 100, 45,  108, 101, 45,  51,  114, 100, 45,  101,
+                  110, 116, 114, 121, 45, 53, 46,  54,  46,  51,  51,  51,  51,  51,  51,  51,  51,  51,  51,
+                  51,  51,  51,  51,  51, 51, 46,  56,  98,  54,  49,  57,  51,  56,  101, 101, 53,  102, 57,
+                  48,  98,  49,  102, 46, 97, 112, 112, 46,  100, 105, 114, 116, 121, 46,  98,  105, 110},
                  0);
     std::cout << received.toString() << reference.toString() << std::endl;
     REQUIRE(received == reference);
@@ -217,14 +216,14 @@ TEST_CASE("Bootloader-update-valid")
     // The serialized representation was constructed manually from the binary file
     nodes.at(1).pushInput(Node::Input::FileReadResponse,
                           Transfer(0,
-                                   {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 33,  32,
-                                    32,  32,  32,  199, 196, 192, 111, 20,  21,  68,  94,  136, 122, 46,  208, 126, 177,
-                                    140, 190, 104, 0,   0,   0,   0,   0,   0,   0,   13,  240, 221, 224, 254, 15,  220,
-                                    186, 0,   0,   0,   0,   1,   0,   3,   1,   0,   0,   0,   0,   0,   0,   1,   16,
-                                    0,   0,   84,  104, 101, 32,  97,  112, 112, 108, 105, 99,  97,  116, 105, 111, 110,
-                                    32,  105, 109, 97,  103, 101, 32,  103, 111, 101, 115, 32,  104, 101, 114, 101, 0,
-                                    0,   0,   0,   0,   0,   0,   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
+                                   {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 63,  32,
+                                    32,  32,  32,  199, 196, 192, 111, 20,  21,  68,  94,  65,  80,  68,  101, 115, 99,
+                                    48,  48,  124, 194, 145, 71,  22,  198, 82,  134, 64,  2,   0,   0,   0,   0,   0,
+                                    0,   1,   16,  0,   0,   210, 2,   150, 73,  13,  240, 221, 224, 254, 15,  220, 186,
+                                    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+                                    0,   126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126,
+                                    126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126,
+                                    126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126},
                                    0));
     (void) bl.poll(2'300ms);  // Results will appear on the SECOND poll.
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'400ms));
@@ -236,12 +235,12 @@ TEST_CASE("Bootloader-update-valid")
 
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
-    REQUIRE(0x452A'4267'971A'3928ULL == ai.image_crc);
-    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
-    REQUIRE(3 == ai.version.at(0));
-    REQUIRE(1 == ai.version.at(1));
-    REQUIRE(ai.isDebugBuild());
-    REQUIRE(!ai.isDirtyBuild());
+    REQUIRE(0x8B61'938E'E5F9'0B1FULL == ai.image_crc);
+    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
+    REQUIRE(5 == ai.version.at(0));
+    REQUIRE(6 == ai.version.at(1));
+    REQUIRE(!ai.isReleaseBuild());
+    REQUIRE(ai.isDirtyBuild());
 }
 
 TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
@@ -273,16 +272,16 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
-    REQUIRE(!ai.isDebugBuild());
+    REQUIRE(!ai.isReleaseBuild());
     REQUIRE(ai.isDirtyBuild());
 
     // REQUEST UPDATE
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
-    //    uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, 'bad-le-crc-x3.bin'))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
+    //    uavcan.node.ExecuteCommand_1_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, 'bad-le-crc-x3.bin'))))
     nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(111,
                                    {253, 255, 17, 98, 97,  100, 45, 108, 101, 45,
-                                    99,  114, 99, 45, 120, 51,  46, 105, 109, 103},
+                                    99,  114, 99, 45, 120, 51,  46, 98,  105, 110},
                                    1111));
     REQUIRE(!bl.poll(1'600ms));
     REQUIRE((*nodes.at(0).popOutput(Node::Output::ExecuteCommandResponse)) ==
@@ -294,12 +293,12 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     // FIRST READ REQUEST
     REQUIRE(!bl.poll(2'200ms));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
-    //      uavcan.file.Path_1_0('bad-le-crc-x3.bin')))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
+    //      uavcan.file.Path_2_0('bad-le-crc-x3.bin')))))
     auto received = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
     auto reference =
         Transfer(1,
-                 {0, 0, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 105, 109, 103},
+                 {0, 0, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 98, 105, 110},
                  1111);
     std::cout << received.toString() << reference.toString() << std::endl;
     REQUIRE(received == reference);
@@ -339,11 +338,10 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
 
     // SECOND READ REQUEST
     REQUIRE(!bl.poll(3'300ms));
-    received = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
-    reference =
-        Transfer(2,
-                 {0, 1, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 105, 109, 103},
-                 1111);
+    received  = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
+    reference = Transfer(2,
+                         {0, 1, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 98, 105, 110},
+                         1111);
     std::cout << received.toString() << reference.toString() << std::endl;
     REQUIRE(received == reference);
 
@@ -448,13 +446,13 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
     REQUIRE(5 == ai.version.at(0));
     REQUIRE(6 == ai.version.at(1));
-    REQUIRE(!ai.isDebugBuild());
+    REQUIRE(!ai.isReleaseBuild());
     REQUIRE(ai.isDirtyBuild());
 
     // MANUAL UPDATE TRIGGER
     const auto* const path =
         reinterpret_cast<const std::uint8_t*>("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
-    bl.trigger<2>(2222, 65, path);
+    bl.trigger<2>(2222, 69, path);
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
     REQUIRE(!bl.poll(1'100ms));
     REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal, 1));
@@ -466,15 +464,15 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(nodes.at(2).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0,
-    //      uavcan.file.Path_1_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
+    //      uavcan.file.Path_2_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
     const auto received = *nodes.at(2).popOutput(Node::Output::FileReadRequest);
     const auto reference =
         Transfer(1,
-                 {0,   0,   0,   0,   0,   65, 103, 111, 111, 100, 45,  108, 101, 45, 51,  114, 100, 45,
-                  101, 110, 116, 114, 121, 45, 53,  46,  54,  46,  51,  51,  51,  51, 51,  51,  51,  51,
-                  51,  51,  51,  51,  51,  51, 51,  51,  46,  54,  48,  99,  99,  57, 54,  52,  53,  54,
-                  56,  98,  102, 98,  54,  98, 48,  44,  100, 105, 114, 116, 121, 46, 105, 109, 103},
+                 {0,   0,   0,   0,   0,  69, 103, 111, 111, 100, 45,  108, 101, 45,  51,  114, 100, 45,  101,
+                  110, 116, 114, 121, 45, 53, 46,  54,  46,  51,  51,  51,  51,  51,  51,  51,  51,  51,  51,
+                  51,  51,  51,  51,  51, 51, 46,  56,  98,  54,  49,  57,  51,  56,  101, 101, 53,  102, 57,
+                  48,  98,  49,  102, 46, 97, 112, 112, 46,  100, 105, 114, 116, 121, 46,  98,  105, 110},
                  2222);
     std::cout << received.toString() << reference.toString() << std::endl;
     REQUIRE(received == reference);
@@ -483,14 +481,14 @@ TEST_CASE("Bootloader-trigger")
     // The serialized representation was constructed manually from the binary file
     nodes.at(2).pushInput(Node::Input::FileReadResponse,
                           Transfer(0,
-                                   {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 33,  32,
-                                    32,  32,  32,  199, 196, 192, 111, 20,  21,  68,  94,  136, 122, 46,  208, 126, 177,
-                                    140, 190, 104, 0,   0,   0,   0,   0,   0,   0,   13,  240, 221, 224, 254, 15,  220,
-                                    186, 0,   0,   0,   0,   1,   0,   3,   1,   0,   0,   0,   0,   0,   0,   1,   16,
-                                    0,   0,   84,  104, 101, 32,  97,  112, 112, 108, 105, 99,  97,  116, 105, 111, 110,
-                                    32,  105, 109, 97,  103, 101, 32,  103, 111, 101, 115, 32,  104, 101, 114, 101, 0,
-                                    0,   0,   0,   0,   0,   0,   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-                                    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
+                                   {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 63,  32,
+                                    32,  32,  32,  199, 196, 192, 111, 20,  21,  68,  94,  65,  80,  68,  101, 115, 99,
+                                    48,  48,  124, 194, 145, 71,  22,  198, 82,  134, 64,  2,   0,   0,   0,   0,   0,
+                                    0,   1,   16,  0,   0,   210, 2,   150, 73,  13,  240, 221, 224, 254, 15,  220, 186,
+                                    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+                                    0,   126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126,
+                                    126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126,
+                                    126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126},
                                    2222));
     (void) bl.poll(1'300ms);  // Results will appear on the SECOND poll.
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
@@ -503,16 +501,16 @@ TEST_CASE("Bootloader-trigger")
 
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
-    REQUIRE(0x452A'4267'971A'3928ULL == ai.image_crc);
-    REQUIRE(0xBADC'0FFE'E0DD'F00DULL == ai.vcs_revision_id);
-    REQUIRE(3 == ai.version.at(0));
-    REQUIRE(1 == ai.version.at(1));
-    REQUIRE(ai.isDebugBuild());
-    REQUIRE(!ai.isDirtyBuild());
+    REQUIRE(0x8B61'938E'E5F9'0B1FULL == ai.image_crc);
+    REQUIRE(0x3333'3333'3333'3333ULL == ai.vcs_revision_id);
+    REQUIRE(5 == ai.version.at(0));
+    REQUIRE(6 == ai.version.at(1));
+    REQUIRE(!ai.isReleaseBuild());
+    REQUIRE(ai.isDirtyBuild());
 
     // BAD TRIGGER, GOOD TRIGGER
-    REQUIRE(bl.trigger(&nodes.at(0), 0, 65, path));
+    REQUIRE(bl.trigger(&nodes.at(0), 0, 69, path));
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
     const mock::Node stray_node;
-    REQUIRE(!bl.trigger(&stray_node, 0, 65, path));
+    REQUIRE(!bl.trigger(&stray_node, 0, 69, path));
 }

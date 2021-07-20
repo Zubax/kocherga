@@ -14,10 +14,10 @@
 /// Run PyUAVCAN:
 ///     >>> import pyuavcan, uavcan.node, uavcan.diagnostic, uavcan.file
 ///     >>> list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.Heartbeat_1_0(
-///             mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE,
-///             health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY,
+///             mode=uavcan.node.Mode_1_0(uavcan.node.Mode_1_0.SOFTWARE_UPDATE),
+///             health=uavcan.node.Health_1_0(uavcan.node.Health_1_0.ADVISORY),
 ///             uptime=1))))
-///     [1, 0, 0, 0, 13, 0, 0]
+///     [1, 0, 0, 0, 1, 3, 0]
 namespace
 {
 class MockController : public kocherga::detail::IController
@@ -99,10 +99,11 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     }
 
     // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.Heartbeat_1_0(
-    //      mode=uavcan.node.Heartbeat_1_0.MODE_SOFTWARE_UPDATE, health=uavcan.node.Heartbeat_1_0.HEALTH_ADVISORY,
-    //      uptime=1, vendor_specific_status_code=0x7dead))))
+    //      mode=uavcan.node.Mode_1_0(uavcan.node.Mode_1_0.SOFTWARE_UPDATE),
+    //      health=uavcan.node.Health_1_0(uavcan.node.Health_1_0.ADVISORY),
+    //      uptime=1, vendor_specific_status_code=0x7d))))
     pres.setNodeHealth(kocherga::detail::dsdl::Heartbeat::Health::Advisory);
-    pres.setNodeVSSC(132);
+    pres.setNodeVSSC(125);
     ts = std::chrono::microseconds{1'500'000};
     pres.poll(ts);
     for (auto& n : nodes)
@@ -110,10 +111,10 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
         REQUIRE(n.getLastPollTime() == ts);
         const auto tr = *n.popOutput(Node::Output::HeartbeatMessage);
         std::cout << tr.toString() << std::endl;
-        REQUIRE(tr == Transfer(0, {1, 0, 0, 0, 173, 213, 251}));
+        REQUIRE(tr == Transfer(0, {1, 0, 0, 0, 1, 3, 125}));
     }
 
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_0(
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_1(
     //      severity=uavcan.diagnostic.Severity_1_0(uavcan.diagnostic.Severity_1_0.NOTICE),
     //      text='Hello world!'))))
     pres.publishLogRecord(kocherga::detail::dsdl::Diagnostic::Severity::Notice, "Hello world!");
@@ -125,7 +126,7 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
                 Transfer(0, {0, 0, 0, 0, 0, 0, 0, 3, 12, 72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 33}));
     }
 
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_0(
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.diagnostic.Record_1_1(
     //      severity=uavcan.diagnostic.Severity_1_0(uavcan.diagnostic.Severity_1_0.CRITICAL),
     //      text='We are going to die :)'))))
     pres.publishLogRecord(kocherga::detail::dsdl::Diagnostic::Severity::Critical, "We are going to die :)");
@@ -140,8 +141,8 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     // Fails because the remote node-ID is not yet known.
     REQUIRE(!pres.requestFileRead(0xB'ADBA'DBADULL));
 
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
-    //      uavcan.node.ExecuteCommand_1_0.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, '/foo/bar/baz.app.bin'))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
+    //      uavcan.node.ExecuteCommand_1_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, '/foo/bar/baz.app.bin'))))
     nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(123,
                                    {253, 255, 20,  47, 102, 111, 111, 47, 98, 97,  114, 47,
@@ -159,8 +160,8 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
             Transfer(123, {0, 0, 0, 0, 0, 0, 0}, 3210));
 
     // The file location is known now.
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Request(0xbadbadbad,
-    //      uavcan.file.Path_1_0('/foo/bar/baz.app.bin')))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0xbadbadbad,
+    //      uavcan.file.Path_2_0('/foo/bar/baz.app.bin')))))
     REQUIRE(pres.requestFileRead(0xB'ADBA'DBADULL));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
@@ -183,8 +184,8 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     REQUIRE(!nodes.at(1).popOutput(Node::Output::ExecuteCommandResponse));
 
     // Reboot request.
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_0.Request(
-    //      uavcan.node.ExecuteCommand_1_0.Request.COMMAND_RESTART, ''))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
+    //      uavcan.node.ExecuteCommand_1_1.Request.COMMAND_RESTART, ''))))
     nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest, Transfer(444, {255, 255, 0}, 2222));
     ts = std::chrono::microseconds{1'800'000};
     pres.poll(ts);
@@ -285,13 +286,13 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
         REQUIRE(n.getLastPollTime() == ts);
         const auto tr = *n.popOutput(Node::Output::HeartbeatMessage);
         std::cout << tr.toString() << std::endl;
-        REQUIRE(tr == Transfer(1, {2, 0, 0, 0, 15, 0, 0}));
+        REQUIRE(tr == Transfer(1, {2, 0, 0, 0, 3, 3, 0}));
     }
 
     // Deliver the file read response.
     // Remember that the second update request was rejected so the actual file location is the old one.
     // This one will be rejected because it's the wrong node.
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_0.Response(uavcan.file.Error_1_0(0), b'The data.'))))
+    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Response(uavcan.file.Error_1_0(0), b'The data.'))))
     nodes.at(0).pushInput(Node::Input::FileReadResponse,
                           Transfer(0, {0, 0, 9, 0, 84, 104, 101, 32, 100, 97, 116, 97, 46}, 3210));
     ts = std::chrono::microseconds{2'200'000};

@@ -496,7 +496,7 @@ private:
         TransferID transfer_id{};
     };
 
-    static constexpr auto MaxBytesToProcessPerPoll = MaxSerializedRepresentationSize * 3U;
+    static constexpr auto MaxBytesToProcessPerPoll = MaxSerializedRepresentationSize * 2U;
 
     const SystemInfo::UniqueID unique_id_;
 

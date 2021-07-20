@@ -73,11 +73,11 @@ struct AppInfo
 
     struct Flags
     {
-        static constexpr std::uint8_t DebugBuild = 1U;
-        static constexpr std::uint8_t DirtyBuild = 2U;
+        static constexpr std::uint8_t ReleaseBuild = 1U;
+        static constexpr std::uint8_t DirtyBuild   = 2U;
     };
 
-    [[nodiscard]] auto isDebugBuild() const { return (flags & Flags::DebugBuild) != 0; }
+    [[nodiscard]] auto isReleaseBuild() const { return (flags & Flags::ReleaseBuild) != 0; }
     [[nodiscard]] auto isDirtyBuild() const { return (flags & Flags::DirtyBuild) != 0; }
 };
 static_assert(std::is_trivial_v<AppInfo>, "Check your compiler.");
