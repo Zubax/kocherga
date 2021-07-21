@@ -15,7 +15,7 @@ endif()
 
 set(library_dir "${CMAKE_SOURCE_DIR}/../../kocherga")
 
-file(GLOB FORMAT_FILES
+file(GLOB_RECURSE FORMAT_FILES
      ${library_dir}/*.hpp
      ${CMAKE_SOURCE_DIR}/*.[ch]pp)
 
