@@ -8,6 +8,215 @@
 #include <iostream>
 #include <numeric>
 
+TEST_CASE("serial::COBSEncoder")
+{
+    using kocherga::serial::detail::COBSEncoder;
+    using Buf = std::vector<std::uint8_t>;
+
+    struct Rig
+    {
+        Rig() :
+            enc([this](const std::uint8_t x) {
+                this->out.push_back(x);
+                return true;
+            })
+        {}
+
+        std::vector<std::uint8_t>                      out;
+        COBSEncoder<std::function<bool(std::uint8_t)>> enc;
+    };
+
+    {  // import cobs.cobs; cobs.cobs.encode(b'\x00')
+        Rig rig;
+        REQUIRE(rig.enc.push(0));
+        REQUIRE(rig.enc.end());
+        REQUIRE(rig.out == Buf{0, 1, 1, 0});
+    }
+
+    {  // import cobs.cobs; cobs.cobs.encode(b'\x01')
+        Rig rig;
+        REQUIRE(rig.enc.push(1));
+        REQUIRE(rig.enc.end());
+        REQUIRE(rig.out == Buf{0, 2, 1, 0});
+    }
+
+    {  // Reference taken from https://github.com/cmcqueen/cobs-c
+        Rig rig;
+        REQUIRE(rig.enc.push(0x2F));
+        REQUIRE(rig.enc.push(0xA2));
+        REQUIRE(rig.enc.push(0x00));
+        REQUIRE(rig.enc.push(0x92));
+        REQUIRE(rig.enc.push(0x73));
+        REQUIRE(rig.enc.push(0x02));
+        REQUIRE(rig.enc.end());
+        REQUIRE(rig.out == Buf{0x00, 0x03, 0x2F, 0xA2, 0x04, 0x92, 0x73, 0x02, 0x00});
+    }
+
+    {  // import cobs.cobs; cobs.cobs.encode(b'\x01' * 600)
+        Rig rig;
+        for (auto i = 0; i < 600; i++)
+        {
+            REQUIRE(rig.enc.push(1));
+        }
+        REQUIRE(rig.enc.end());
+        const Buf ref{
+            0,    // head delimiter
+            255,  // length code
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  //
+            255,                                                                                         // length code
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  //
+            93,                                                                                          // length code
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  //
+            0,                                                                                     // tail delimiter
+        };
+        assert(ref.size() == 603 + 2);
+        REQUIRE(rig.out == ref);
+    }
+}
+
+TEST_CASE("serial::transmit")
+{
+    using kocherga::serial::detail::transmit;
+    using kocherga::serial::detail::Transfer;
+
+    // The reference dump has been obtained as follows:
+    // import pyuavcan.serial
+    // tr = pyuavcan.transport.serial.SerialTransport('loop://', local_node_id=1234, baudrate=115200)
+    // pm = pyuavcan.transport.PayloadMetadata(1024)
+    // ds = pyuavcan.transport.MessageDataSpecifier(2345)
+    // pub = tr.get_output_session(pyuavcan.transport.OutputSessionSpecifier(ds, None), pm)
+    // caps = []
+    // tr.begin_capture(caps.append)
+    // pub.send(pyuavcan.transport.Transfer(pyuavcan.transport.Timestamp.now(), pyuavcan.transport.Priority.LOW,
+    //                                      1111, fragmented_payload=[]),
+    //          tr.loop.time() + 1.0)
+    // print(caps)
+    {
+        const std::vector<std::uint8_t> reference = {
+            0x00,                                            // starting delimiter
+            0x01,                                            // COBS starting stuff byte, next byte zero
+            0x08,                                            // version 0, next zero 8 bytes later
+            0x05,                                            // priority low
+            0xd2, 0x04,                                      // src node-ID  1234
+            0xff, 0xff,                                      // dst node-ID  broadcast
+            0x29, 0x09,                                      // subject-ID   2345
+            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x03,  // reserved zeros
+            0x57, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,  // transfer-ID  1111
+            0x01, 0x01, 0x06, 0x80,                          // frame index EOT 0x80000000 (single-frame transfer)
+            0x02, 0xf4, 0x6f, 0x2a,                          // header CRC  0x2a6ff402
+            0x01, 0x01, 0x01, 0x01,                          // payload CRC 0x00000000
+            0x00                                             // final delimiter
+        };
+        std::vector<std::uint8_t> history;
+        REQUIRE(transmit(
+            [&history](const auto bt) {
+                history.push_back(bt);
+                return true;
+            },
+            Transfer{
+                Transfer::Metadata{
+                    5,
+                    1234,
+                    Transfer::Metadata::AnonymousNodeID,  // Broadcast
+                    2345,
+                    1111,
+                },
+                0,
+                nullptr,
+            }));
+        REQUIRE(reference == history);
+    }
+
+    // The second test is like above but with the payload set to b'\x00\x01\x02'
+    {
+        const std::vector<std::uint8_t> reference = {
+            0x00,                                            // starting delimiter
+            0x01,                                            // COBS starting stuff byte, next byte zero
+            0x08,                                            // version 0, next zero 8 bytes later
+            0x05,                                            // priority low
+            0xd2, 0x04,                                      // src node-ID  1234
+            0xff, 0xff,                                      // dst node-ID  broadcast
+            0x29, 0x09,                                      // subject-ID   2345
+            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x03,  // reserved zeros
+            0x57, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,  // transfer-ID  1111
+            0x01, 0x01, 0x06, 0x80,                          // frame index EOT 0x80000000 (single-frame transfer)
+            0x02, 0xf4, 0x6f, 0x2a,                          // header CRC  0x2a6ff402
+            0x07, 0x01, 0x02,                                // payload [0, 1, 2]
+            0xfa, 0x4b, 0xfd, 0x92,                          // payload CRC
+            0x00,                                            // final delimiter
+        };
+        std::vector<std::uint8_t> history;
+        REQUIRE(transmit(
+            [&history](const auto bt) {
+                history.push_back(bt);
+                return true;
+            },
+            Transfer{
+                Transfer::Metadata{
+                    5,
+                    1234,
+                    Transfer::Metadata::AnonymousNodeID,  // Broadcast
+                    2345,
+                    1111,
+                },
+                3,
+                reinterpret_cast<const std::uint8_t*>("\x00\x01\x02"),
+            }));
+        REQUIRE(reference == history);
+    }
+
+    // Failure case
+    {
+        std::array<std::uint8_t, 300> buf{};
+        std::uint32_t                 fail_after = 0;
+        std::uint32_t                 num_sent   = 0;
+        const auto                    feed_abort = [&fail_after, &num_sent](const auto bt) {
+            (void) bt;
+            if (fail_after > 0)
+            {
+                --fail_after;
+                ++num_sent;
+                return true;
+            }
+            return false;
+        };
+        for (auto i = 0U; i < 300U; i++)
+        {
+            num_sent   = 0;
+            fail_after = i;
+            REQUIRE(!transmit(feed_abort,
+                              Transfer{
+                                  Transfer::Metadata{
+                                      static_cast<std::uint8_t>(i % 8U),
+                                      static_cast<std::uint16_t>(i | 0x8E00U),
+                                      static_cast<std::uint16_t>(i | 0x9E00U),
+                                      0,
+                                      0,
+                                  },
+                                  std::min<std::size_t>(buf.size(), i),
+                                  buf.data(),
+                              }));
+            REQUIRE(num_sent == i);
+        }
+    }
+}
+
 TEST_CASE("serial::StreamParser")
 {
     using kocherga::serial::detail::StreamParser;
@@ -242,100 +451,4 @@ TEST_CASE("serial::StreamParser")
     REQUIRE(!feed(chunk));
     REQUIRE(!feed(get_crc(chunk).getBytes()));
     REQUIRE(!feed(std::vector<std::uint8_t>{0x9E}));
-}
-
-TEST_CASE("serial::transmit")
-{
-    using kocherga::serial::detail::StreamParser;
-    using kocherga::serial::detail::transmit;
-    using kocherga::serial::detail::Transfer;
-
-    StreamParser<10>             sp;
-    std::array<std::uint8_t, 90> buf{};
-    std::optional<Transfer>      rx;
-    std::vector<std::uint8_t>    history;
-
-    const auto feed = [&sp, &rx, &history](const auto bt) {
-        if (!rx)
-        {
-            history.push_back(bt);
-            rx = sp.update(bt);
-            return true;
-        }
-        return false;
-    };
-
-    buf = {5, 4, 3, 2, 1};
-    REQUIRE(transmit(feed,
-                     Transfer{
-                         Transfer::Metadata{
-                             4,
-                             0x8E9E,
-                             0x9E8E,
-                             0x8042,
-                             12'345'678'901'234'567'890ULL,
-                         },
-                         5,
-                         buf.data(),
-                     }));
-    REQUIRE(rx);
-    REQUIRE(rx->meta.priority == 4);
-    REQUIRE(rx->meta.source == 0x8E9E);
-    REQUIRE(rx->meta.destination == 0x9E8E);
-    REQUIRE(rx->meta.data_spec == 0x8042);
-    REQUIRE(rx->meta.transfer_id == 12'345'678'901'234'567'890ULL);
-    REQUIRE(0x42 == (*rx->meta.isRequest()));
-    REQUIRE(!rx->meta.isResponse());
-    REQUIRE(std::equal(std::begin(buf), std::begin(buf) + 5, rx->payload));
-    std::cout << "transmit:" << std::endl << util::makeHexDump(history) << std::endl;
-    const std::vector<std::uint8_t> reference{
-        0x9e,                                            // Head delimiter
-        0x00,                                            // Version
-        0x04,                                            // Priority
-        0x8e, 0x61, 0x8e, 0x71,                          // Source with escaping
-        0x8e, 0x71, 0x8e, 0x61,                          // Destination with escaping
-        0x42, 0x80,                                      // Data specifier
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Data type hash (zero)
-        0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer-ID
-        0x00, 0x00, 0x00, 0x80,                          // Frame index EOT
-        0x9f, 0x8d, 0xa1, 0x1d,                          // Header CRC
-        0x05, 0x04, 0x03, 0x02, 0x01,                    // Payload
-        0x44, 0xe5, 0x04, 0xd9,                          // Payload CRC
-        0x9e,                                            // Tail delimiter
-    };
-    REQUIRE_THAT(history, Catch::Matchers::Equals(reference));
-
-    // Transmission fails on the first byte because the result is not cleared.
-    REQUIRE(!transmit(feed, *rx));
-    history.clear();
-    rx = {};
-
-    std::uint8_t fail_after = 0;
-    const auto   feed_abort = [&sp, &rx, &fail_after](const auto bt) {
-        rx = sp.update(bt);
-        if (fail_after > 0)
-        {
-            --fail_after;
-            return true;
-        }
-        return false;
-    };
-
-    for (std::uint8_t i = 0U; i < 100U; i++)
-    {
-        fail_after = i;
-        REQUIRE(!transmit(feed_abort,
-                          Transfer{
-                              Transfer::Metadata{
-                                  static_cast<std::uint8_t>(i % 8U),
-                                  static_cast<std::uint16_t>(i | 0x8E00U),
-                                  static_cast<std::uint16_t>(i | 0x9E00U),
-                                  0x8E9EU,
-                                  0x9E8E'9E8EU,
-                              },
-                              std::min<std::size_t>(buf.size(), i),
-                              buf.data(),
-                          }));
-        REQUIRE(!rx);
-    }
 }

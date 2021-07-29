@@ -5,17 +5,16 @@
 #pragma once
 
 #include "kocherga.hpp"
+#include <cassert>
 #include <cstdlib>
 
 namespace kocherga::serial
 {
 namespace detail
 {
-static constexpr auto BitsPerByte = kocherga::detail::BitsPerByte;
+using kocherga::detail::BitsPerByte;
 
-/// Special byte stream values.
-static constexpr std::uint8_t FrameDelimiter = 0x9E;
-static constexpr std::uint8_t EscapePrefix   = 0x8E;
+constexpr std::uint8_t FrameDelimiter = 0x00;  ///< Zeros cannot occur in the stream thanks to COBS encoding.
 
 /// Reference values to check the header against.
 static constexpr std::uint8_t                FrameFormatVersion = 0;
@@ -57,6 +56,101 @@ private:
     static constexpr std::uint32_t Residue       = 0xB798'B438UL;
 
     std::uint32_t value_ = Xor;
+};
+
+/// This is used for COBS coding. The buffer resides in one of two possible states: IN and OUT.
+/// The initial state is IN, where push() can be used.
+/// The first time pop() is called, the buffer switches into the OUT state and remains in it until empty.
+/// While in the OUT state, pushing is not permitted.
+class LookaheadFIFO  // NOLINT
+{
+public:
+    /// Check size() before calling, otherwise the write pointer will wrap around to the beginning of the buffer.
+    [[nodiscard]] auto push(const std::uint8_t val) { buf_.at(in_++) = val; }
+
+    /// Returns empty if empty, meaning that the current state is PUSHING.
+    [[nodiscard]] auto pop() -> std::optional<std::uint8_t>
+    {
+        if (out_ < in_)
+        {
+            return buf_.at(out_++);
+        }
+        out_ = 0;
+        in_  = 0;
+        return {};
+    }
+
+    /// The number of bytes that currently reside in the queue.
+    [[nodiscard]] auto size() const { return in_; }
+
+private:
+    std::array<std::uint8_t, 256> buf_;
+    std::uint8_t                  in_  = 0;
+    std::uint8_t                  out_ = 0;
+};
+
+/// New instance shall be created per encoded frame.
+/// ByteWriter is of type (std::uint8_t) -> bool, returns true on success.
+template <typename ByteWriter>
+class COBSEncoder
+{
+public:
+    explicit COBSEncoder(ByteWriter byte_writer) : byte_writer_(byte_writer) {}
+
+    /// Invoke this function once per byte to transmit COBS-encoded bytestream.
+    /// The leading frame delimiter will be added automatically.
+    /// The instance shall be discarded immediately if this method returns false.
+    [[nodiscard]] auto push(const std::uint8_t b) -> bool
+    {
+        if (byte_count_ == 0)
+        {
+            if (!output(FrameDelimiter))
+            {
+                return false;
+            }
+        }
+        byte_count_++;
+        if (b != FrameDelimiter)
+        {
+            lookahead_.push(b);
+        }
+        if ((b == FrameDelimiter) || (lookahead_.size() >= (std::numeric_limits<std::uint8_t>::max() - 1)))
+        {
+            return flush();
+        }
+        return true;
+    }
+
+    /// This function shall be invoked at the end once.
+    /// The trailing frame delimiter will be added automatically.
+    /// The instance shall be discarded immediately if this method returns false.
+    [[nodiscard]] auto end() -> bool { return flush() && output(FrameDelimiter); }
+
+private:
+    [[nodiscard]] auto output(const std::uint8_t b) const -> bool { return byte_writer_(b); }
+
+    [[nodiscard]] auto flush() -> bool
+    {
+        const auto sz = lookahead_.size();
+        assert(sz < std::numeric_limits<std::uint8_t>::max());
+        if (!output(static_cast<std::uint8_t>(sz + 1U)))
+        {
+            return false;
+        }
+        while (auto b = lookahead_.pop())
+        {
+            if (!output(*b))
+            {
+                return false;
+            }
+        }
+        assert(lookahead_.size() == 0);
+        return true;
+    }
+
+    LookaheadFIFO lookahead_;
+    std::size_t   byte_count_ = 0;
+    ByteWriter    byte_writer_;
 };
 
 struct Transfer
@@ -110,63 +204,16 @@ public:
     [[nodiscard]] auto update(const std::uint8_t stream_byte) -> std::optional<Transfer>
     {
         std::optional<Transfer> out;
-        if (stream_byte == FrameDelimiter)
-        {
-            constexpr auto total_overhead = HeaderSize + CRC32C::Size;
-            if (inside_ && (offset_ >= total_overhead) && crc_.isResidueCorrect())
-            {
-                out = Transfer{
-                    meta_,
-                    offset_ - total_overhead,
-                    buf_.data(),
-                };
-            }
-            reset();
-            inside_ = true;
-        }
-        else if (inside_)  // Accept the byte
-        {
-            if (stream_byte == EscapePrefix)
-            {
-                if (unescape_)
-                {
-                    inside_ = false;  // Double escape cannot occur in a well-formed stream by design.
-                }
-                else
-                {
-                    unescape_ = true;
-                }
-            }
-            else
-            {
-                const std::uint8_t bt = unescape_ ? static_cast<std::uint8_t>(~stream_byte) : stream_byte;
-                unescape_             = false;
-                crc_.update(bt);
-                if (offset_ < HeaderSize)
-                {
-                    acceptHeader(bt);
-                }
-                else
-                {
-                    acceptPayload(bt);
-                }
-                ++offset_;
-            }
-        }
-        else
-        {
-            (void) 0;  // Not inside a frame, drop the byte.
-        }
+        (void) stream_byte;
+        // TODO FIXME implement
         return out;
     }
 
     void reset()
     {
-        offset_   = 0;
-        unescape_ = false;
-        inside_   = false;
-        crc_      = {};
-        meta_     = {};
+        offset_ = 0;
+        crc_    = {};
+        meta_   = {};
     }
 
 private:
@@ -174,7 +221,7 @@ private:
     {
         if ((OffsetVersion == offset_) && (bt != FrameFormatVersion))
         {
-            inside_ = false;
+            reset();
         }
         if (OffsetPriority == offset_)
         {
@@ -187,13 +234,13 @@ private:
         if ((OffsetFrameIndexEOT.first <= offset_) && (offset_ <= OffsetFrameIndexEOT.second) &&
             (FrameIndexEOTReference.at(offset_ - OffsetFrameIndexEOT.first) != bt))
         {
-            inside_ = false;
+            reset();
         }
         if (offset_ == (HeaderSize - 1U))
         {
             if (!crc_.isResidueCorrect())
             {
-                inside_ = false;  // Header CRC error.
+                reset();  // Header CRC error.
             }
             // At this point the header has been received and proven to be correct. Here, a generic implementation
             // would normally query the subscription list to see if the frame is interesting or it should be dropped;
@@ -213,7 +260,7 @@ private:
         }
         else
         {
-            inside_ = false;
+            reset();
         }
     }
 
@@ -243,9 +290,7 @@ private:
     static constexpr std::pair<std::size_t, std::size_t> OffsetTransferID{16, 23};
     static constexpr std::pair<std::size_t, std::size_t> OffsetFrameIndexEOT{24, 27};
 
-    std::size_t offset_   = 0;
-    bool        unescape_ = false;
-    bool        inside_   = false;
+    std::size_t offset_ = 0;
     CRC32C      crc_;
 
     Transfer::Metadata meta_;
@@ -253,26 +298,23 @@ private:
     std::array<std::uint8_t, MaxPayloadSize + CRC32C::Size> buf_{};
 };
 
-/// Sends a transfer without intermediate buffering.
+/// Sends a transfer with minimal buffering (some buffering is required by COBS) to save memory and reduce latency.
 /// Callback is of type (std::uint8_t) -> bool whose semantics reflects ISerialPort::send().
 /// Callback shall not be an std::function<> to avoid heap allocation.
 template <typename Callback>
 [[nodiscard]] inline auto transmit(const Callback& send_byte, const Transfer& tr) -> bool
 {
-    CRC32C     crc;
-    const auto out = [&send_byte, &crc](const std::uint8_t b) {
+    COBSEncoder<const Callback&> encoder(send_byte);
+    CRC32C                       crc;
+    const auto                   out = [&crc, &encoder](const std::uint8_t b) -> bool {
         crc.update(b);
-        if ((b == detail::FrameDelimiter) || (b == detail::EscapePrefix))
-        {
-            return send_byte(detail::EscapePrefix) && send_byte(static_cast<std::uint8_t>(~b));
-        }
-        return send_byte(b);
+        return encoder.push(b);
     };
-    const auto out2 = [&out](const std::uint16_t bb) {
+    const auto out2 = [&out](const std::uint16_t bb) -> bool {
         return out(static_cast<std::uint8_t>(bb)) && out(static_cast<std::uint8_t>(bb >> BitsPerByte));
     };
-    bool ok = send_byte(FrameDelimiter) && out(FrameFormatVersion) && out(tr.meta.priority) && out2(tr.meta.source) &&
-              out2(tr.meta.destination) && out2(tr.meta.data_spec);
+    bool ok = out(FrameFormatVersion) && out(tr.meta.priority) &&  //
+              out2(tr.meta.source) && out2(tr.meta.destination) && out2(tr.meta.data_spec);
     for (auto i = 0U; i < sizeof(std::uint64_t); i++)
     {
         ok = ok && out(0);
@@ -291,13 +333,13 @@ template <typename Callback>
     {
         ok = ok && out(x);
     }
-    crc             = {};
+    crc             = {};  // Now it's the payload CRC.
     const auto* ptr = tr.payload;
     for (std::size_t i = 0U; i < tr.payload_len; i++)
     {
         ok = ok && out(*ptr);
         ++ptr;
-        if (!ok)  // Early exit to avoid scanning the entire payload.
+        if (!ok)
         {
             break;
         }
@@ -306,7 +348,7 @@ template <typename Callback>
     {
         ok = ok && out(x);
     }
-    return ok && send_byte(FrameDelimiter);
+    return ok && encoder.end();
 }
 
 }  // namespace detail
@@ -364,7 +406,6 @@ private:
                 break;
             }
         }
-
         if ((!local_node_id_) && (uptime >= pnp_next_request_at_))
         {
             using kocherga::detail::dsdl::PnPNodeIDAllocation;
