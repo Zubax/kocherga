@@ -12,6 +12,9 @@
 #include <optional>
 #include <type_traits>
 
+#define KOCHERGA_VERSION_MAJOR 0  // NOLINT
+#define KOCHERGA_VERSION_MINOR 1  // NOLINT
+
 namespace kocherga
 {
 /// Semantic version number pair: major then minor.
@@ -37,9 +40,6 @@ enum class ServiceID : PortID
     NodeGetInfo        = 430,
     NodeExecuteCommand = 435,
 };
-
-/// Version of the library, major and minor.
-[[maybe_unused]] static constexpr SemanticVersion Version{{1, 0}};
 
 /// Version of the UAVCAN specification implemented by this library, major and minor.
 static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};

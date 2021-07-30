@@ -217,6 +217,147 @@ TEST_CASE("serial::transmit")
     }
 }
 
+TEST_CASE("serial::COBSDecoder")
+{
+    using kocherga::serial::detail::COBSDecoder;
+    using Buf = std::vector<std::uint8_t>;
+
+    COBSDecoder dec;
+
+    // If we only feed delimiters, we get empty packets out.
+    REQUIRE(std::holds_alternative<COBSDecoder::Delimiter>(dec.feed(0)));
+    REQUIRE(std::holds_alternative<COBSDecoder::Delimiter>(dec.feed(0)));
+
+    const auto decode = [&dec](const auto encoded) -> std::optional<std::vector<std::uint8_t>> {
+        std::vector<std::uint8_t> out;
+        for (std::uint8_t bt : encoded)
+        {
+            const auto res = dec.feed(bt);
+            if (const auto* out_byte = std::get_if<std::uint8_t>(&res))
+            {
+                out.push_back(*out_byte);
+            }
+            else if (std::holds_alternative<COBSDecoder::Delimiter>(res))
+            {
+                return out;
+            }
+            else
+            {
+                assert(std::holds_alternative<COBSDecoder::Nothing>(res));
+            }
+        }
+        return {};  // Return empty because unterminated.
+    };
+
+    // Valid packets.
+    REQUIRE(*decode(Buf{1, 1, 0}) == Buf{0});
+    REQUIRE(*decode(Buf{2, 1, 0}) == Buf{1});
+    REQUIRE(decode(Buf{0})->empty());
+    REQUIRE(*decode(Buf{0x03, 0x2F, 0xA2, 0x04, 0x92, 0x73, 0x02, 0x00}) == Buf{0x2F, 0xA2, 0x00, 0x92, 0x73, 0x02});
+    {
+        const Buf input{
+            255,  // length code
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  //
+            255,                                                                                         // length code
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  //
+            93,                                                                                          // length code
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1,   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,  //
+            0,                                                                                     // tail delimiter
+        };
+        assert(input.size() == 603 - 1 + 2);
+        const Buf ref(600, 1);
+        REQUIRE(*decode(input) == ref);
+    }
+    // Malformed packets are not detected, best effort handling.
+    REQUIRE(decode(Buf{3, 0})->empty());
+    // Successful recovery.
+    REQUIRE(*decode(Buf{0x03, 0x2F, 0xA2, 0x04, 0x92, 0x73, 0x02, 0x00}) == Buf{0x2F, 0xA2, 0x00, 0x92, 0x73, 0x02});
+}
+
+TEST_CASE("serial::COBS* roundtrip")
+{
+    using kocherga::serial::detail::COBSDecoder;
+    using kocherga::serial::detail::COBSEncoder;
+    using Buf = std::vector<std::uint8_t>;
+
+    static const auto synth_buf = []() -> Buf {
+        Buf out(util::getRandomInteger<std::uint16_t>());
+        for (auto& x : out)
+        {
+            x = util::getRandomInteger<std::uint8_t>();
+        }
+        return out;
+    };
+
+    // Generate many random packets.
+    std::vector<Buf> original_packets(100);
+    for (auto& x : original_packets)
+    {
+        x = synth_buf();
+    }
+
+    // Serialize all packets into one stream representing the transmission medium.
+    Buf encoded_stream;
+    for (const auto& in : original_packets)
+    {
+        COBSEncoder<std::function<bool(std::uint8_t)>> enc([&encoded_stream](const std::uint8_t x) {
+            encoded_stream.push_back(x);
+            return true;
+        });
+        for (auto x : in)
+        {
+            REQUIRE(enc.push(x));
+        }
+        REQUIRE(enc.end());
+    }
+    std::cout << "Encoded stream length: " << encoded_stream.size() << std::endl;
+
+    // Deserialize the packets back from the stream.
+    std::vector<Buf> decoded_packets;
+    COBSDecoder      dec;
+    Buf              out;
+    for (const auto& bt : encoded_stream)
+    {
+        const auto res = dec.feed(bt);
+        if (const auto* out_byte = std::get_if<std::uint8_t>(&res))
+        {
+            out.push_back(*out_byte);
+        }
+        else if (std::holds_alternative<COBSDecoder::Delimiter>(res))
+        {
+            if (!out.empty())
+            {
+                decoded_packets.push_back(out);
+                out.clear();
+            }
+        }
+        else
+        {
+            assert(std::holds_alternative<COBSDecoder::Nothing>(res));
+        }
+    }
+
+    // Compare the packets we've just deserialized against the original ones.
+    REQUIRE(decoded_packets.size() == original_packets.size());
+    REQUIRE(decoded_packets == original_packets);
+}
+
 TEST_CASE("serial::StreamParser")
 {
     using kocherga::serial::detail::StreamParser;

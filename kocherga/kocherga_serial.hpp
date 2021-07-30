@@ -7,6 +7,7 @@
 #include "kocherga.hpp"
 #include <cassert>
 #include <cstdlib>
+#include <variant>
 
 namespace kocherga::serial
 {
@@ -26,7 +27,7 @@ class CRC32C
 public:
     static constexpr std::size_t Size = 4;
 
-    void update(const std::uint8_t b)
+    void update(const std::uint8_t b) noexcept
     {
         value_ ^= static_cast<std::uint32_t>(b);
         for (auto i = 0U; i < BitsPerByte; i++)
@@ -35,9 +36,9 @@ public:
         }
     }
 
-    [[nodiscard]] auto get() const { return value_ ^ Xor; }
+    [[nodiscard]] auto get() const noexcept { return value_ ^ Xor; }
 
-    [[nodiscard]] auto getBytes() const -> std::array<std::uint8_t, Size>
+    [[nodiscard]] auto getBytes() const noexcept -> std::array<std::uint8_t, Size>
     {
         const auto x = get();
         return {
@@ -48,7 +49,7 @@ public:
         };
     }
 
-    [[nodiscard]] auto isResidueCorrect() const { return value_ == Residue; }
+    [[nodiscard]] auto isResidueCorrect() const noexcept { return value_ == Residue; }
 
 private:
     static constexpr std::uint32_t Xor           = 0xFFFF'FFFFUL;
@@ -58,39 +59,9 @@ private:
     std::uint32_t value_ = Xor;
 };
 
-/// This is used for COBS coding. The buffer resides in one of two possible states: IN and OUT.
-/// The initial state is IN, where push() can be used.
-/// The first time pop() is called, the buffer switches into the OUT state and remains in it until empty.
-/// While in the OUT state, pushing is not permitted.
-class LookaheadFIFO  // NOLINT
-{
-public:
-    /// Check size() before calling, otherwise the write pointer will wrap around to the beginning of the buffer.
-    [[nodiscard]] auto push(const std::uint8_t val) { buf_.at(in_++) = val; }
-
-    /// Returns empty if empty, meaning that the current state is PUSHING.
-    [[nodiscard]] auto pop() -> std::optional<std::uint8_t>
-    {
-        if (out_ < in_)
-        {
-            return buf_.at(out_++);
-        }
-        out_ = 0;
-        in_  = 0;
-        return {};
-    }
-
-    /// The number of bytes that currently reside in the queue.
-    [[nodiscard]] auto size() const { return in_; }
-
-private:
-    std::array<std::uint8_t, 256> buf_;
-    std::uint8_t                  in_  = 0;
-    std::uint8_t                  out_ = 0;
-};
-
 /// New instance shall be created per encoded frame.
 /// ByteWriter is of type (std::uint8_t) -> bool, returns true on success.
+/// This is an original implementation of the algorithm.
 template <typename ByteWriter>
 class COBSEncoder
 {
@@ -148,9 +119,77 @@ private:
         return true;
     }
 
+    class LookaheadFIFO final  // NOLINT
+    {
+    public:
+        /// Check size() before calling, otherwise the write pointer will wrap around to the beginning of the buffer.
+        [[nodiscard]] auto push(const std::uint8_t val) { buf_.at(in_++) = val; }
+
+        /// Returns empty if empty, meaning that the current state is PUSHING.
+        [[nodiscard]] auto pop() -> std::optional<std::uint8_t>
+        {
+            if (out_ < in_)
+            {
+                return buf_.at(out_++);
+            }
+            out_ = 0;
+            in_  = 0;
+            return {};
+        }
+
+        /// The number of bytes that currently reside in the queue.
+        [[nodiscard]] auto size() const noexcept { return in_; }
+
+    private:
+        std::array<std::uint8_t, 256> buf_;
+        std::uint8_t                  in_  = 0;
+        std::uint8_t                  out_ = 0;
+    };
+
     LookaheadFIFO lookahead_;
     std::size_t   byte_count_ = 0;
     ByteWriter    byte_writer_;
+};
+
+/// Constant-complexity COBS stream decoder extracts useful payload from a COBS-encoded stream of bytes in real time.
+/// It does not perform any error checking; the outer logic is responsible for that (e.g., using CRC).
+/// The implementation is derived from "Consistent Overhead Byte Stuffing" by Stuart Cheshire and Mary Baker, 1999.
+class COBSDecoder
+{
+public:
+    struct Delimiter  ///< Indicates that the previous packet is finished and the next one is started.
+    {};
+    struct Nothing  ///< Indicates that there is no output byte to provide in this update cycle.
+    {};
+    using Result = std::variant<Delimiter, Nothing, std::uint8_t>;
+
+    [[nodiscard]] auto feed(const std::uint8_t bt) -> Result
+    {
+        if (bt == 0)
+        {
+            code_ = Top;
+            copy_ = 0;
+            return Delimiter{};
+        }
+        if (copy_-- != 0)
+        {
+            return bt;
+        }
+        const auto old_code = code_;
+        assert(bt >= 1);
+        copy_ = bt - 1;
+        code_ = bt;
+        if (old_code != Top)
+        {
+            return std::uint8_t{0};
+        }
+        return Nothing{};
+    }
+
+private:
+    static constexpr std::uint8_t Top   = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t                  code_ = Top;
+    std::uint8_t                  copy_ = 0;
 };
 
 struct Transfer
@@ -170,7 +209,7 @@ struct Transfer
         std::uint16_t data_spec{};
         TransferID    transfer_id{};
 
-        [[nodiscard]] auto isRequest() const -> std::optional<PortID>
+        [[nodiscard]] auto isRequest() const noexcept -> std::optional<PortID>
         {
             if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecResponseFlag) == 0))
             {
@@ -179,7 +218,7 @@ struct Transfer
             return {};
         }
 
-        [[nodiscard]] auto isResponse() const -> std::optional<PortID>
+        [[nodiscard]] auto isResponse() const noexcept -> std::optional<PortID>
         {
             if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecResponseFlag) != 0))
             {
@@ -209,7 +248,7 @@ public:
         return out;
     }
 
-    void reset()
+    void reset() noexcept
     {
         offset_ = 0;
         crc_    = {};
@@ -333,15 +372,17 @@ template <typename Callback>
     {
         ok = ok && out(x);
     }
-    crc             = {};  // Now it's the payload CRC.
-    const auto* ptr = tr.payload;
-    for (std::size_t i = 0U; i < tr.payload_len; i++)
+    crc = {};  // Now it's the payload CRC.
     {
-        ok = ok && out(*ptr);
-        ++ptr;
-        if (!ok)
+        const auto* ptr = tr.payload;
+        for (std::size_t i = 0U; i < tr.payload_len; i++)
         {
-            break;
+            ok = ok && out(*ptr);
+            ++ptr;
+            if (!ok)
+            {
+                break;
+            }
         }
     }
     for (const auto x : crc.getBytes())
@@ -384,10 +425,10 @@ public:
     /// Set up the local node-ID manually instead of running PnP allocation.
     /// If a manual update is triggered, this shall be done beforehand.
     /// Do not set up the local node-ID more than once.
-    void setLocalNodeID(const NodeID node_id) { local_node_id_ = node_id; }
+    void setLocalNodeID(const NodeID node_id) noexcept { local_node_id_ = node_id; }
 
     /// Resets the state of the frame parser. Call it when the communication channel is reinitialized.
-    void reset() { stream_parser_.reset(); }
+    void reset() noexcept { stream_parser_.reset(); }
 
 private:
     void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
