@@ -2,45 +2,12 @@
 # Copyright (c) 2020 Zubax Robotics.
 # Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.19)
 enable_testing()
 
-project(kocherga_test CXX)
+project(kocherga_unittest CXX)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
-        "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
-        FORCE)
-endif()
-
-set(library_dir "${CMAKE_SOURCE_DIR}/../../kocherga")
-
-file(GLOB_RECURSE FORMAT_FILES
-     ${library_dir}/*.hpp
-     ${CMAKE_SOURCE_DIR}/*.[ch]pp)
-
-# Use -DNO_STATIC_ANALYSIS=1 to suppress static analysis.
-# If not suppressed, the tools used here shall be available, otherwise the build will fail.
-if (NOT NO_STATIC_ANALYSIS)
-    # clang-tidy (separate config files per directory)
-    find_program(clang_tidy NAMES clang-tidy-12 clang-tidy)
-    if (NOT clang_tidy)
-        message(FATAL_ERROR "Could not locate clang-tidy")
-    endif ()
-    message(STATUS "Using clang-tidy: ${clang_tidy}")
-    set(CMAKE_CXX_CLANG_TIDY ${clang_tidy})
-
-    # clang-format
-    find_program(clang_format NAMES clang-format-12 clang-format)
-    if (NOT clang_format)
-        message(FATAL_ERROR "Could not locate clang-format")
-    endif ()
-    file(GLOB FORMAT_FILES
-         ${library_dir}/*.hpp
-         ${CMAKE_SOURCE_DIR}/*.[ch]pp)
-    message(STATUS "Using clang-format: ${clang_format}; files: ${FORMAT_FILES}")
-    add_custom_target(format COMMAND ${clang_format} -i -fallback-style=none -style=file --verbose ${FORMAT_FILES})
-endif ()
+set(library_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../kocherga")
 
 # C++ options
 set(CXX_EXTENSIONS OFF)
@@ -65,12 +32,12 @@ function(gen_test name files compile_definitions compile_flags link_flags)
     set_target_properties(${name} PROPERTIES COMPILE_FLAGS "${compile_flags}" LINK_FLAGS "${link_flags}")
 
     add_test("run_${name}" "${name}" --rng-seed time)
-    set_tests_properties("run_${name}" PROPERTIES ENVIRONMENT SOURCE_DIR=${CMAKE_SOURCE_DIR})
+    set_tests_properties("run_${name}" PROPERTIES ENVIRONMENT SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR})
 endfunction()
 
 file(GLOB test_sources
-     ${CMAKE_SOURCE_DIR}/test_*.cpp
-     ${CMAKE_SOURCE_DIR}/serial/test_*.cpp)
+     ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/serial/test_*.cpp)
 gen_test("test_x64" "${test_sources}" "" "-m64" "-m64")
 gen_test("test_x32" "${test_sources}" "" "-m32" "-m32")
 if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
