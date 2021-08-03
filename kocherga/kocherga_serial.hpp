@@ -15,7 +15,7 @@ namespace detail
 {
 using kocherga::detail::BitsPerByte;
 
-constexpr std::uint8_t FrameDelimiter = 0x00;  ///< Zeros cannot occur in the stream thanks to COBS encoding.
+constexpr std::uint8_t FrameDelimiter = 0x00;  ///< Zeros cannot occur inside frames thanks to COBS encoding.
 
 /// Reference values to check the header against.
 static constexpr std::uint8_t                FrameFormatVersion = 0;
@@ -186,6 +186,9 @@ public:
         return Nothing{};
     }
 
+    /// Alias for feed(0).
+    void reset() { (void) feed(0); }
+
 private:
     static constexpr std::uint8_t Top   = std::numeric_limits<std::uint8_t>::max();
     std::uint8_t                  code_ = Top;
@@ -232,25 +235,66 @@ struct Transfer
     const std::uint8_t* payload     = nullptr;
 };
 
-/// UAVCAN/serial stream parser. Extracts UAVCAN/serial frames from raw stream of bytes.
+/// UAVCAN/serial stream parser. Extracts UAVCAN/serial frames from raw stream of bytes in constant time.
+/// Frames that contain more than MaxPayloadSize bytes of payload are rejected as invalid.
 template <std::size_t MaxPayloadSize>
 class StreamParser
 {
 public:
     /// If the byte completed a transfer, it will be returned.
-    /// The returned object contains a pointer to the payload buffer memory. The memory is invalidated on the second
-    /// call to update() after reception (the first call does not invalidate the memory).
+    /// The returned object contains a pointer to the payload buffer memory allocated inside this instance.
+    /// The buffer is invalidated on the 32-nd call to update() after reception.
     [[nodiscard]] auto update(const std::uint8_t stream_byte) -> std::optional<Transfer>
     {
         std::optional<Transfer> out;
-        (void) stream_byte;
-        // TODO FIXME implement
+        const auto              dec = decoder_.feed(stream_byte);
+        if (std::holds_alternative<COBSDecoder::Delimiter>(dec))
+        {
+            if (inside_ && (offset_ >= TotalOverheadSize) && crc_.isResidueCorrect())
+            {
+                out = Transfer{
+                    meta_,
+                    offset_ - TotalOverheadSize,
+                    buf_.data(),
+                };
+            }
+            reset();
+            inside_ = true;
+        }
+        else if (const std::uint8_t* const decoded_byte = std::get_if<std::uint8_t>(&dec))
+        {
+            crc_.update(*decoded_byte);
+            if (offset_ < HeaderSize)
+            {
+                acceptHeader(*decoded_byte);
+            }
+            else
+            {
+                const auto buf_offset = offset_ - HeaderSize;
+                if (buf_offset < buf_.size())
+                {
+                    buf_.at(buf_offset) = *decoded_byte;
+                }
+                else
+                {
+                    reset();
+                }
+            }
+            ++offset_;
+        }
+        else
+        {
+            assert(std::holds_alternative<COBSDecoder::Nothing>(dec));  // Stuff byte, skip silently.
+        }
         return out;
     }
 
+    /// Reset the decoder state machine, drop the current incomplete frame if any.
     void reset() noexcept
     {
+        decoder_.reset();
         offset_ = 0;
+        inside_ = false;
         crc_    = {};
         meta_   = {};
     }
@@ -290,19 +334,6 @@ private:
         }
     }
 
-    void acceptPayload(const std::uint8_t bt)
-    {
-        const auto buf_offset = offset_ - HeaderSize;
-        if (buf_offset < buf_.size())
-        {
-            buf_.at(buf_offset) = bt;
-        }
-        else
-        {
-            reset();
-        }
-    }
-
     template <typename Field>
     void acceptHeaderField(const std::pair<std::size_t, std::size_t> range, Field& fld, const std::uint8_t bt) const
     {
@@ -319,7 +350,8 @@ private:
         }
     }
 
-    static constexpr std::size_t HeaderSize = 32;
+    static constexpr std::size_t HeaderSize        = 32;
+    static constexpr std::size_t TotalOverheadSize = HeaderSize + CRC32C::Size;
     // Header field offsets.
     static constexpr std::size_t                         OffsetVersion  = 0;
     static constexpr std::size_t                         OffsetPriority = 1;
@@ -329,11 +361,11 @@ private:
     static constexpr std::pair<std::size_t, std::size_t> OffsetTransferID{16, 23};
     static constexpr std::pair<std::size_t, std::size_t> OffsetFrameIndexEOT{24, 27};
 
-    std::size_t offset_ = 0;
-    CRC32C      crc_;
-
-    Transfer::Metadata meta_;
-
+    COBSDecoder                                             decoder_;
+    std::size_t                                             offset_ = 0;
+    bool                                                    inside_ = false;
+    CRC32C                                                  crc_;
+    Transfer::Metadata                                      meta_;
     std::array<std::uint8_t, MaxPayloadSize + CRC32C::Size> buf_{};
 };
 
@@ -578,7 +610,7 @@ private:
         TransferID transfer_id{};
     };
 
-    static constexpr auto MaxBytesToProcessPerPoll = MaxSerializedRepresentationSize * 2U;
+    static constexpr std::size_t MaxBytesToProcessPerPoll = 1024;
 
     const SystemInfo::UniqueID unique_id_;
 
