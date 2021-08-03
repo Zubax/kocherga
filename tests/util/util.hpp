@@ -240,7 +240,7 @@ public:
 };
 
 /// A safe wrapper over the standard getenv() that returns an empty option if the variable is not set.
-inline auto getEnvironmentVariable(const std::string& name) -> std::optional<std::string>
+inline auto getEnvironmentVariableMaybe(const std::string& name) -> std::optional<std::string>
 {
     if (auto* const st = std::getenv(name.c_str()); st != nullptr)  // NOSONAR getenv is considered unsafe.
     {
@@ -249,13 +249,19 @@ inline auto getEnvironmentVariable(const std::string& name) -> std::optional<std
     return {};
 }
 
+/// Like above but throws EnvironmentError if the variable is missing.
+inline auto getEnvironmentVariable(const std::string& name) -> std::string
+{
+    if (const auto v = getEnvironmentVariableMaybe(name))
+    {
+        return *v;
+    }
+    throw EnvironmentError("Environment variable is required but not set: " + name);
+}
+
 inline auto getSourceDir() -> std::filesystem::path
 {
-    if (const auto path = getEnvironmentVariable("SOURCE_DIR"))
-    {
-        return std::filesystem::path(*path);
-    }
-    throw EnvironmentError("The environment variable SOURCE_DIR shall be set.");
+    return std::filesystem::path(getEnvironmentVariable("SOURCE_DIR"));
 }
 
 inline auto getImagePath(const std::string& name) -> std::filesystem::path

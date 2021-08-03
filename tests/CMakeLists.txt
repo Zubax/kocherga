@@ -39,3 +39,4 @@ if (NOT NO_STATIC_ANALYSIS)
 endif ()
 
 add_subdirectory(unit)
+add_subdirectory(integration)

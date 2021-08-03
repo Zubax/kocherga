@@ -448,12 +448,12 @@ public:
     /// Return true if enqueued or sent successfully; return false if no space available.
     [[nodiscard]] virtual auto send(const std::uint8_t b) -> bool = 0;
 
-    virtual ~ISerialPort()           = default;
-    ISerialPort()                    = default;
-    ISerialPort(const ISerialPort&)  = delete;
-    ISerialPort(const ISerialPort&&) = delete;
+    virtual ~ISerialPort()          = default;
+    ISerialPort()                   = default;
+    ISerialPort(const ISerialPort&) = delete;
+    ISerialPort(ISerialPort&&)      = delete;
     auto operator=(const ISerialPort&) -> ISerialPort& = delete;
-    auto operator=(const ISerialPort&&) -> ISerialPort& = delete;
+    auto operator=(ISerialPort&&) -> ISerialPort& = delete;
 };
 
 /// Kocherga node implementing the UAVCAN/serial transport.

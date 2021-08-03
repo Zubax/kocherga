@@ -3,7 +3,7 @@
 // Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
 #include "kocherga_serial.hpp"  // NOLINT include order: include Kocherga first to ensure no headers are missed.
-#include "../util.hpp"
+#include "util.hpp"             // NOLINT include order
 #include "catch.hpp"
 #include <iostream>
 #include <numeric>

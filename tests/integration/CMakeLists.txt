@@ -1,11 +1,10 @@
 # This software is distributed under the terms of the MIT License.
-# Copyright (c) 2020 Zubax Robotics.
+# Copyright (c) 2021 Zubax Robotics.
 # Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
 cmake_minimum_required(VERSION 3.19)
-enable_testing()
 
-project(kocherga_unit_test CXX)
+project(kocherga_integration_test CXX)
 
 set(library_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../kocherga")
 
@@ -23,24 +22,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-attributes")
 
 include_directories(${library_dir})
 include_directories(../util)
-include_directories(SYSTEM ../3rd_party)
 
-# Test targets
-function(gen_test name files compile_definitions compile_flags link_flags)
-    add_executable(${name} ${files})
-    target_compile_definitions(${name} PUBLIC ${compile_definitions})
-    target_link_libraries(${name} pthread)
-    set_target_properties(${name} PROPERTIES COMPILE_FLAGS "${compile_flags}" LINK_FLAGS "${link_flags}")
+file(GLOB bootloader_sources ${CMAKE_CURRENT_SOURCE_DIR}/bootloader/*.cpp)
+add_executable(bootloader ${bootloader_sources})
 
-    add_test("run_${name}" "${name}" --rng-seed time)
-    set_tests_properties("run_${name}" PROPERTIES ENVIRONMENT SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR})
-endfunction()
-
-file(GLOB test_sources
-     ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp
-     ${CMAKE_CURRENT_SOURCE_DIR}/serial/test_*.cpp)
-gen_test("test_x64" "${test_sources}" "" "-m64" "-m64")
-gen_test("test_x32" "${test_sources}" "" "-m32" "-m32")
-if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
-    gen_test("test_cov" "${test_sources}" "" "-g -O0 --coverage" "--coverage")
-endif ()
+execute_process(COMMAND
+        python -m pip --disable-pip-version-check pyuavcan[transport_serial]~=1.2
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
