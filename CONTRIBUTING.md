@@ -59,7 +59,7 @@ If you need access, please get in touch with the maintainers.
 
 ### IDE
 
-The recommended development environment is JetBrains CLion. The root project file is `tests/native/CMakeLists.txt`.
+The recommended development environment is JetBrains CLion. The root project file can be found under `tests/`.
 The repository contains the spelling dictionaries for CLion located under `.idea/`, be sure to use them.
 
 ## Testing
