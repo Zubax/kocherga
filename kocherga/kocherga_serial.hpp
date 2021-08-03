@@ -250,7 +250,7 @@ public:
         const auto              dec = decoder_.feed(stream_byte);
         if (std::holds_alternative<COBSDecoder::Delimiter>(dec))
         {
-            if (inside_ && (offset_ >= TotalOverheadSize) && crc_.isResidueCorrect())
+            if (inside_ && (offset_ >= TotalOverheadSize) && crc_.isResidueCorrect() && isMetaValid())
             {
                 out = Transfer{
                     meta_,
@@ -348,6 +348,16 @@ private:
                 fld = static_cast<Field>(bt);
             }
         }
+    }
+
+    [[nodiscard]] auto isMetaValid() const -> bool
+    {
+        if (meta_.isResponse() || meta_.isRequest())
+        {
+            return (meta_.source != Transfer::Metadata::AnonymousNodeID) &&
+                   (meta_.destination != Transfer::Metadata::AnonymousNodeID);
+        }
+        return meta_.destination == Transfer::Metadata::AnonymousNodeID;
     }
 
     static constexpr std::size_t HeaderSize        = 32;

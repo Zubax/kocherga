@@ -22,7 +22,7 @@ TEST_CASE("serial::COBSEncoder")
             })
         {}
 
-        std::vector<std::uint8_t>                      out;
+        Buf                                            out;
         COBSEncoder<std::function<bool(std::uint8_t)>> enc;
     };
 
@@ -94,6 +94,7 @@ TEST_CASE("serial::transmit")
 {
     using kocherga::serial::detail::transmit;
     using kocherga::serial::detail::Transfer;
+    using Buf = std::vector<std::uint8_t>;
 
     // The reference dump has been obtained as follows:
     // import pyuavcan.serial
@@ -108,7 +109,7 @@ TEST_CASE("serial::transmit")
     //          tr.loop.time() + 1.0)
     // print(caps)
     {
-        const std::vector<std::uint8_t> reference = {
+        const Buf reference = {
             0x00,                                            // starting delimiter
             0x01,                                            // COBS starting stuff byte, next byte zero
             0x08,                                            // version 0, next zero 8 bytes later
@@ -123,7 +124,7 @@ TEST_CASE("serial::transmit")
             0x01, 0x01, 0x01, 0x01,                          // payload CRC 0x00000000
             0x00                                             // final delimiter
         };
-        std::vector<std::uint8_t> history;
+        Buf history;
         REQUIRE(transmit(
             [&history](const auto bt) {
                 history.push_back(bt);
@@ -145,7 +146,7 @@ TEST_CASE("serial::transmit")
 
     // The second test is like above but with the payload set to b'\x00\x01\x02'
     {
-        const std::vector<std::uint8_t> reference = {
+        const Buf reference = {
             0x00,                                            // starting delimiter
             0x01,                                            // COBS starting stuff byte, next byte zero
             0x08,                                            // version 0, next zero 8 bytes later
@@ -161,7 +162,7 @@ TEST_CASE("serial::transmit")
             0xfa, 0x4b, 0xfd, 0x92,                          // payload CRC
             0x00,                                            // final delimiter
         };
-        std::vector<std::uint8_t> history;
+        Buf history;
         REQUIRE(transmit(
             [&history](const auto bt) {
                 history.push_back(bt);
@@ -228,8 +229,8 @@ TEST_CASE("serial::COBSDecoder")
     REQUIRE(std::holds_alternative<COBSDecoder::Delimiter>(dec.feed(0)));
     REQUIRE(std::holds_alternative<COBSDecoder::Delimiter>(dec.feed(0)));
 
-    const auto decode = [&dec](const auto encoded) -> std::optional<std::vector<std::uint8_t>> {
-        std::vector<std::uint8_t> out;
+    const auto decode = [&dec](const auto encoded) -> std::optional<Buf> {
+        Buf out;
         for (std::uint8_t bt : encoded)
         {
             const auto res = dec.feed(bt);
@@ -358,7 +359,7 @@ TEST_CASE("serial::COBS* roundtrip")
     REQUIRE(decoded_packets == original_packets);
 }
 
-TEST_CASE("serial::StreamParser")
+TEST_CASE("serial::StreamParser basic")
 {
     using kocherga::serial::detail::StreamParser;
     using kocherga::serial::detail::Transfer;
@@ -385,12 +386,12 @@ TEST_CASE("serial::StreamParser")
             0x03,                                            // Version           0
             0x05,                                            // Priority          5
             0x7b, 0x15,                                      // Source NID        123
-            0xc8, 0x01,                                      // Destination NID   456
+            0xff, 0xff,                                      // Destination NID   456
             0xe1, 0x10,                                      // Data specifier    4321
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  // Data type hash    0xbad_c0ffee_0dd_f00d
+            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
             0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
-            0xd4, 0xba, 0x6a, 0x09,                          // Header CRC computed with the help of PyUAVCAN
+            0xad, 0x13, 0xce, 0xc6,                          // Header CRC computed with the help of PyUAVCAN
             0x01, 0x02, 0x03, 0x04, 0x05,                    // Payload 1 2 3 4 5
             0xab, 0x8f, 0x51, 0x53,                          // Payload CRC
         };
@@ -402,7 +403,7 @@ TEST_CASE("serial::StreamParser")
         REQUIRE(0 == std::memcmp("\x01\x02\x03\x04\x05", tr->payload, 5));
         REQUIRE(tr->meta.priority == 5);
         REQUIRE(tr->meta.source == 123);
-        REQUIRE(tr->meta.destination == 456);
+        REQUIRE(tr->meta.destination == Transfer::Metadata::AnonymousNodeID);
         REQUIRE(tr->meta.data_spec == 4321);
         REQUIRE(tr->meta.transfer_id == 12'345'678'901'234'567'890ULL);
         REQUIRE(!tr->meta.isRequest());
@@ -418,7 +419,7 @@ TEST_CASE("serial::StreamParser")
             0x8e, 0x01,                                      // Source NID        398
             0x11, 0x01,                                      // Destination NID   273
             0x9e, 0xc0,                                      // Data specifier    response 158
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  // Data type hash    0xbad_c0ffee_0dd_f00d
+            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
             0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
             0x50, 0x42, 0x9b, 0x1f,                          // Header CRC
@@ -451,7 +452,7 @@ TEST_CASE("serial::StreamParser")
             0x8e, 0x01,                                      // Source NID        398
             0x11, 0x01,                                      // Destination NID   273
             0x9e, 0xc0,                                      // Data specifier    response 158
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  // Data type hash    0xbad_c0ffee_0dd_f00d
+            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
             0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
             0x50, 0x42, 0x9b, 0x0f,                          // Header CRC        MSB FLIP ERROR
@@ -472,7 +473,7 @@ TEST_CASE("serial::StreamParser")
             0x8e, 0x01,                                      // Source NID        398
             0x11, 0x01,                                      // Destination NID   273
             0x9e, 0xc0,                                      // Data specifier    response 158
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  // Data type hash    0xbad_c0ffee_0dd_f00d
+            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
             0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
             0x50, 0x42, 0x9b, 0x1f,                          // Header CRC
@@ -482,5 +483,185 @@ TEST_CASE("serial::StreamParser")
         REQUIRE(!feed(Buf{0}));
         REQUIRE(!feed(chunk));
         REQUIRE(!feed(Buf{0}));  // CRC ERROR
+    }
+}
+
+TEST_CASE("serial::StreamParser error")
+{
+    using kocherga::serial::detail::StreamParser;
+    using kocherga::serial::detail::Transfer;
+    using Buf = std::vector<std::uint8_t>;
+
+    StreamParser<10> sp;
+
+    const auto feed = [&sp](const Buf& header, const Buf& payload) {
+        std::optional<Transfer>               out;
+        kocherga::serial::detail::COBSEncoder enc([&out, &sp](const std::uint8_t x) {
+            REQUIRE(!out);
+            out = sp.update(x);
+            return true;
+        });
+        const auto                            inject = [&enc](const auto& data) {
+            kocherga::serial::detail::CRC32C crc_computer;
+            for (const std::uint8_t x : data)
+            {
+                crc_computer.update(x);
+                REQUIRE(enc.push(x));
+            }
+            for (const std::uint8_t x : crc_computer.getBytes())
+            {
+                REQUIRE(enc.push(x));
+            }
+        };
+        inject(header);
+        inject(payload);
+        REQUIRE(enc.end());
+        return out;
+    };
+
+    // Self-test with max length payload
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0x8a, 0x0c,                                      // Destination NID
+            0x4d, 0x81,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+        REQUIRE(tr);
+        REQUIRE(tr->meta.priority == 7);
+        REQUIRE(tr->meta.source == 1234);
+        REQUIRE(tr->meta.destination == 3210);
+        REQUIRE(tr->meta.data_spec == (Transfer::Metadata::DataSpecServiceFlag | 333U));
+        REQUIRE(tr->meta.transfer_id == 0x1234'5678'9012'3456ULL);
+        REQUIRE(tr->payload_len == 10);
+        REQUIRE(0 == std::memcmp(tr->payload, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09", 10));
+        REQUIRE(tr->meta.isRequest() == 333);
+        REQUIRE(!tr->meta.isResponse());
+    }
+
+    // Self-test with zero length payload
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0x8a, 0x0c,                                      // Destination NID
+            0x4d, 0xc1,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {});
+        REQUIRE(tr);
+        REQUIRE(tr->meta.priority == 7);
+        REQUIRE(tr->meta.source == 1234);
+        REQUIRE(tr->meta.destination == 3210);
+        REQUIRE(tr->meta.data_spec ==
+                (333U | Transfer::Metadata::DataSpecServiceFlag | Transfer::Metadata::DataSpecResponseFlag));
+        REQUIRE(tr->meta.transfer_id == 0x1234'5678'9012'3456ULL);
+        REQUIRE(tr->payload_len == 0);
+        REQUIRE(!tr->meta.isRequest());
+        REQUIRE(tr->meta.isResponse() == 333);
+    }
+
+    // Payload one byte too long
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0x8a, 0x0c,                                      // Destination NID
+            0x4d, 0x81,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+        REQUIRE(!tr);
+    }
+
+    // Bad version
+    {
+        const Buf header{
+            0x01,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0x8a, 0x0c,                                      // Destination NID
+            0x4d, 0x81,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {});
+        REQUIRE(!tr);
+    }
+
+    // UAVCAN/serial transfers cannot be multi-frame
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0x8a, 0x0c,                                      // Destination NID
+            0x4d, 0x81,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x00,                          // Frame index, EOT (cleared)
+        };
+        const auto tr = feed(header, {});
+        REQUIRE(!tr);
+    }
+
+    // Service transfers cannot be broadcast
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0xff, 0xff,                                      // Destination NID
+            0x4d, 0xc1,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {});
+        REQUIRE(!tr);
+    }
+
+    // Service transfers cannot be anonymous
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xff, 0xff,                                      // Source NID
+            0x01, 0x01,                                      // Destination NID
+            0x4d, 0xc1,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {});
+        REQUIRE(!tr);
+    }
+
+    // Message transfers cannot be unicast
+    {
+        const Buf header{
+            0x00,                                            // Version
+            0x07,                                            // Priority
+            0xd2, 0x04,                                      // Source NID
+            0x8a, 0x0c,                                      // Destination NID
+            0x4d, 0x01,                                      // Data specifier
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
+            0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+        };
+        const auto tr = feed(header, {});
+        REQUIRE(!tr);
     }
 }

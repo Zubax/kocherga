@@ -15,6 +15,7 @@
       <w>devirtualization</w>
       <w>dsdl</w>
       <w>dsonar</w>
+      <w>encobs</w>
       <w>ffee</w>
       <w>ffff</w>
       <w>gcov</w>
@@ -31,6 +32,7 @@
       <w>telega</w>
       <w>tttt</w>
       <w>uavcan</w>
+      <w>unicast</w>
       <w>usec</w>
       <w>vcan</w>
       <w>vssc</w>
