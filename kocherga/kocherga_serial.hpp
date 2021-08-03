@@ -466,7 +466,7 @@ public:
 
     /// Set up the local node-ID manually instead of running PnP allocation.
     /// If a manual update is triggered, this shall be done beforehand.
-    /// Do not set up the local node-ID more than once.
+    /// Do not assign the local node-ID more than once.
     void setLocalNodeID(const NodeID node_id) noexcept { local_node_id_ = node_id; }
 
     /// Resets the state of the frame parser. Call it when the communication channel is reinitialized.
@@ -518,8 +518,8 @@ private:
                                    (tr.meta.transfer_id == pending_request_meta_->transfer_id);
                 if (match)
                 {
+                    pending_request_meta_.reset();  // Reset first in case if the reactor initiates another request
                     reactor.processResponse(tr.payload_len, tr.payload);
-                    pending_request_meta_.reset();
                 }
             }
         }
