@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 
 namespace
@@ -36,22 +37,23 @@ public:
         const ::hostent* const he = gethostbyname(remote_host);
         if (he == nullptr)
         {
-            return {};
+            throw std::runtime_error(std::string("Could not resolve host: ") + remote_host);
         }
         ::sockaddr_in sa{};
         sa.sin_family = AF_INET;
         sa.sin_port   = ::htons(remote_port);
         sa.sin_addr   = *static_cast<const in_addr*>(static_cast<const void*>(he->h_addr));
 
-        const int fd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        const auto fd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (fd < 0)
         {
-            return {};
+            throw std::runtime_error("Could not open socket");
         }
         if (::connect(fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sockaddr)) < 0)
         {
             (void) ::close(fd);
-            return {};
+            throw std::runtime_error("Could not connect to remote endpoint at: " + std::string(remote_host) + ":" +
+                                     std::to_string(static_cast<std::uint32_t>(remote_port)));
         }
         return std::make_shared<TCPSerialPort>(fd);
     }
@@ -97,15 +99,80 @@ auto initSerialPort() -> std::shared_ptr<kocherga::serial::ISerialPort>
     return TCPSerialPort::connect(host.c_str(), port);
 }
 
+auto getSystemInfo() -> kocherga::SystemInfo
+{
+    kocherga::SystemInfo system_info{};
+    system_info.node_name = "com.zubax.kocherga.test.integration";
+    {
+        auto       hw_ver = util::getEnvironmentVariable("UAVCAN__NODE__HARDWARE_VERSION");
+        const auto maj    = std::stoull(hw_ver.substr(0, hw_ver.find(' ')));
+        const auto min    = std::stoull(hw_ver.substr(hw_ver.find(' ') + 1));
+        if (maj > std::numeric_limits<std::uint8_t>::max() || min > std::numeric_limits<std::uint8_t>::max())
+        {
+            throw std::invalid_argument("Hardware version numbers out of range");
+        }
+        system_info.hardware_version = {static_cast<std::uint8_t>(maj), static_cast<std::uint8_t>(min)};
+    }
+    {
+        const auto uid = util::getEnvironmentVariable("UAVCAN__NODE__UNIQUE_ID");
+        if (uid.length() > system_info.unique_id.size())
+        {
+            throw std::runtime_error("Invalid value length of register uavcan.node.unique_id");
+        }
+        std::copy(uid.begin(), uid.end(), system_info.unique_id.begin());
+    }
+    {
+        static const auto coa = util::getEnvironmentVariableMaybe("UAVCAN__NODE__CERTIFICATE_OF_AUTHENTICITY");
+        if (coa)
+        {
+            system_info.certificate_of_authenticity_len = static_cast<std::uint8_t>(coa->size());
+            system_info.certificate_of_authenticity     = reinterpret_cast<const std::uint8_t*>(coa->data());
+        }
+    }
+    return system_info;
+}
+
 }  // namespace
 
-auto main() -> int
+auto main(const int argc, char* const argv[]) -> int
 {
+    (void) argc;
     try
     {
-        util::FileROMBackend                           file_rom("rom.bin", 2048);
+        const bool linger       = util::getEnvironmentVariable("BOOTLOADER__LINGER") != "0";
+        const auto rom_size     = std::stoul(util::getEnvironmentVariable("BOOTLOADER__ROM_SIZE"));
+        const auto max_app_size = std::stoul(util::getEnvironmentVariable("BOOTLOADER__MAX_APP_SIZE"));
+
+        util::FileROMBackend rom("rom.bin", rom_size);
+
+        const auto system_info = getSystemInfo();
+
         std::shared_ptr<kocherga::serial::ISerialPort> serial_port = initSerialPort();
-        std::cout << "Hello world!" << std::endl;
+        kocherga::serial::SerialNode                   serial_node(*serial_port, system_info.unique_id);
+
+        kocherga::Bootloader<1> boot(rom, system_info, {&serial_node}, max_app_size, linger);
+        const auto              started_at = std::chrono::steady_clock::now();
+        std::clog << "Bootloader started" << std::endl;
+        while (true)
+        {
+            const auto uptime = std::chrono::steady_clock::now() - started_at;
+            if (const auto fin = boot.poll(std::chrono::duration_cast<std::chrono::microseconds>(uptime)))
+            {
+                std::clog << "Final state reached: " << static_cast<std::uint32_t>(*fin) << std::endl;
+                if (*fin == kocherga::Final::BootApp)
+                {
+                    std::clog << "Booting the application" << std::endl;
+                    break;
+                }
+                if (*fin == kocherga::Final::Restart)
+                {
+                    std::clog << "Restarting the bootloader; using executable " << argv[0] << std::endl;
+                    return -::execve(argv[0], argv, ::environ);
+                }
+                assert(false);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
     }
     catch (std::exception& ex)
     {

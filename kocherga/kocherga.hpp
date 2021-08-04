@@ -91,8 +91,7 @@ struct SystemInfo
 {
     SemanticVersion hardware_version{};
 
-    static constexpr std::size_t UniqueIDSize = 16;
-    using UniqueID                            = std::array<std::uint8_t, UniqueIDSize>;
+    using UniqueID = std::array<std::uint8_t, 16>;
     UniqueID unique_id{};
 
     const char* node_name = "";

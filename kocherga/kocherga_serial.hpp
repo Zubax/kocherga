@@ -460,6 +460,7 @@ public:
 class SerialNode : public kocherga::INode
 {
 public:
+    /// The local UID shall be the same that is passed to the bootloader. It is used for PnP node-ID allocation.
     SerialNode(ISerialPort& port, const SystemInfo::UniqueID& local_unique_id) :
         unique_id_(local_unique_id), port_(port)
     {}

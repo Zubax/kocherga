@@ -1,0 +1,28 @@
+#!/usr/bin/env yakut -v orchestrate
+
+uavcan:
+  serial:
+    iface: socket://localhost:50905
+    duplicate_service_transfers: true
+  diagnostic:
+    severity: 2
+
+$=:
+- ncat --broker --listen -p 50905 -vv
+- $=:
+  - sleep 1
+  - # Wait for the broker to start and get ready.
+
+  - $=: yakut file-server --plug-and-play --update-software
+    uavcan.node.id: 62
+
+  - $=: bootloader
+    uavcan:
+      node:
+        hardware_version: [10, 30]
+        unique_id:                    aaaaaaaaaaaaaaaa
+        certificate_of_authenticity:  this is a certificate
+    bootloader:
+      linger:       false
+      rom_size:     2048
+      max_app_size: 1024
