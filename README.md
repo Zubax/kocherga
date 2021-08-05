@@ -23,8 +23,8 @@ If a dysfunctional application image is uploaded, Kochergá can regain control a
 
 ### Supported transports
 
-- **UAVCAN/CAN** (WIP) -- supports both v1 and v0, the protocol version is auto-detected at runtime.
-- **UAVCAN/serial** (WIP)
+- **UAVCAN/CAN** -- supports both v1 and v0, the protocol version is auto-detected at runtime.
+- **UAVCAN/serial**
 
 ## Usage
 
