@@ -3,6 +3,7 @@
 # Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
 cmake_minimum_required(VERSION 3.19)
+enable_testing()
 
 project(kocherga_integration_test CXX)
 
@@ -26,6 +27,8 @@ include_directories(../util)
 file(GLOB bootloader_sources ${CMAKE_CURRENT_SOURCE_DIR}/bootloader/*.cpp)
 add_executable(bootloader ${bootloader_sources})
 
-execute_process(COMMAND
-        python -m pip --disable-pip-version-check pyuavcan[transport_serial]~=1.2
+# To run just this test specifically, go to the binary directory and run: ctest -R run_validator
+add_test(run_validator
+        "${CMAKE_CURRENT_SOURCE_DIR}/validator/validate.sh"
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(run_validator PROPERTIES TIMEOUT 30)
