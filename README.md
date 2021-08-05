@@ -2,7 +2,12 @@
 
 [![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg)](https://forum.zubax.com)
 
-**Kochergá is a robust [UAVCAN](https://uavcan.org) bootloader for deeply embedded systems.**
+**Kochergá is a robust platform-agnostic [UAVCAN](https://uavcan.org) bootloader for deeply embedded systems.**
+
+Technical support is provided on the [UAVCAN Forum](https://forum.uavcan.org/).
+
+A standard-compliant implementation of the firmware update server is provided in
+[Yakut](https://github.com/UAVCAN/yakut#updating-node-software).
 
 ## Features
 
@@ -23,12 +28,16 @@ If a dysfunctional application image is uploaded, Kochergá can regain control a
 
 ## Usage
 
+### Integration
+
 The entire library is contained in the header file `kocherga.hpp`;
 protocol implementations are provided each in a separate header file named `kocherga_*.hpp`.
 Kocherga does not have any compilation units of its own.
 
 To integrate Kocherga into your application, just include this repository as a git subtree/submodule,
 or simply copy-paste the required header files into your source tree.
+
+### Application signature
 
 The bootloader looks for an instance of the `AppInfo` structure located in the ROM image of the
 application at every boot.
@@ -72,6 +81,11 @@ The script can be invoked from the build system (e.g., from a Makefile rule) tri
 kocherga_image.py application-name-goes-here.bin
 ```
 
+The output will be stored in a file whose name follows the pattern expected by the firmware update server
+implemented in the [Yakut CLI tool](https://github.com/UAVCAN/yakut#updating-node-software).
+
+### State machine
+
 The following diagram documents the state machine of the bootloader:
 
 ![Kocherga State Machine Diagram](docs/state_machine.svg "Kocherga State Machine Diagram")
@@ -84,6 +98,80 @@ NoAppToBoot          |`SOFTWARE_UPDATE`| `WARNING`  | 0
 BootDelay            |`SOFTWARE_UPDATE`| `NOMINAL`  | 0
 BootCancelled        |`SOFTWARE_UPDATE`| `ADVISORY` | 0
 AppUpdateInProgress  |`SOFTWARE_UPDATE`| `NOMINAL`  | number of read requests, always >0
+
+### API usage
+
+The following snippet explains how to integrate Kocherga into your system.
+User-provided functions are shown in `SCREAMING_SNAKE_CASE()`.
+This is a stripped-down example; the full API documentation is available in the header files.
+
+```c++
+#include <kocherga.hpp>
+#include <kocherga_serial.hpp>  // Pick the transports you need. In this example we are using UAVCAN/serial.
+
+/// Maximum possible size of the application image for your platform.
+static constexpr std::size_t MaxAppSize = 1024 * 1024;
+
+class MyROMBackend : public kocherga::IROMBackend
+{
+    [[nodiscard]] virtual auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
+        -> std::optional<std::size_t>
+    {
+        if (WRITE_ROM(offset, data, size))
+        {
+            return size;
+        }
+        return {};  // Failure case
+    }
+
+    [[nodiscard]] virtual auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
+        -> std::size_t
+    {
+        return READ_ROM(offset, out_data, size);  // Return the actual number of bytes read (may be less than size).
+    }
+};
+
+class MySerialPort : public kocherga::serial::ISerialPort
+{
+    [[nodiscard]] auto receive() -> std::optional<std::uint8_t> override
+    {
+        if (SERIAL_RX_PENDING())
+        {
+            return SERIAL_READ_BYTE();
+        }
+        return {};
+    }
+
+    [[nodiscard]] auto send(const std::uint8_t b) -> bool override { return SERIAL_WRITE_BYTE(b); }
+};
+
+int main()
+{
+    MyROMBackend rom_backend;
+    MySerialPort serial_port;
+    kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
+    kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
+    const bool linger = false;  // If true, the bootloader will wait instead of booting the application immediately.
+    kocherga::Bootloader<1> boot(rom_backend, system_info, {&serial_node}, MaxAppSize, linger);
+    while (true)
+    {
+        const auto uptime = GET_TIME_SINCE_BOOT();
+        if (const auto fin = boot.poll(std::chrono::duration_cast<std::chrono::microseconds>(uptime)))
+        {
+            if (*fin == kocherga::Final::BootApp)
+            {
+                BOOT_THE_APPLICATION();
+            }
+            if (*fin == kocherga::Final::Restart)
+            {
+                RESTART_THE_BOOTLOADER();
+            }
+            assert(false);
+        }
+        WAIT_FOR_EVENT();  // Sleep until the next event but no longer than 1 second. Fixed sleep for ~1 ms is also OK.
+    }
+}
+```
 
 ## Revisions
 

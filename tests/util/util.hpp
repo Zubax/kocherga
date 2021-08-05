@@ -208,7 +208,7 @@ private:
         if (trigger_failure_)
         {
             // Can't use {} because of a bug in GCC: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=92092
-            return std::optional<std::size_t>(std::nullopt);
+            return std::optional<std::size_t>(std::nullopt);  // NOLINT
         }
         const std::size_t out = ((offset + size) > rom_size_) ? (rom_size_ - offset) : size;
         assert(out <= size);
@@ -261,7 +261,7 @@ inline auto getEnvironmentVariable(const std::string& name) -> std::string
 
 inline auto getSourceDir() -> std::filesystem::path
 {
-    return std::filesystem::path(getEnvironmentVariable("SOURCE_DIR"));
+    return getEnvironmentVariable("SOURCE_DIR");
 }
 
 inline auto getImagePath(const std::string& name) -> std::filesystem::path
