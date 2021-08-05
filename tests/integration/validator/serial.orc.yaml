@@ -15,16 +15,18 @@ $=:
   - sleep 1
   - # Wait for the broker to start and get ready.
 
-  - $=: yakut --verbose file-server --plug-and-play alloc.db --update-software $INTEGRATION_TEST_DIR/images
+  - $=: yakut --verbose file-server --plug-and-play alloc.db --update-software $SOFTWARE_PACKAGE_DIR
     uavcan.node.id: 32
-
-  - $=: $INTEGRATION_TEST_DIR/validator/validator.py
-    uavcan.node.id: 33
 
   - $=: yakut --format=json sub --with-metadata uavcan.node.Heartbeat.1.0    > heartbeats.json
   - $=: yakut --format=json sub --with-metadata uavcan.diagnostic.Record.1.1 > diagnostics.json
 
-  - $=: bootloader
+  - $=:
+    - sleep 1
+    - # Let the subscribers initialize to ensure we don't lose any diagnostic messages.
+    - ./bootloader
+    - # Wait for the bootloader to exit. It will only do that after it has successfully loaded and validated the app.
+    - exit 222  # A non-zero exit code will bring down the entire composition, which signifies the end of the test.
     uavcan:
       node:
         hardware_version: [10, 30]
