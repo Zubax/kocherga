@@ -502,7 +502,7 @@ private:
             *ptr++ = std::numeric_limits<std::uint8_t>::max();
             *ptr++ = std::numeric_limits<std::uint8_t>::max();
             (void) std::memcpy(ptr, unique_id_.data(), unique_id_.size());
-            (void) publishMessage(SubjectID::PnPNodeIDAllocationData_v2, pnp_transfer_id_, buf.size(), buf.data());
+            (void) publishMessageImpl(SubjectID::PnPNodeIDAllocationData_v2, pnp_transfer_id_, buf.size(), buf.data());
             ++pnp_transfer_id_;
         }
     }
@@ -548,7 +548,7 @@ private:
         {
             if ((!local_node_id_) &&  // If node-ID is not yet allocated, check if this is an allocation response.
                 (tr.meta.data_spec == static_cast<PortID>(SubjectID::PnPNodeIDAllocationData_v2)) &&
-                (tr.meta.source == detail::Transfer::Metadata::AnonymousNodeID) &&
+                (tr.meta.source != detail::Transfer::Metadata::AnonymousNodeID) &&
                 (tr.meta.destination == detail::Transfer::Metadata::AnonymousNodeID))
             {
                 const std::uint8_t* ptr     = tr.payload;
@@ -600,13 +600,21 @@ private:
     {
         if (local_node_id_)
         {
-            detail::Transfer::Metadata meta{};
-            meta.source      = *local_node_id_;
-            meta.data_spec   = static_cast<PortID>(subject_id);
-            meta.transfer_id = transfer_id;
-            return transmit({meta, payload_length, payload});
+            return publishMessageImpl(subject_id, transfer_id, payload_length, payload);
         }
         return false;
+    }
+
+    auto publishMessageImpl(const SubjectID           subject_id,
+                            const TransferID          transfer_id,
+                            const std::size_t         payload_length,
+                            const std::uint8_t* const payload) -> bool
+    {
+        detail::Transfer::Metadata meta{};
+        meta.source      = local_node_id_ ? *local_node_id_ : detail::Transfer::Metadata::AnonymousNodeID;
+        meta.data_spec   = static_cast<PortID>(subject_id);
+        meta.transfer_id = transfer_id;
+        return transmit({meta, payload_length, payload});
     }
 
     [[nodiscard]] auto transmit(const detail::Transfer& tr) -> bool

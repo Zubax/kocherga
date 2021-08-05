@@ -27,10 +27,10 @@ using PortID     = std::uint16_t;
 /// UAVCAN subjects used by Kocherga.
 enum class SubjectID : PortID
 {
-    NodeHeartbeat              = 32'085,
-    PnPNodeIDAllocationData_v2 = 32'741,
-    PnPNodeIDAllocationData_v1 = 32'742,
-    DiagnosticRecord           = 32'760,
+    NodeHeartbeat              = 7509,
+    PnPNodeIDAllocationData_v2 = 8165,
+    PnPNodeIDAllocationData_v1 = 8166,
+    DiagnosticRecord           = 8184,
 };
 
 /// UAVCAN services used by Kocherga.

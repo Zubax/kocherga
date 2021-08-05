@@ -140,10 +140,11 @@ auto main(const int argc, char* const argv[]) -> int
     try
     {
         const bool linger       = util::getEnvironmentVariable("BOOTLOADER__LINGER") != "0";
+        const auto rom_file     = util::getEnvironmentVariable("BOOTLOADER__ROM_FILE");
         const auto rom_size     = std::stoul(util::getEnvironmentVariable("BOOTLOADER__ROM_SIZE"));
         const auto max_app_size = std::stoul(util::getEnvironmentVariable("BOOTLOADER__MAX_APP_SIZE"));
 
-        util::FileROMBackend rom("rom.bin", rom_size);
+        util::FileROMBackend rom(rom_file, rom_size);
 
         const auto system_info = getSystemInfo();
 
