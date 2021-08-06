@@ -240,4 +240,84 @@ TEST_CASE("kocherga_serial::SerialNode service")
         REQUIRE(0 == std::memcmp(response->payload, "\x01\x02\x03\x04\x05", 5));
         REQUIRE(!port.popTx());  // Ensure no extra responses are sent.
     }
+
+    // Ensure transfer-ID timeouts are handled properly -- repetitions separated by a long time interval are accepted.
+    {
+        kocherga::serial::detail::Transfer request;
+        request.meta.source      = 3210;
+        request.meta.destination = 2222;
+        request.meta.data_spec   = static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
+                                 kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
+        request.meta.transfer_id = 0xBABA'CACA;
+        request.payload_len      = 6;
+        request.payload          = reinterpret_cast<const std::uint8_t*>("\x05\x04\x03\x02\x01\x00");
+        port.pushRx(request);  // First request shall be processed.
+        port.pushRx(request);  // Deterministic data loss mitigation; shall be ignored.
+        port.pushRx(request);  // Same here.
+        auto num_requests = 0;
+        reactor.setIncomingRequestHandler(
+            [&num_requests](const ReactorMock::IncomingRequest& ir) -> std::optional<std::vector<std::uint8_t>> {
+                num_requests++;
+                REQUIRE(ir.service_id == static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand));
+                REQUIRE(ir.client_node_id == 3210);
+                REQUIRE(ir.data == std::vector<std::uint8_t>{5, 4, 3, 2, 1, 0});
+                return std::vector<std::uint8_t>{1, 2, 3, 4, 5};
+            });
+        static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(1'000));
+        REQUIRE(num_requests == 1);  // Ensure extras are ignored.
+        auto response = port.popTx();
+        REQUIRE(response);
+        REQUIRE(response->meta.source == 2222);
+        REQUIRE(response->meta.destination == 3210);
+        REQUIRE(response->meta.data_spec == (static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag));
+        REQUIRE(response->meta.transfer_id == 0xBABA'CACA);
+        REQUIRE(response->payload_len == 5);
+        REQUIRE(0 == std::memcmp(response->payload, "\x01\x02\x03\x04\x05", 5));
+        REQUIRE(!port.popTx());  // Ensure no extra responses are sent.
+        // Now, we send the very same transfer but a long time has passed so it is accepted anyway.
+        port.pushRx(request);
+        port.pushRx(request);
+        static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(100'000'000));
+        REQUIRE(num_requests == 2);  // Ensure extras are ignored.
+        response = port.popTx();
+        REQUIRE(response);
+        REQUIRE(response->meta.source == 2222);
+        REQUIRE(response->meta.destination == 3210);
+        REQUIRE(response->meta.data_spec == (static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag));
+        REQUIRE(response->meta.transfer_id == 0xBABA'CACA);
+        REQUIRE(response->payload_len == 5);
+        REQUIRE(0 == std::memcmp(response->payload, "\x01\x02\x03\x04\x05", 5));
+        REQUIRE(!port.popTx());  // Ensure no extra responses are sent.
+    }
+
+    // Send an unknown request transfer, ensure no response is sent back.
+    {
+        kocherga::serial::detail::Transfer request;
+        request.meta.source      = 3333;
+        request.meta.destination = 2222;
+        request.meta.data_spec   = static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
+                                 kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
+        request.meta.transfer_id = 0xBABA'BABA;
+        request.payload_len      = 6;
+        request.payload          = reinterpret_cast<const std::uint8_t*>("\x05\x04\x03\x02\x01\x00");
+        port.pushRx(request);  // First request shall be processed.
+        port.pushRx(request);  // Deterministic data loss mitigation; shall be ignored.
+        port.pushRx(request);  // Same here.
+        auto num_requests = 0;
+        reactor.setIncomingRequestHandler(
+            [&num_requests](const ReactorMock::IncomingRequest& ir) -> std::optional<std::vector<std::uint8_t>> {
+                num_requests++;
+                REQUIRE(ir.service_id == static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand));
+                REQUIRE(ir.client_node_id == 3333);
+                REQUIRE(ir.data == std::vector<std::uint8_t>{5, 4, 3, 2, 1, 0});
+                return {};  // Return no response.
+            });
+        static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(1'000));
+        REQUIRE(num_requests == 1);  // Ensure extras are ignored.
+        REQUIRE(!port.popTx());      // Ensure no responses are sent.
+    }
 }

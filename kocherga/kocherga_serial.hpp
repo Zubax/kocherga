@@ -209,8 +209,8 @@ struct Transfer
         std::uint8_t  priority    = DefaultPriority;
         NodeID        source      = AnonymousNodeID;
         NodeID        destination = AnonymousNodeID;
-        std::uint16_t data_spec{};
-        TransferID    transfer_id{};
+        std::uint16_t data_spec   = std::numeric_limits<std::uint16_t>::max();
+        TransferID    transfer_id = std::numeric_limits<TransferID>::max();
 
         [[nodiscard]] auto isRequest() const noexcept -> std::optional<PortID>
         {
@@ -482,7 +482,7 @@ private:
             {
                 if (const auto tr = stream_parser_.update(*bt))
                 {
-                    processReceivedTransfer(reactor, *tr);
+                    processReceivedTransfer(reactor, *tr, uptime);
                 }
             }
             else
@@ -507,42 +507,62 @@ private:
         }
     }
 
-    void processReceivedTransfer(IReactor& reactor, const detail::Transfer& tr)
+    void processReceivedTransfer(IReactor& reactor, const detail::Transfer& tr, const std::chrono::microseconds uptime)
     {
         if (const auto resp_id = tr.meta.isResponse())
         {
             if (pending_request_meta_ && local_node_id_)
             {
+                // Observe that we don't need to perform deduplication explicitly because it is naturally addressed by
+                // the pending metadata struct: as soon as the response is received, it is invalidated immediately.
                 const bool match = (resp_id == pending_request_meta_->service_id) &&
                                    (tr.meta.source == pending_request_meta_->server_node_id) &&
-                                   (tr.meta.destination == (*local_node_id_)) &&
+                                   (tr.meta.destination == *local_node_id_) &&
                                    (tr.meta.transfer_id == pending_request_meta_->transfer_id);
                 if (match)
                 {
-                    pending_request_meta_.reset();  // Reset first in case if the reactor initiates another request
+                    pending_request_meta_.reset();  // Reset first in case if the reactor initiates another request.
                     reactor.processResponse(tr.payload_len, tr.payload);
                 }
             }
         }
         else if (const auto req_id = tr.meta.isRequest())
         {
-            if (local_node_id_ && (tr.meta.destination == (*local_node_id_)))
+            if (local_node_id_ && (tr.meta.destination == *local_node_id_))
             {
-                std::array<std::uint8_t, MaxSerializedRepresentationSize> buf{};
-                if (const auto size =
-                        reactor.processRequest(*req_id, tr.meta.source, tr.payload_len, tr.payload, buf.data()))
+                // This implementation of deduplication is grossly oversimplified. It is considered to be acceptable
+                // for this specific library because double acceptance is not expected to cause adverse effects at the
+                // application layer. The difference compared to a fully conformant implementation is that it will
+                // accept duplicate request if there was another accepted request between the duplicates:
+                //  - The normal case where duplicates removed is like: (A, A, A, B, B) --> (A, B)
+                //  - The edge case where they are not removed is like: (A, A, B, B, A) --> (A, B, A)
+                // Full-fledged implementations are obviously immune to this because they keep separate state per
+                // session specifier, which does come with certain complexity (e.g., see libserard).
+                const auto [last_meta, last_ts] = last_received_request_meta_;
+                const bool duplicate            =                  //
+                    (last_ts + TransferIDTimeout >= uptime) &&     //
+                    (last_meta.data_spec == tr.meta.data_spec) &&  //
+                    (last_meta.source == tr.meta.source) &&        //
+                    (last_meta.transfer_id == tr.meta.transfer_id);
+                if (!duplicate)
                 {
-                    detail::Transfer::Metadata meta{};
-                    meta.priority    = tr.meta.priority;
-                    meta.source      = *local_node_id_;
-                    meta.destination = tr.meta.source;
-                    meta.data_spec   = static_cast<PortID>(*req_id) |
-                                     static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
-                                                         detail::Transfer::Metadata::DataSpecResponseFlag);
-                    meta.transfer_id = tr.meta.transfer_id;
-                    for (auto i = 0U; i < service_transfer_multiplication_factor_; i++)
+                    last_received_request_meta_ = {tr.meta, uptime};
+                    std::array<std::uint8_t, MaxSerializedRepresentationSize> buf{};
+                    if (const auto size =
+                            reactor.processRequest(*req_id, tr.meta.source, tr.payload_len, tr.payload, buf.data()))
                     {
-                        (void) transmit({meta, *size, buf.data()});
+                        detail::Transfer::Metadata meta{};
+                        meta.priority    = tr.meta.priority;
+                        meta.source      = *local_node_id_;
+                        meta.destination = tr.meta.source;
+                        meta.data_spec   = static_cast<PortID>(*req_id) |
+                                         static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
+                                                             detail::Transfer::Metadata::DataSpecResponseFlag);
+                        meta.transfer_id = tr.meta.transfer_id;
+                        for (auto i = 0U; i < service_transfer_multiplication_factor_; i++)
+                        {
+                            (void) transmit({meta, *size, buf.data()});
+                        }
                     }
                 }
             }
@@ -637,14 +657,16 @@ private:
         TransferID transfer_id{};
     };
 
-    static constexpr std::size_t MaxBytesToProcessPerPoll = 1024;
+    static constexpr std::size_t               MaxBytesToProcessPerPoll = 1024;
+    static constexpr std::chrono::microseconds TransferIDTimeout{2'000'000};  // Default taken from Specification.
 
     const SystemInfo::UniqueID unique_id_;
 
-    ISerialPort&                                          port_;
-    detail::StreamParser<MaxSerializedRepresentationSize> stream_parser_;
-    std::optional<NodeID>                                 local_node_id_;
-    std::optional<PendingRequestMetadata>                 pending_request_meta_;
+    ISerialPort&                                                     port_;
+    detail::StreamParser<MaxSerializedRepresentationSize>            stream_parser_;
+    std::optional<NodeID>                                            local_node_id_;
+    std::optional<PendingRequestMetadata>                            pending_request_meta_;
+    std::pair<detail::Transfer::Metadata, std::chrono::microseconds> last_received_request_meta_{};
 
     std::chrono::microseconds pnp_next_request_at_{0};
     std::uint64_t             pnp_transfer_id_ = 0;
