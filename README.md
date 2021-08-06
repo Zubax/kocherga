@@ -168,7 +168,10 @@ int main()
             }
             assert(false);
         }
-        WAIT_FOR_EVENT();  // Sleep until the next event but no longer than 1 second. Fixed sleep for ~1 ms is also OK.
+        // Sleep until the next hardware event (like reception of CAN frame or UART byte) but no longer than 1 second.
+        // A fixed sleep is also acceptable but the resulting polling interval should be adequate to avoid data loss
+        // (about 100 microseconds is usually ok).
+        WAIT_FOR_EVENT();
     }
 }
 ```
