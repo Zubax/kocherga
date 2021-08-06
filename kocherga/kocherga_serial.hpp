@@ -540,7 +540,10 @@ private:
                                      static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
                                                          detail::Transfer::Metadata::DataSpecResponseFlag);
                     meta.transfer_id = tr.meta.transfer_id;
-                    (void) transmit({meta, *size, buf.data()});
+                    for (auto i = 0U; i < service_transfer_multiplication_factor_; i++)
+                    {
+                        (void) transmit({meta, *size, buf.data()});
+                    }
                 }
             }
         }
@@ -578,7 +581,12 @@ private:
             meta.destination = server_node_id;
             meta.data_spec   = static_cast<PortID>(service_id) | detail::Transfer::Metadata::DataSpecServiceFlag;
             meta.transfer_id = transfer_id;
-            if (transmit({meta, payload_length, payload}))
+            bool transmit_ok = false;  // Optimistic aggregation: one successful transmission is considered a success.
+            for (auto i = 0U; i < service_transfer_multiplication_factor_; i++)
+            {
+                transmit_ok = transmit({meta, payload_length, payload}) || transmit_ok;
+            }
+            if (transmit_ok)
             {
                 pending_request_meta_ = PendingRequestMetadata{
                     server_node_id,
@@ -640,6 +648,9 @@ private:
 
     std::chrono::microseconds pnp_next_request_at_{0};
     std::uint64_t             pnp_transfer_id_ = 0;
+
+    /// Controls deterministic data loss mitigation for outgoing service transfers. Messages are never duplicated.
+    const std::uint8_t service_transfer_multiplication_factor_ = 1;
 };
 
 }  // namespace kocherga::serial

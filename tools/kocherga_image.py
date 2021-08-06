@@ -21,8 +21,8 @@
 # WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 # USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-# Based on make_can_boot_descriptor.py originally created by Ben Dyer, David Sidrane and Pavel Kirienko for PX4.
-# See https://github.com/PX4/Firmware/blob/nuttx_next/Tools/make_can_boot_descriptor.py.
+# Based on make_can_boot_descriptor.py originally created by Ben Dyer, David Sidrane and Pavel Kirienko for PX4:
+# https://github.com/PX4/PX4-Autopilot/blob/0033c0fc510a52deabe10ba769e39f97bec86f10/src/drivers/bootloaders/make_can_boot_descriptor.py
 # Redesigned for Kocherga by Pavel Kirienko <pavel.kirienko@zubax.com>.
 
 """
