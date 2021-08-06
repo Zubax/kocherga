@@ -445,6 +445,7 @@ public:
     [[nodiscard]] virtual auto receive() -> std::optional<std::uint8_t> = 0;
 
     /// Send a single byte into the TX queue without blocking if there is free space available.
+    /// The queue shall be at least 1 KiB deep.
     /// Return true if enqueued or sent successfully; return false if no space available.
     [[nodiscard]] virtual auto send(const std::uint8_t b) -> bool = 0;
 
