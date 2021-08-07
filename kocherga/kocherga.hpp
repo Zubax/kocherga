@@ -231,6 +231,8 @@ namespace detail
 {
 static constexpr auto BitsPerByte = 8U;
 
+static constexpr std::chrono::microseconds DefaultTransferIDTimeout{2'000'000};  ///< Default taken from Specification.
+
 /// This is used to verify integrity of the application and other data.
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to

@@ -540,10 +540,10 @@ private:
                 // Full-fledged implementations are obviously immune to this because they keep separate state per
                 // session specifier, which does come with certain complexity (e.g., see libserard).
                 const auto [last_meta, last_ts] = last_received_request_meta_;
-                const bool duplicate            =                  //
-                    (last_ts + TransferIDTimeout >= uptime) &&     //
-                    (last_meta.data_spec == tr.meta.data_spec) &&  //
-                    (last_meta.source == tr.meta.source) &&        //
+                const bool duplicate            =                                          //
+                    (last_ts + ::kocherga::detail::DefaultTransferIDTimeout >= uptime) &&  //
+                    (last_meta.data_spec == tr.meta.data_spec) &&                          //
+                    (last_meta.source == tr.meta.source) &&                                //
                     (last_meta.transfer_id == tr.meta.transfer_id);
                 if (!duplicate)
                 {
@@ -658,8 +658,7 @@ private:
         TransferID transfer_id{};
     };
 
-    static constexpr std::size_t               MaxBytesToProcessPerPoll = 1024;
-    static constexpr std::chrono::microseconds TransferIDTimeout{2'000'000};  // Default taken from Specification.
+    static constexpr std::size_t MaxBytesToProcessPerPoll = 1024;
 
     const SystemInfo::UniqueID unique_id_;
 
