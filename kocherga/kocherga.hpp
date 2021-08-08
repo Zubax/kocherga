@@ -126,12 +126,12 @@ public:
     /// Hence, the bootloader core knows what response it is by checking which request was sent last.
     virtual void processResponse(const std::size_t response_length, const std::uint8_t* const response) = 0;
 
-    virtual ~IReactor()        = default;
-    IReactor()                 = default;
-    IReactor(const IReactor&)  = delete;
-    IReactor(const IReactor&&) = delete;
+    virtual ~IReactor()       = default;
+    IReactor()                = default;
+    IReactor(const IReactor&) = delete;
+    IReactor(IReactor&&)      = delete;
     auto operator=(const IReactor&) -> IReactor& = delete;
-    auto operator=(const IReactor&&) -> IReactor& = delete;
+    auto operator=(IReactor&&) -> IReactor& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -170,12 +170,12 @@ public:
                                               const std::size_t         payload_length,
                                               const std::uint8_t* const payload) -> bool = 0;
 
-    virtual ~INode()     = default;
-    INode()              = default;
-    INode(const INode&)  = delete;
-    INode(const INode&&) = delete;
+    virtual ~INode()    = default;
+    INode()             = default;
+    INode(const INode&) = delete;
+    INode(INode&&)      = delete;
     auto operator=(const INode&) -> INode& = delete;
-    auto operator=(const INode&&) -> INode& = delete;
+    auto operator=(INode&&) -> INode& = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------

@@ -18,6 +18,9 @@ struct CANAcceptanceFilterConfig
     std::uint32_t mask            = AllSet;
 
     static constexpr std::uint32_t AllSet = (1ULL << 29U) - 1U;
+
+    /// Constructs a filter that accepts all extended data frames.
+    [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {0, 0}; }
 };
 
 /// Bridges Kocherga/CAN with the platform-specific CAN driver implementation.
@@ -25,6 +28,8 @@ struct CANAcceptanceFilterConfig
 class ICANDriver
 {
 public:
+    using PayloadBuffer = std::array<std::uint8_t, 64>;
+
     struct Bitrate
     {
         std::uint32_t arbitration{};
@@ -70,8 +75,8 @@ public:
     /// Non-blocking read of a pending CAN frame from the RX queue.
     /// The frame can be either classic or FD, the bootloader doesn't care.
     /// Returns (CAN ID, payload size) if a frame has been read successfully, empty option otherwise.
-    [[nodiscard]] virtual auto pop(void* const payload_buffer)
-        -> std::optional<std::tuple<std::uint32_t, std::uint8_t>> = 0;
+    [[nodiscard]] virtual auto pop(PayloadBuffer& payload_buffer)
+        -> std::optional<std::pair<std::uint32_t, std::uint8_t>> = 0;
 
     virtual ~ICANDriver()         = default;
     ICANDriver()                  = default;
@@ -84,6 +89,9 @@ public:
 namespace detail
 {
 using kocherga::detail::BitsPerByte;
+
+static constexpr std::uint8_t TailByteStartOfTransfer = 0b1000'0000;
+static constexpr std::uint8_t TailByteToggleBit       = 0b0010'0000;
 
 class CRC16CCITT
 {
@@ -174,73 +182,95 @@ template <>
     };
 }
 
-}  // namespace detail
-
-/// Kocherga node implementing the UAVCAN/CAN v1 transport along with UAVCAN v0 with automatic version detection.
-class CANNode : public kocherga::INode
+class IAllocator
 {
 public:
-    /// The local UID shall be the same that is passed to the bootloader. It is used for PnP node-ID allocation.
-    CANNode(ICANDriver& driver, const SystemInfo::UniqueID& local_unique_id) :
-        unique_id_(local_unique_id), pseudo_unique_id_(detail::makePseudoUniqueID(local_unique_id)), driver_(driver)
-    {}
+    [[nodiscard]] virtual auto allocate(const std::size_t size) -> void* = 0;
+    virtual void               deallocate(const void* const ptr)         = 0;
 
-    /// By default, this implementation will auto-detect the parameters of the network and do a PnP node-ID allocation.
-    /// The application can opt-out of autoconfiguration by providing the required data using this method.
-    /// This method shall not be invoked more than once.
-    /// Unknown parameters shall be set to empty options.
-    /// If this method is used, it shall be invoked before the first poll() is called on the bootloader instance.
-    /// The return value is true on success, false if the configuration cannot be applied.
-    auto preconfigure(const std::optional<ICANDriver::Bitrate>& can_bitrate,
-                      const std::optional<std::uint8_t>         uavcan_version,
-                      const std::optional<std::uint8_t>         local_node_id) -> bool
+    template <typename T, typename... Args>
+    [[nodoscard]] auto construct(Args&&... ag) -> T*
     {
-        if (local_node_id && (127 < *local_node_id))
+        if (void* const p = allocate(sizeof(T)))
         {
-            return false;
+            return new (p) T(std::forward<Args>(ag)...);  // NOLINT
         }
-        CANAcceptanceFilterConfig filter{0, 0};
-        if (uavcan_version)
+        return nullptr;
+    }
+
+    template <typename T>
+    void destroy(T* const obj)
+    {
+        if (obj != nullptr)
         {
-            if (0 == *uavcan_version)
-            {
-                filter = detail::makeAcceptanceFilter<0>(local_node_id);
-            }
-            else if (1 == *uavcan_version)
-            {
-                filter = detail::makeAcceptanceFilter<1>(local_node_id);
-            }
-            else
-            {
-                return false;
-            }
+            obj->~T();
+            deallocate(obj);
         }
-        if (can_bitrate)
+    }
+
+    virtual ~IAllocator()         = default;
+    IAllocator()                  = default;
+    IAllocator(const IAllocator&) = delete;
+    IAllocator(IAllocator&&)      = delete;
+    auto operator=(const IAllocator&) -> IAllocator& = delete;
+    auto operator=(IAllocator&&) -> IAllocator& = delete;
+};
+
+template <std::size_t BlockSize, std::uint8_t BlockCount>
+class BlockAllocator : public IAllocator
+{
+public:
+    [[nodiscard]] auto allocate(const std::size_t size) -> void* override
+    {
+        if (size <= BlockSize)
         {
-            bus_mode_ = driver_.configure(*can_bitrate, false, filter);
-            if (!bus_mode_)
+            for (auto& blk : pool_)
             {
-                return false;
+                auto& [used, mem] = blk;
+                if (!used)
+                {
+                    used = true;
+                    return &mem;
+                }
             }
         }
-        local_node_id_  = local_node_id;
-        uavcan_version_ = uavcan_version;
-        assert(!local_node_id_ || (128 > *local_node_id_));
-        assert(!uavcan_version_ || (0 == *uavcan_version_) || (1 == *uavcan_version_));
-        return true;
+        return nullptr;
+    }
+
+    void deallocate(const void* const ptr) override
+    {
+        for (auto& blk : pool_)
+        {
+            auto& [used, mem] = blk;
+            if (used && (&mem == ptr))
+            {
+                used = false;
+                return;
+            }
+        }
+        assert(false);
     }
 
 private:
-    void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
-    {
-        //
-    }
+    using Block = std::pair<bool, std::aligned_storage_t<BlockSize, alignof(std::max_align_t)>>;
+    std::array<Block, BlockCount> pool_{};
 
-    [[nodiscard]] auto sendRequest(const ServiceID           service_id,
-                                   const NodeID              server_node_id,
-                                   const TransferID          transfer_id,
-                                   const std::size_t         payload_length,
-                                   const std::uint8_t* const payload) -> bool override
+    static_assert(sizeof(pool_) > (BlockSize * BlockCount));
+};
+
+/// Use the standard State behavioral pattern to segregate business logic by activity.
+class IActivity
+{
+public:
+    /// If this method returns a non-null, the new activity shall replace the current one.
+    [[nodiscard]] virtual auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* = 0;
+
+    // See kocherga::INode
+    [[nodiscard]] virtual auto sendRequest(const ServiceID           service_id,
+                                           const NodeID              server_node_id,
+                                           const TransferID          transfer_id,
+                                           const std::size_t         payload_length,
+                                           const std::uint8_t* const payload) -> bool
     {
         (void) service_id;
         (void) server_node_id;
@@ -250,12 +280,14 @@ private:
         return false;
     }
 
-    void cancelRequest() override { pending_request_meta_.reset(); }
+    // See kocherga::INode
+    virtual void cancelRequest() {}
 
-    [[nodiscard]] auto publishMessage(const SubjectID           subject_id,
-                                      const TransferID          transfer_id,
-                                      const std::size_t         payload_length,
-                                      const std::uint8_t* const payload) -> bool override
+    // See kocherga::INode
+    [[nodiscard]] virtual auto publishMessage(const SubjectID           subject_id,
+                                              const TransferID          transfer_id,
+                                              const std::size_t         payload_length,
+                                              const std::uint8_t* const payload) -> bool
     {
         (void) subject_id;
         (void) transfer_id;
@@ -264,26 +296,293 @@ private:
         return false;
     }
 
-    struct PendingRequestMetadata
+    virtual ~IActivity()        = default;
+    IActivity()                 = default;
+    IActivity(const IActivity&) = delete;
+    IActivity(IActivity&&)      = delete;
+    auto operator=(const IActivity&) -> IActivity& = delete;
+    auto operator=(IActivity&&) -> IActivity& = delete;
+};
+
+class V0NodeIDAllocationActivity : public IActivity
+{
+public:
+    V0NodeIDAllocationActivity(IAllocator&                 allocator,
+                               ICANDriver&                 driver,
+                               const SystemInfo::UniqueID& local_uid,
+                               const ICANDriver::Bitrate&  bitrate) :
+        allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate)
+    {}
+
+    auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
-        std::uint8_t server_node_id{};
-        PortID       service_id{};
-        std::uint8_t transfer_id{};
-    };
+        (void) reactor;
+        (void) uptime;
+        (void) allocator_;
+        (void) driver_;
+        (void) local_uid_;
+        (void) bitrate_;
+        (void) bus_mode_;
+        return nullptr;
+    }
 
-    const SystemInfo::UniqueID unique_id_;
-    const std::uint64_t        pseudo_unique_id_;
+private:
+    IAllocator&                     allocator_;
+    ICANDriver&                     driver_;
+    const SystemInfo::UniqueID      local_uid_;
+    ICANDriver::Bitrate             bitrate_;
+    std::optional<ICANDriver::Mode> bus_mode_;
+};
 
-    ICANDriver&                           driver_;
-    std::optional<ICANDriver::Mode>       bus_mode_;
-    std::optional<std::uint8_t>           uavcan_version_;
-    std::optional<std::uint8_t>           local_node_id_;
-    std::optional<PendingRequestMetadata> pending_request_meta_;
+class V1NodeIDAllocationActivity : public IActivity
+{
+public:
+    V1NodeIDAllocationActivity(IAllocator&                 allocator,
+                               ICANDriver&                 driver,
+                               const SystemInfo::UniqueID& local_uid,
+                               const ICANDriver::Bitrate&  bitrate) :
+        allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate)
+    {}
 
-    std::chrono::microseconds pnp_next_request_at_{0};
-    std::uint64_t             pnp_transfer_id_ = 0;
+    auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
+    {
+        (void) reactor;
+        (void) uptime;
+        (void) allocator_;
+        (void) driver_;
+        (void) local_uid_;
+        (void) bitrate_;
+        (void) bus_mode_;
+        return nullptr;
+    }
 
-    std::uint8_t can_autoconfig_step_index_ = 0;
+private:
+    IAllocator&                     allocator_;
+    ICANDriver&                     driver_;
+    const SystemInfo::UniqueID      local_uid_;
+    ICANDriver::Bitrate             bitrate_;
+    std::optional<ICANDriver::Mode> bus_mode_;
+};
+
+class ProtocolVersionDetectionActivity : public IActivity
+{
+public:
+    ProtocolVersionDetectionActivity(IAllocator&                 allocator,
+                                     ICANDriver&                 driver,
+                                     const SystemInfo::UniqueID& local_uid,
+                                     const ICANDriver::Bitrate&  bitrate) :
+        allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate)
+    {}
+
+    auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
+    {
+        (void) reactor;
+        if (!bus_mode_)
+        {
+            bus_mode_ = driver_.configure(bitrate_, true, CANAcceptanceFilterConfig::makePromiscuous());
+        }
+        else if (highest_version_seen_ && (uptime > deadline_))
+        {
+            return constructSuccessor(*highest_version_seen_);
+        }
+        else
+        {
+            ICANDriver::PayloadBuffer buf{};
+            if (const auto frame = driver_.pop(buf))
+            {
+                const auto [can_id, payload_size] = *frame;
+                if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
+                {
+                    if (const auto uavcan_version = tryDetectProtocolVersionFromFrame(can_id, buf.at(payload_size - 1)))
+                    {
+                        if (!highest_version_seen_)
+                        {
+                            deadline_ = uptime + ListeningPeriod;
+                        }
+                        if (!highest_version_seen_ || (*highest_version_seen_ < *uavcan_version))
+                        {
+                            highest_version_seen_ = uavcan_version;
+                            assert(highest_version_seen_);
+                        }
+                    }
+                }
+            }
+        }
+        return nullptr;
+    }
+
+private:
+    [[nodiscard]] static auto tryDetectProtocolVersionFromFrame(const std::uint32_t can_id,
+                                                                const std::uint8_t  tail_byte)
+        -> std::optional<std::uint8_t>
+    {
+        // CAN ID is not validated at the moment. This may be improved in the future to avoid misdetection if there are
+        // other protocols besides UAVCAN on the same network.
+        (void) can_id;
+        if ((tail_byte & TailByteStartOfTransfer) != 0)
+        {
+            if ((tail_byte & TailByteToggleBit) != 0)
+            {
+                return 1;
+            }
+            return 0;
+        }
+        return {};
+    }
+
+    [[nodiscard]] auto constructSuccessor(const std::uint8_t detected_protocol_version) -> IActivity*
+    {
+        if (0 == detected_protocol_version)
+        {
+            return allocator_.construct<V0NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
+        }
+        if (1 == detected_protocol_version)
+        {
+            return allocator_.construct<V1NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
+        }
+        assert(false);
+        return nullptr;
+    }
+
+    /// Heartbeats are exchanged at 1 Hz, so about one second should be enough to determine which versions are used.
+    static constexpr std::chrono::microseconds ListeningPeriod{1'100'000};
+
+    IAllocator&                     allocator_;
+    ICANDriver&                     driver_;
+    const SystemInfo::UniqueID      local_uid_;
+    ICANDriver::Bitrate             bitrate_;
+    std::optional<ICANDriver::Mode> bus_mode_;
+    std::optional<std::uint8_t>     highest_version_seen_;
+    std::chrono::microseconds       deadline_{};
+};
+
+class BitrateDetectionActivity : public IActivity
+{
+public:
+    BitrateDetectionActivity(IAllocator& allocator, ICANDriver& driver, const SystemInfo::UniqueID& local_uid) :
+        allocator_(allocator), driver_(driver), local_uid_(local_uid)
+    {}
+
+private:
+    auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
+    {
+        (void) reactor;
+        ICANDriver::PayloadBuffer buf{};
+        if (bus_mode_ && driver_.pop(buf))
+        {
+            const auto bitrate = ICANDriver::StandardBitrates.at(setting_index_);
+            return allocator_.construct<ProtocolVersionDetectionActivity>(allocator_, driver_, local_uid_, bitrate);
+        }
+        if (!bus_mode_ || (uptime > next_try_at_))
+        {
+            const auto br = ICANDriver::StandardBitrates.at((++setting_index_) % ICANDriver::StandardBitrates.size());
+            bus_mode_     = driver_.configure(br, true, CANAcceptanceFilterConfig::makePromiscuous());
+            next_try_at_  = uptime + ListeningPeriod;
+        }
+        return nullptr;
+    }
+
+    /// Heartbeats are exchanged at 1 Hz, so about one second should be enough to determine if the bit rate is correct.
+    static constexpr std::chrono::microseconds ListeningPeriod{1'100'000};
+
+    IAllocator&                allocator_;
+    ICANDriver&                driver_;
+    const SystemInfo::UniqueID local_uid_;
+
+    std::optional<ICANDriver::Mode> bus_mode_;
+    std::uint8_t                    setting_index_ = ICANDriver::StandardBitrates.size() - 1U;
+    std::chrono::microseconds       next_try_at_{};
+};
+
+}  // namespace detail
+
+/// Kocherga node implementing the UAVCAN/CAN v1 transport along with UAVCAN v0 with automatic version detection.
+class CANNode : public kocherga::INode
+{
+public:
+    /// The local UID shall be the same that is passed to the bootloader. It is used for PnP node-ID allocation.
+    /// By default, this implementation will auto-detect the parameters of the network and do a PnP node-ID allocation.
+    /// The application can opt-out of autoconfiguration by providing the required data to the constructor.
+    /// Unknown parameters shall be set to empty options.
+    CANNode(ICANDriver&                               driver,
+            const SystemInfo::UniqueID&               local_unique_id,
+            const std::optional<ICANDriver::Bitrate>& can_bitrate    = {},
+            const std::optional<std::uint8_t>         uavcan_version = {},
+            const std::optional<std::uint8_t>         local_node_id  = {})
+    {
+        if (can_bitrate &&                               //
+            uavcan_version && (*uavcan_version == 0) &&  //
+            local_node_id && (*local_node_id > 0) && (*local_node_id < 128))
+        {
+            activity_ = nullptr;
+            activity_ = nullptr;
+        }
+        else if (can_bitrate &&                               //
+                 uavcan_version && (*uavcan_version == 1) &&  //
+                 local_node_id && (*local_node_id < 128))
+        {
+            activity_ = nullptr;
+        }
+        else if (can_bitrate && uavcan_version && (*uavcan_version == 0))
+        {
+            activity_ = activity_allocator_.construct<detail::V0NodeIDAllocationActivity>(activity_allocator_,
+                                                                                          driver,
+                                                                                          local_unique_id,
+                                                                                          *can_bitrate);
+        }
+        else if (can_bitrate && uavcan_version && (*uavcan_version == 1))
+        {
+            activity_ = activity_allocator_.construct<detail::V1NodeIDAllocationActivity>(activity_allocator_,
+                                                                                          driver,
+                                                                                          local_unique_id,
+                                                                                          *can_bitrate);
+        }
+        else if (can_bitrate)
+        {
+            activity_ = activity_allocator_.construct<detail::ProtocolVersionDetectionActivity>(activity_allocator_,
+                                                                                                driver,
+                                                                                                local_unique_id,
+                                                                                                *can_bitrate);
+        }
+        else
+        {
+            activity_ = activity_allocator_.construct<detail::BitrateDetectionActivity>(activity_allocator_,
+                                                                                        driver,
+                                                                                        local_unique_id);
+        }
+    }
+
+private:
+    void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
+    {
+        if (detail::IActivity* const new_activity = activity_->poll(reactor, uptime))
+        {
+            activity_allocator_.destroy(activity_);
+            activity_ = new_activity;
+        }
+    }
+
+    [[nodiscard]] auto sendRequest(const ServiceID           service_id,
+                                   const NodeID              server_node_id,
+                                   const TransferID          transfer_id,
+                                   const std::size_t         payload_length,
+                                   const std::uint8_t* const payload) -> bool override
+    {
+        return activity_->sendRequest(service_id, server_node_id, transfer_id, payload_length, payload);
+    }
+
+    void cancelRequest() override { activity_->cancelRequest(); }
+
+    [[nodiscard]] auto publishMessage(const SubjectID           subject_id,
+                                      const TransferID          transfer_id,
+                                      const std::size_t         payload_length,
+                                      const std::uint8_t* const payload) -> bool override
+    {
+        return activity_->publishMessage(subject_id, transfer_id, payload_length, payload);
+    }
+
+    detail::BlockAllocator<1024, 2> activity_allocator_;
+    detail::IActivity*              activity_ = nullptr;
 };
 
 }  // namespace kocherga::can
