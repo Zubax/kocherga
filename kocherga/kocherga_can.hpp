@@ -263,6 +263,7 @@ class IActivity
 {
 public:
     /// If this method returns a non-null, the new activity shall replace the current one.
+    /// It is not allowed to call this method again after it returned a non-zero pointer.
     [[nodiscard]] virtual auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* = 0;
 
     // See kocherga::INode
@@ -304,6 +305,34 @@ public:
     auto operator=(IActivity&&) -> IActivity& = delete;
 };
 
+class V0MainActivity : public IActivity
+{
+public:
+    V0MainActivity(IAllocator&                 allocator,
+                   ICANDriver&                 driver,
+                   const SystemInfo::UniqueID& local_uid,
+                   const std::uint8_t          local_node_id) :
+        allocator_(allocator), driver_(driver), local_uid_(local_uid), local_node_id_(local_node_id)
+    {}
+
+    auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
+    {
+        (void) reactor;
+        (void) uptime;
+        (void) allocator_;
+        (void) driver_;
+        (void) local_uid_;
+        (void) local_node_id_;
+        return nullptr;
+    }
+
+private:
+    IAllocator&                allocator_;
+    ICANDriver&                driver_;
+    const SystemInfo::UniqueID local_uid_;
+    const std::uint8_t         local_node_id_;
+};
+
 class V0NodeIDAllocationActivity : public IActivity
 {
 public:
@@ -332,6 +361,44 @@ private:
     const SystemInfo::UniqueID      local_uid_;
     ICANDriver::Bitrate             bitrate_;
     std::optional<ICANDriver::Mode> bus_mode_;
+};
+
+class V1MainActivity : public IActivity
+{
+public:
+    V1MainActivity(IAllocator&                 allocator,
+                   ICANDriver&                 driver,
+                   const SystemInfo::UniqueID& local_uid,
+                   const ICANDriver::Mode      bus_mode,
+                   const std::uint8_t          local_node_id) :
+        allocator_(allocator),
+        driver_(driver),
+        local_uid_(local_uid),
+        pseudo_unique_id_(makePseudoUniqueID(local_uid)),
+        bus_mode_(bus_mode),
+        local_node_id_(local_node_id)
+    {}
+
+    auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
+    {
+        (void) reactor;
+        (void) uptime;
+        (void) allocator_;
+        (void) driver_;
+        (void) local_uid_;
+        (void) pseudo_unique_id_;
+        (void) bus_mode_;
+        (void) local_node_id_;
+        return nullptr;
+    }
+
+private:
+    IAllocator&                allocator_;
+    ICANDriver&                driver_;
+    const SystemInfo::UniqueID local_uid_;
+    const std::uint64_t        pseudo_unique_id_;
+    const ICANDriver::Mode     bus_mode_;
+    const std::uint8_t         local_node_id_;
 };
 
 class V1NodeIDAllocationActivity : public IActivity
@@ -432,6 +499,7 @@ private:
 
     [[nodiscard]] auto constructSuccessor(const std::uint8_t detected_protocol_version) -> IActivity*
     {
+        assert(detected_protocol_version < 2);
         if (0 == detected_protocol_version)
         {
             return allocator_.construct<V0NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
@@ -440,7 +508,6 @@ private:
         {
             return allocator_.construct<V1NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
         }
-        assert(false);
         return nullptr;
     }
 
@@ -510,46 +577,62 @@ public:
             const std::optional<std::uint8_t>         uavcan_version = {},
             const std::optional<std::uint8_t>         local_node_id  = {})
     {
-        if (can_bitrate &&                               //
+        if ((activity_ == nullptr) && can_bitrate &&     //
             uavcan_version && (*uavcan_version == 0) &&  //
             local_node_id && (*local_node_id > 0) && (*local_node_id < 128))
         {
-            activity_ = nullptr;
-            activity_ = nullptr;
+            if (const auto bus_mode =
+                    driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>(*local_node_id)))
+            {
+                (void) bus_mode;  // v0 doesn't care about mode because it only supports Classic CAN.
+                activity_ = activity_allocator_.construct<detail::V0MainActivity>(activity_allocator_,
+                                                                                  driver,
+                                                                                  local_unique_id,
+                                                                                  *local_node_id);
+            }
         }
-        else if (can_bitrate &&                               //
-                 uavcan_version && (*uavcan_version == 1) &&  //
-                 local_node_id && (*local_node_id < 128))
+        if ((activity_ == nullptr) && can_bitrate &&     //
+            uavcan_version && (*uavcan_version == 1) &&  //
+            local_node_id && (*local_node_id < 128))
         {
-            activity_ = nullptr;
+            if (const auto bus_mode =
+                    driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<1>(*local_node_id)))
+            {
+                activity_ = activity_allocator_.construct<detail::V1MainActivity>(activity_allocator_,
+                                                                                  driver,
+                                                                                  local_unique_id,
+                                                                                  *bus_mode,
+                                                                                  *local_node_id);
+            }
         }
-        else if (can_bitrate && uavcan_version && (*uavcan_version == 0))
+        if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 0))
         {
             activity_ = activity_allocator_.construct<detail::V0NodeIDAllocationActivity>(activity_allocator_,
                                                                                           driver,
                                                                                           local_unique_id,
                                                                                           *can_bitrate);
         }
-        else if (can_bitrate && uavcan_version && (*uavcan_version == 1))
+        if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 1))
         {
             activity_ = activity_allocator_.construct<detail::V1NodeIDAllocationActivity>(activity_allocator_,
                                                                                           driver,
                                                                                           local_unique_id,
                                                                                           *can_bitrate);
         }
-        else if (can_bitrate)
+        if ((activity_ == nullptr) && can_bitrate)
         {
             activity_ = activity_allocator_.construct<detail::ProtocolVersionDetectionActivity>(activity_allocator_,
                                                                                                 driver,
                                                                                                 local_unique_id,
                                                                                                 *can_bitrate);
         }
-        else
+        if (activity_ == nullptr)
         {
             activity_ = activity_allocator_.construct<detail::BitrateDetectionActivity>(activity_allocator_,
                                                                                         driver,
                                                                                         local_unique_id);
         }
+        assert(activity_ != nullptr);
     }
 
 private:
