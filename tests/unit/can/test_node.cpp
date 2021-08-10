@@ -51,7 +51,6 @@ public:
 
     void pushRx(const Frame& fr) { rx_.push_back(fr); }
 
-private:
     [[nodiscard]] auto configure(const Bitrate& bitrate, const bool silent, const CANAcceptanceFilterConfig& filter)
         -> std::optional<Mode> override
     {
@@ -59,11 +58,16 @@ private:
         return mode_;
     }
 
+private:
     [[nodiscard]] auto push(const bool          force_classic_can,
                             const std::uint32_t extended_can_id,
                             const std::uint8_t  payload_size,
                             const void* const   payload) -> bool override
     {
+        if (!mode_)
+        {
+            return false;
+        }
         TxFrame f{};
         f.force_classic_can = force_classic_can;
         f.extended_can_id   = extended_can_id;
@@ -75,7 +79,7 @@ private:
     [[nodiscard]] auto pop(PayloadBuffer& payload_buffer)
         -> std::optional<std::pair<std::uint32_t, std::uint8_t>> override
     {
-        if (!rx_.empty())
+        if (mode_ && !rx_.empty())
         {
             const Frame f = rx_.front();
             rx_.pop_front();
@@ -195,17 +199,12 @@ TEST_CASE("can::detail::ProtocolVersionDetectionActivity")
     ReactorMock                reactor;
     std::shared_ptr<IActivity> act;
     driver.setMode(CANDriverMock::Mode::FD);
+    const Bitrate br{1'000'000, 4'000'000};
     // Detect v1 if both v0 and v1 are present at the same time.
     {
-        act = std::make_shared<ProtocolVersionDetectionActivity>(alloc,
-                                                                 driver,
-                                                                 kocherga::SystemInfo::UniqueID{},
-                                                                 Bitrate{1'000'000, 4'000'000});
-        REQUIRE(!driver.getConfig());
+        REQUIRE(driver.configure(br, true, CANAcceptanceFilterConfig::makePromiscuous()));
+        act = std::make_shared<ProtocolVersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000)));
-        REQUIRE(driver.getConfig()->bitrate == Bitrate{1'000'000, 4'000'000});
-        REQUIRE(driver.getConfig()->silent);
-        REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0, 0});
         // No matter how long we wait, if there are no valid frames, the protocol version detection will never end.
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(2'000'000)));
@@ -226,22 +225,25 @@ TEST_CASE("can::detail::ProtocolVersionDetectionActivity")
         IActivity* const v1_pnp_act = act->poll(reactor, std::chrono::microseconds(12'000'000));
         REQUIRE(v1_pnp_act);
         REQUIRE(dynamic_cast<V1NodeIDAllocationActivity*>(v1_pnp_act));
+        // The silent flag must be reset before invoking the next activity!
+        REQUIRE(driver.getConfig()->bitrate == br);
+        REQUIRE(!driver.getConfig()->silent);                                                       // Not silent!
+        REQUIRE(driver.getConfig()->filter == kocherga::can::detail::makeAcceptanceFilter<1>({}));  // v1!
     }
     // Detect v0 if only v0 is present.
     {
-        act = std::make_shared<ProtocolVersionDetectionActivity>(alloc,
-                                                                 driver,
-                                                                 kocherga::SystemInfo::UniqueID{},
-                                                                 Bitrate{1'000'000, 4'000'000});
+        REQUIRE(driver.configure(br, true, CANAcceptanceFilterConfig::makePromiscuous()));
+        act = std::make_shared<ProtocolVersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000)));
-        REQUIRE(driver.getConfig()->bitrate == Bitrate{1'000'000, 4'000'000});
-        REQUIRE(driver.getConfig()->silent);
-        REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0, 0});
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000'000)));
         driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // UAVCAN/CAN v0
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(2'000'000)));
         IActivity* const v0_pnp_act = act->poll(reactor, std::chrono::microseconds(4'000'000));
         REQUIRE(v0_pnp_act);
         REQUIRE(dynamic_cast<V0NodeIDAllocationActivity*>(v0_pnp_act));
+        // The silent flag must be reset before invoking the next activity!
+        REQUIRE(driver.getConfig()->bitrate == br);
+        REQUIRE(!driver.getConfig()->silent);                                                       // Not silent!
+        REQUIRE(driver.getConfig()->filter == kocherga::can::detail::makeAcceptanceFilter<0>({}));  // v0!
     }
 }

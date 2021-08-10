@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kocherga.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <variant>
@@ -171,8 +172,8 @@ template <>
         };
     }
     return {
-        0b00000'0000000000000001'0'0000000U,
-        0b00000'1111111111111111'1'0000000U,
+        0b00000'0000000000000001'0'0000000U,  // Match on PnP node-ID allocation messages (both request/response).
+        0b00000'0000000000000011'1'0000000U,  // Ignore the discriminator.
     };
 }
 template <>
@@ -187,7 +188,7 @@ template <>
         };
     }
     return {
-        0b000'00'0001111111100101'00000000U,
+        0b000'00'0001111111100101'00000000U,  // Match on PnP node-ID allocation messages.
         0b000'11'1001111111111100'10000000U,
     };
 }
@@ -356,21 +357,247 @@ public:
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
         (void) reactor;
-        (void) uptime;
-        (void) allocator_;
-        (void) driver_;
-        (void) local_uid_;
-        (void) bitrate_;
-        (void) bus_mode_;
+        {
+            ICANDriver::PayloadBuffer buf{};
+            while (const auto frame = driver_.pop(buf))
+            {
+                const auto [can_id, payload_size] = *frame;
+                if (IActivity* const out = processReceivedFrame(uptime, can_id, payload_size, buf.data()))
+                {
+                    return out;
+                }
+            }
+        }
+        if (uptime >= deadline_)
+        {
+            handleDeadline(uptime);
+        }
         return nullptr;
     }
 
 private:
-    IAllocator&                     allocator_;
-    ICANDriver&                     driver_;
-    const SystemInfo::UniqueID      local_uid_;
-    ICANDriver::Bitrate             bitrate_;
-    std::optional<ICANDriver::Mode> bus_mode_;
+    using DelayRange = std::pair<std::chrono::microseconds, std::chrono::microseconds>;
+
+    [[nodiscard]] auto processReceivedFrame(const std::chrono::microseconds now,
+                                            const std::uint32_t             can_id,
+                                            const std::size_t               payload_size,
+                                            const std::uint8_t* const       payload) -> IActivity*
+    {
+        if ((can_id & 0x80U) != 0)  // Ignore if this is a service transfer frame.
+        {
+            return nullptr;
+        }
+        const std::uint8_t source_node_id = can_id & 0x7FU;
+        const bool         anonymous      = source_node_id == 0;
+        if (const auto data_type_id = (can_id >> 8U) & (anonymous ? 0b11U : 0xFFFFU); data_type_id != DataTypeID)
+        {
+            return nullptr;
+        }
+        if (anonymous)  // This is a request from somebody else, set up new schedule to avoid conflicts.
+        {
+            reset(now);
+            return nullptr;
+        }
+        if ((payload_size < 1) || (payload_size > 8))  // Ignore bad frames
+        {
+            return nullptr;
+        }
+        const std::uint8_t tail_byte = payload[payload_size - 1U];
+        const bool         sot       = (tail_byte & 0b1000'0000U) != 0;
+        const bool         eot       = (tail_byte & 0b0100'0000U) != 0;
+        const bool         tog       = (tail_byte & 0b0010'0000U) != 0;
+        const std::uint8_t tid       = (tail_byte & 0b0001'1111U);
+        return acceptAllocationResponseFrame(now, source_node_id, payload_size - 1U, payload, sot, eot, tog, tid);
+    }
+
+    [[nodiscard]] auto acceptAllocationResponseFrame(const std::chrono::microseconds now,
+                                                     const std::uint8_t              source_node_id,
+                                                     const std::size_t               payload_size,
+                                                     const std::uint8_t* const       payload,
+                                                     const bool                      start_of_transfer,
+                                                     const bool                      end_of_transfer,
+                                                     const bool                      toggle_bit,
+                                                     const std::uint8_t              transfer_id) -> IActivity*
+    {
+        if (start_of_transfer && toggle_bit)  // Not UAVCAN v0
+        {
+            return nullptr;
+        }
+        if (start_of_transfer)
+        {
+            rx_state_ = {source_node_id, transfer_id, false, 0, {}};
+        }
+        else
+        {
+            rx_state_.toggle = !rx_state_.toggle;
+            const bool match = (source_node_id == rx_state_.source_node_id) &&  //
+                               (transfer_id == rx_state_.transfer_id) &&        //
+                               (toggle_bit == rx_state_.toggle);
+            if (!match)
+            {
+                return nullptr;
+            }
+        }
+        const auto sz = std::min(payload_size, rx_state_.payload.size() - rx_state_.payload_size);
+        std::copy_n(payload, sz, &rx_state_.payload.at(rx_state_.payload_size));
+        rx_state_.payload_size += sz;
+        if (end_of_transfer && (rx_state_.payload_size > 2))
+        {
+            CRC16CCITT crc;
+            crc.update(rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
+            if (crc.get() == (static_cast<std::uint32_t>(rx_state_.payload.at(1) << 8U) | rx_state_.payload.at(0)))
+            {
+                return acceptAllocationResponseMessage(now, rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] auto acceptAllocationResponseMessage(const std::chrono::microseconds now,
+                                                       const std::size_t               message_data_size,
+                                                       const std::uint8_t* const       message_data) -> IActivity*
+    {
+        if ((message_data_size < 2) || (message_data_size > 17))
+        {
+            return nullptr;
+        }
+        const auto received_uid_size = message_data_size - 1;
+        if (0 != std::memcmp(local_uid_.data(), message_data + 1, received_uid_size))
+        {
+            reset(now);
+            return nullptr;
+        }
+        if ((received_uid_size != local_uid_.size()) || (stage_ < 2))
+        {
+            return nullptr;  // Proceed to the next stage, do not reset the state.
+        }
+        const std::uint8_t node_id = message_data[0] & 0x7FU;
+        if ((node_id < 1) || (node_id > 127))  // Bad allocation
+        {
+            return nullptr;
+        }
+        // Allocation done, full match.
+        if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<0>(node_id)))
+        {
+            (void) bus_mode;
+            return allocator_.construct<V0MainActivity>(allocator_, driver_, local_uid_, node_id);
+        }
+        return nullptr;
+    }
+
+    void handleDeadline(const std::chrono::microseconds now)
+    {
+        if (0 == stage_)
+        {
+            tx_transfer_id_++;
+            const std::array<std::uint8_t, 8> buf{{
+                1,  // first_part_of_unique_id=true, any node-ID (no preference)
+                local_uid_.at(0),
+                local_uid_.at(1),
+                local_uid_.at(2),
+                local_uid_.at(3),
+                local_uid_.at(4),
+                local_uid_.at(5),
+                static_cast<std::uint8_t>(0b1100'0000U | tx_transfer_id_),
+            }};
+            if (send(buf))
+            {
+                stage_ = 1;
+                schedule(now, DelayRangeFollowup);
+            }
+            else
+            {
+                reset(now);
+            }
+        }
+        else if (1 == stage_)
+        {
+            const ICANDriver::PayloadBuffer buf{{
+                0,  // first_part_of_unique_id=false, any node-ID (no preference)
+                local_uid_.at(6),
+                local_uid_.at(7),
+                local_uid_.at(8),
+                local_uid_.at(9),
+                local_uid_.at(10),
+                local_uid_.at(11),
+                static_cast<std::uint8_t>(0b1100'0000U | tx_transfer_id_),
+            }};
+            if (send(buf))
+            {
+                stage_ = 2;
+                schedule(now, DelayRangeFollowup);
+            }
+            else
+            {
+                reset(now);
+            }
+        }
+        else
+        {
+            const ICANDriver::PayloadBuffer buf{{
+                0,  // first_part_of_unique_id=false, any node-ID (no preference)
+                local_uid_.at(12),
+                local_uid_.at(13),
+                local_uid_.at(14),
+                local_uid_.at(15),
+                static_cast<std::uint8_t>(0b1100'0000U | tx_transfer_id_),
+            }};
+            (void) send(buf);
+            reset(now);
+        }
+    }
+
+    void reset(const std::chrono::microseconds now)
+    {
+        stage_ = 0;
+        schedule(now, DelayRangeRequest);
+    }
+
+    void schedule(const std::chrono::microseconds now, const DelayRange range)
+    {
+        const auto delta      = std::abs(range.first.count() - range.second.count());
+        const auto randomized = (std::rand() * delta) / RAND_MAX;  // NOSONAR rand() ok
+        assert((0 <= randomized) && (randomized <= delta));
+        const auto delay = range.first + std::chrono::microseconds(randomized);
+        assert(range.first <= delay);
+        assert(range.second >= delay);
+        deadline_ = now + delay;
+    }
+
+    template <std::size_t PayloadSize>
+    [[nodoscard]] auto send(const std::array<std::uint8_t, PayloadSize>& payload) -> bool
+    {
+        CRC16CCITT discriminator_crc;
+        discriminator_crc.update(PayloadSize, payload.data());
+        const std::uint32_t discriminator = discriminator_crc.get() & ((1UL << 14U) - 1U);
+        const std::uint32_t can_id        = CANIDMaskWithoutDiscriminator | (discriminator << 10U);
+        return driver_.push(true, can_id, PayloadSize, payload.data());
+    }
+
+    static constexpr DelayRange    DelayRangeRequest{600'000, 1'000'000};
+    static constexpr DelayRange    DelayRangeFollowup{0, 400'000};
+    static constexpr std::uint32_t CANIDMaskWithoutDiscriminator = 0x1E'0001'00UL;
+
+    static constexpr std::uint16_t DataTypeID = 1;  // uavcan.protocol.dynamic_node_id.Allocation
+
+    IAllocator&                allocator_;
+    ICANDriver&                driver_;
+    const SystemInfo::UniqueID local_uid_;
+    const ICANDriver::Bitrate  bitrate_;
+
+    std::chrono::microseconds deadline_{};
+    std::uint8_t              stage_ = 0;
+
+    std::uint8_t tx_transfer_id_ = 0;
+
+    struct RxState
+    {
+        std::uint8_t                       source_node_id = 0;
+        std::uint8_t                       transfer_id    = 0;
+        bool                               toggle         = false;
+        std::size_t                        payload_size   = 0;
+        std::array<std::uint8_t, 7UL * 3U> payload{};
+    } rx_state_{};
 };
 
 class V1MainActivity : public IActivity
@@ -417,8 +644,9 @@ public:
     V1NodeIDAllocationActivity(IAllocator&                 allocator,
                                ICANDriver&                 driver,
                                const SystemInfo::UniqueID& local_uid,
-                               const ICANDriver::Bitrate&  bitrate) :
-        allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate)
+                               const ICANDriver::Bitrate&  bitrate,
+                               const ICANDriver::Mode      bus_mode) :
+        allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate), bus_mode_(bus_mode)
     {}
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
@@ -434,11 +662,11 @@ public:
     }
 
 private:
-    IAllocator&                     allocator_;
-    ICANDriver&                     driver_;
-    const SystemInfo::UniqueID      local_uid_;
-    ICANDriver::Bitrate             bitrate_;
-    std::optional<ICANDriver::Mode> bus_mode_;
+    IAllocator&                allocator_;
+    ICANDriver&                driver_;
+    const SystemInfo::UniqueID local_uid_;
+    const ICANDriver::Bitrate  bitrate_;
+    const ICANDriver::Mode     bus_mode_;
 };
 
 class ProtocolVersionDetectionActivity : public IActivity
@@ -454,33 +682,26 @@ public:
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
         (void) reactor;
-        if (!bus_mode_)
-        {
-            bus_mode_ = driver_.configure(bitrate_, true, CANAcceptanceFilterConfig::makePromiscuous());
-        }
-        else if (highest_version_seen_ && (uptime > deadline_))
+        if (highest_version_seen_ && (uptime > deadline_))
         {
             return constructSuccessor(*highest_version_seen_);
         }
-        else
+        ICANDriver::PayloadBuffer buf{};
+        while (const auto frame = driver_.pop(buf))
         {
-            ICANDriver::PayloadBuffer buf{};
-            while (const auto frame = driver_.pop(buf))
+            const auto [can_id, payload_size] = *frame;
+            if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
             {
-                const auto [can_id, payload_size] = *frame;
-                if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
+                if (const auto uavcan_version = tryDetectProtocolVersionFromFrame(can_id, buf.at(payload_size - 1)))
                 {
-                    if (const auto uavcan_version = tryDetectProtocolVersionFromFrame(can_id, buf.at(payload_size - 1)))
+                    if (!highest_version_seen_)
                     {
-                        if (!highest_version_seen_)
-                        {
-                            deadline_ = uptime + ListeningPeriod;
-                        }
-                        if (!highest_version_seen_ || (*highest_version_seen_ < *uavcan_version))
-                        {
-                            highest_version_seen_ = uavcan_version;
-                            assert(highest_version_seen_);
-                        }
+                        deadline_ = uptime + ListeningPeriod;
+                    }
+                    if (!highest_version_seen_ || (*highest_version_seen_ < *uavcan_version))
+                    {
+                        highest_version_seen_ = uavcan_version;
+                        assert(highest_version_seen_);
                     }
                 }
             }
@@ -493,8 +714,8 @@ private:
                                                                 const std::uint8_t  tail_byte)
         -> std::optional<std::uint8_t>
     {
-        // CAN ID is not validated at the moment. This may be improved in the future to avoid misdetection if there are
-        // other protocols besides UAVCAN on the same network.
+        // CAN ID is not validated at the moment. This may be improved in the future to avoid misdetection if there
+        // are other protocols besides UAVCAN on the same network.
         (void) can_id;
         if ((tail_byte & TailByteStartOfTransfer) != 0)
         {
@@ -509,14 +730,23 @@ private:
 
     [[nodiscard]] auto constructSuccessor(const std::uint8_t detected_protocol_version) -> IActivity*
     {
-        assert(detected_protocol_version < 2);
         if (0 == detected_protocol_version)
         {
-            return allocator_.construct<V0NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
+            if (driver_.configure(bitrate_, false, makeAcceptanceFilter<0>({})))
+            {
+                return allocator_.construct<V0NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
+            }
         }
         if (1 == detected_protocol_version)
         {
-            return allocator_.construct<V1NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
+            if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<1>({})))
+            {
+                return allocator_.construct<V1NodeIDAllocationActivity>(allocator_,
+                                                                        driver_,
+                                                                        local_uid_,
+                                                                        bitrate_,
+                                                                        *bus_mode);
+            }
         }
         return nullptr;
     }
@@ -524,13 +754,12 @@ private:
     /// Heartbeats are exchanged at 1 Hz, so about one second should be enough to determine which versions are used.
     static constexpr std::chrono::microseconds ListeningPeriod{1'100'000};
 
-    IAllocator&                     allocator_;
-    ICANDriver&                     driver_;
-    const SystemInfo::UniqueID      local_uid_;
-    ICANDriver::Bitrate             bitrate_;
-    std::optional<ICANDriver::Mode> bus_mode_;
-    std::optional<std::uint8_t>     highest_version_seen_;
-    std::chrono::microseconds       deadline_{};
+    IAllocator&                 allocator_;
+    ICANDriver&                 driver_;
+    const SystemInfo::UniqueID  local_uid_;
+    const ICANDriver::Bitrate   bitrate_;
+    std::optional<std::uint8_t> highest_version_seen_;
+    std::chrono::microseconds   deadline_{};
 };
 
 class BitrateDetectionActivity : public IActivity
@@ -559,7 +788,8 @@ private:
         return nullptr;
     }
 
-    /// Heartbeats are exchanged at 1 Hz, so about one second should be enough to determine if the bit rate is correct.
+    /// Heartbeats are exchanged at 1 Hz, so about one second should be enough to determine if the bit rate is
+    /// correct.
     static constexpr std::chrono::microseconds ListeningPeriod{1'100'000};
 
     IAllocator&                allocator_;
@@ -617,24 +847,37 @@ public:
         }
         if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 0))
         {
-            activity_ = activity_allocator_.construct<detail::V0NodeIDAllocationActivity>(activity_allocator_,
-                                                                                          driver,
-                                                                                          local_unique_id,
-                                                                                          *can_bitrate);
+            if (const auto bus_mode = driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>({})))
+            {
+                (void) bus_mode;  // v0 doesn't care about mode because it only supports Classic CAN.
+                activity_ = activity_allocator_.construct<detail::V0NodeIDAllocationActivity>(activity_allocator_,
+                                                                                              driver,
+                                                                                              local_unique_id,
+                                                                                              *can_bitrate);
+            }
         }
         if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 1))
         {
-            activity_ = activity_allocator_.construct<detail::V1NodeIDAllocationActivity>(activity_allocator_,
-                                                                                          driver,
-                                                                                          local_unique_id,
-                                                                                          *can_bitrate);
+            if (const auto bus_mode = driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<1>({})))
+            {
+                activity_ = activity_allocator_.construct<detail::V1NodeIDAllocationActivity>(activity_allocator_,
+                                                                                              driver,
+                                                                                              local_unique_id,
+                                                                                              *can_bitrate,
+                                                                                              *bus_mode);
+            }
         }
         if ((activity_ == nullptr) && can_bitrate)
         {
-            activity_ = activity_allocator_.construct<detail::ProtocolVersionDetectionActivity>(activity_allocator_,
-                                                                                                driver,
-                                                                                                local_unique_id,
-                                                                                                *can_bitrate);
+            if (const auto bus_mode =
+                    driver.configure(*can_bitrate, true, CANAcceptanceFilterConfig::makePromiscuous()))
+            {
+                (void) bus_mode;  // The protocol version detection task doesn't care about the bus mode.
+                activity_ = activity_allocator_.construct<detail::ProtocolVersionDetectionActivity>(activity_allocator_,
+                                                                                                    driver,
+                                                                                                    local_unique_id,
+                                                                                                    *can_bitrate);
+            }
         }
         if (activity_ == nullptr)
         {
