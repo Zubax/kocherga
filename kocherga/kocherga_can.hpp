@@ -21,6 +21,11 @@ struct CANAcceptanceFilterConfig
 
     /// Constructs a filter that accepts all extended data frames.
     [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {0, 0}; }
+
+    [[nodoscard]] auto operator==(const CANAcceptanceFilterConfig& cfg) const -> bool
+    {
+        return (extended_can_id == cfg.extended_can_id) && (mask == cfg.mask);
+    }
 };
 
 /// Bridges Kocherga/CAN with the platform-specific CAN driver implementation.
@@ -34,6 +39,11 @@ public:
     {
         std::uint32_t arbitration{};
         std::uint32_t data{};  ///< This is ignored if only Classic CAN is supported.
+
+        [[nodoscard]] auto operator==(const Bitrate& rhs) const -> bool
+        {
+            return (data == rhs.data) && (arbitration == rhs.arbitration);
+        }
     };
 
     /// Bitrates predefined by the UCANPHY specification.
@@ -455,7 +465,7 @@ public:
         else
         {
             ICANDriver::PayloadBuffer buf{};
-            if (const auto frame = driver_.pop(buf))
+            while (const auto frame = driver_.pop(buf))
             {
                 const auto [can_id, payload_size] = *frame;
                 if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
@@ -537,7 +547,7 @@ private:
         ICANDriver::PayloadBuffer buf{};
         if (bus_mode_ && driver_.pop(buf))
         {
-            const auto bitrate = ICANDriver::StandardBitrates.at(setting_index_);
+            const auto bitrate = ICANDriver::StandardBitrates.at(setting_index_ % ICANDriver::StandardBitrates.size());
             return allocator_.construct<ProtocolVersionDetectionActivity>(allocator_, driver_, local_uid_, bitrate);
         }
         if (!bus_mode_ || (uptime > next_try_at_))
@@ -557,7 +567,7 @@ private:
     const SystemInfo::UniqueID local_uid_;
 
     std::optional<ICANDriver::Mode> bus_mode_;
-    std::uint8_t                    setting_index_ = ICANDriver::StandardBitrates.size() - 1U;
+    std::uint64_t                   setting_index_ = ICANDriver::StandardBitrates.size() - 1U;
     std::chrono::microseconds       next_try_at_{};
 };
 
