@@ -307,7 +307,7 @@ TEST_CASE("serial::COBS* roundtrip")
     };
 
     // Generate many random packets.
-    std::vector<Buf> original_packets(100);
+    std::vector<Buf> original_packets(20);
     for (auto& x : original_packets)
     {
         x = synth_buf();

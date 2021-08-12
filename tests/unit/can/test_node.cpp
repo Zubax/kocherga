@@ -247,3 +247,142 @@ TEST_CASE("can::detail::ProtocolVersionDetectionActivity")
         REQUIRE(driver.getConfig()->filter == kocherga::can::detail::makeAcceptanceFilter<0>({}));  // v0!
     }
 }
+
+TEST_CASE("can::detail::V0NodeIDAllocationActivity")
+{
+    using kocherga::can::detail::IActivity;
+    using kocherga::can::detail::V0NodeIDAllocationActivity;
+    using kocherga::can::detail::V0MainActivity;
+    using std::chrono_literals::operator""us;
+    using Buf = std::vector<std::uint8_t>;
+
+    Allocator     alloc;
+    CANDriverMock driver;
+    ReactorMock   reactor;
+    driver.setMode(CANDriverMock::Mode::FD);
+    const Bitrate                        br{1'000'000, 4'000'000};
+    const kocherga::SystemInfo::UniqueID uid{
+        {0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0x00, 0x00, 0x00, 0x00}};
+
+    static const auto compute_pnp_request_can_id = [](const std::vector<std::uint8_t>& frame_payload) -> std::uint32_t {
+        REQUIRE(!frame_payload.empty());
+        REQUIRE(frame_payload.size() <= 8);
+        kocherga::can::detail::CRC16CCITT discriminator_crc;
+        discriminator_crc.update(frame_payload.size(), frame_payload.data());
+        const std::uint32_t discriminator = discriminator_crc.get() & ((1UL << 14U) - 1U);
+        return 0x1E'0001'00UL | (discriminator << 10U);
+    };
+
+    // Successful allocation.
+    {
+        V0NodeIDAllocationActivity act(alloc, driver, uid, br);
+        REQUIRE(act.getDeadline().count() == 0);
+        REQUIRE(act.getStage() == 0);
+        // First poll -- set up the deadline with randomization.
+        REQUIRE(!act.poll(reactor, 1'000'000us));
+        const auto deadline_a = act.getDeadline();
+        REQUIRE(deadline_a >= 1'600'000us);
+        REQUIRE(deadline_a <= 2'000'000us);
+        REQUIRE(act.getStage() == 0);
+        REQUIRE(!act.poll(reactor, deadline_a - 1us));  // No change yet
+        REQUIRE(act.getDeadline() == deadline_a);
+        REQUIRE(act.getStage() == 0);
+        REQUIRE(!driver.popTx());
+        // Deadline reached, state updated; first stage allocation request sent.
+        REQUIRE(!act.poll(reactor, deadline_a));
+        auto fr = driver.popTx();
+        REQUIRE(fr);
+        REQUIRE(!driver.popTx());
+        REQUIRE(fr->force_classic_can);
+        Buf payload{0x01, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0000U};
+        REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
+        REQUIRE(fr->payload == payload);
+        // If we don't send a response, the allocatee will continue re-sending the first stage request forever.
+        const auto deadline_b = act.getDeadline();
+        REQUIRE(deadline_b >= deadline_a + 600'000us);
+        REQUIRE(deadline_b <= deadline_a + 1'000'000us);
+        REQUIRE(!act.poll(reactor, deadline_b - 2us));
+        REQUIRE(!act.poll(reactor, deadline_b - 1us));
+        REQUIRE(!driver.popTx());
+        REQUIRE(!act.poll(reactor, deadline_b));
+        fr = driver.popTx();
+        REQUIRE(fr);
+        REQUIRE(!driver.popTx());
+        REQUIRE(fr->force_classic_can);
+        payload = {0x01, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0001U};
+        REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
+        REQUIRE(fr->payload == payload);
+        // Send 1st stage allocation response matching this UID, prompting the 2nd stage request.
+        driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0000U}});
+        REQUIRE(0 == act.getStage());
+        REQUIRE(!act.poll(reactor, deadline_b + 1000us));
+        REQUIRE(1 == act.getStage());  // It's a match!
+        const auto deadline_c = act.getDeadline();
+        REQUIRE(deadline_c >= deadline_b + 1000us);
+        REQUIRE(deadline_c <= deadline_b + 401'000us);
+        REQUIRE(!act.poll(reactor, deadline_c - 1us));
+        REQUIRE(!driver.popTx());
+        REQUIRE(!act.poll(reactor, deadline_c));
+        fr = driver.popTx();
+        REQUIRE(fr);
+        REQUIRE(!driver.popTx());
+        REQUIRE(fr->force_classic_can);
+        payload = {0x00, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0b1100'0010U};
+        REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
+        REQUIRE(fr->payload == payload);
+        // After the 2nd stage request is sent, the schedule should be armed to send the 1st stage request on timeout.
+        REQUIRE(0 == act.getStage());
+        const auto deadline_d = act.getDeadline();
+        REQUIRE(deadline_d >= deadline_c + 600'000us);
+        REQUIRE(deadline_d <= deadline_c + 1'000'000us);
+        // Let the timeout expire and ensure that another 1st stage request is out.
+        REQUIRE(!act.poll(reactor, deadline_d));
+        fr = driver.popTx();
+        REQUIRE(fr);
+        REQUIRE(!driver.popTx());
+        REQUIRE(fr->force_classic_can);
+        payload = {0x01, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0011U};
+        REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
+        REQUIRE(fr->payload == payload);
+        REQUIRE(0 == act.getStage());
+        // Regardless of the current stage, reception of a matching UID sub-sequence will advance the process.
+        driver.pushRx({0x14'0001'7FUL, {0x9E, 0x3D, 0x00, 0x35, 0xFF, 0xD5, 0x05, 0x81}});
+        driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});
+        driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore duplicate
+        driver.pushRx({0x14'0002'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore unrelated
+        driver.pushRx({0x14'0001'7EUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore wrong sender
+        driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x22}});  // Ignore wrong transfer-ID
+        driver.pushRx({0x14'0001'7FUL, {0x43, 0x41}});
+        driver.pushRx({0x14'0001'7FUL, {0x43, 0x41}});  // Ignore duplicate
+        REQUIRE(!act.poll(reactor, deadline_d));
+        REQUIRE(!driver.popTx());
+        REQUIRE(2 == act.getStage());
+        const auto deadline_e = act.getDeadline();
+        REQUIRE(deadline_e >= deadline_d + 0us);
+        REQUIRE(deadline_e <= deadline_d + 400'000us);
+        REQUIRE(!act.poll(reactor, deadline_e));
+        REQUIRE(0 == act.getStage());  // Reset back to zero again after publication.
+        REQUIRE(act.getDeadline() >= deadline_e + 600'000us);
+        REQUIRE(act.getDeadline() <= deadline_e + 1'000'000us);
+        fr = driver.popTx();
+        REQUIRE(fr);
+        REQUIRE(!driver.popTx());
+        REQUIRE(fr->force_classic_can);
+        payload = {0x00, 0x00, 0x00, 0x00, 0x00, 0b1100'0100U};  // 3rd stage request
+        REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
+        REQUIRE(fr->payload == payload);
+        // Receive a matching response, which completes the process.
+        driver.pushRx({0x14'0001'7FUL, {0xFF, 0xFF, 0xEA, 0x35, 0xFF, 0xD5, 0x05, 0x82}});  // Bad CRC! Ignored.
+        driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x22}});
+        driver.pushRx({0x14'0001'7FUL, {0x43, 0x00, 0x00, 0x00, 0x00, 0x42}});
+        REQUIRE(!act.poll(reactor, deadline_e));
+        REQUIRE(!driver.popTx());
+        driver.pushRx({0x14'0001'7FUL, {0x8C, 0x7A, 0xFA, 0x35, 0xFF, 0xD5, 0x05, 0x82}});  // Correct CRC here.
+        driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x22}});
+        driver.pushRx({0x14'0001'7FUL, {0x43, 0x00, 0x00, 0x00, 0x00, 0x42}});
+        auto* const new_act = act.poll(reactor, deadline_e);
+        REQUIRE(new_act != nullptr);
+        REQUIRE(!driver.popTx());
+        REQUIRE(dynamic_cast<V0MainActivity*>(new_act));
+    }
+}

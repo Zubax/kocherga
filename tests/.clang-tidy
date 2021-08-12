@@ -29,6 +29,7 @@ Checks: >-
   -hicpp-no-array-decay,
   -cert-msc30-c,
   -cert-msc50-cpp,
+  -*-function-size,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 AnalyzeTemporaryDtors: false

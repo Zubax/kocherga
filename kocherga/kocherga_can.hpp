@@ -344,6 +344,24 @@ private:
     const std::uint8_t         local_node_id_;
 };
 
+/// The following example shows the CAN exchange dump collected from a real network using the old UAVCAN v0 GUI Tool.
+///
+/// Unique-ID of the allocatee: 35 FF D5 05 50 59 31 34 61 41 23 43 00 00 00 00
+/// Preferred node-ID:          0       (any, no preference)
+/// Allocated node-ID:          125     (125 << 1 == 0xFA)
+///
+///     Dir. Time        CAN ID      CAN Payload                Source
+///     -------------------------------------------------------------------------------------------------------
+///     ->   0.525710    1E285100    01 35 FF D5 05 50 59 D8    Anon       1st stage request, bytes [0, 6)
+///     <-   0.527186    1400017F    00 35 FF D5 05 50 59 C0    127        1st stage response, 6 bytes of UID
+///     ->   0.923752    1E3C1D00    00 31 34 61 41 23 43 D9    Anon       2nd stage request, bytes [6, 12)
+///     <-   0.927630    1400017F    9E 3D 00 35 FF D5 05 81    127        2nd stage response, 12 bytes of UID
+///     <-   0.927676    1400017F    50 59 31 34 61 41 23 21    127        ...
+///     <-   0.927710    1400017F    43 41                      127        ...
+///     ->   1.083750    1E909D00    00 00 00 00 00 DA          Anon       3rd stage request, bytes [12, 16)
+///     <-   1.088248    1400017F    8C 7A FA 35 FF D5 05 82    127        3rd stage response, 16 bytes of UID
+///     <-   1.088300    1400017F    50 59 31 34 61 41 23 22    127        ...
+///     <-   1.088752    1400017F    43 00 00 00 00 42          127        ...
 class V0NodeIDAllocationActivity : public IActivity
 {
 public:
@@ -368,12 +386,27 @@ public:
                 }
             }
         }
-        if (uptime >= deadline_)
+        if (deadline_)
         {
-            handleDeadline(uptime);
+            if (uptime >= *deadline_)
+            {
+                handleDeadline(uptime);
+            }
+        }
+        else  // First call -- initialize the scheduler
+        {
+            reset(uptime);
+            assert(deadline_);
         }
         return nullptr;
     }
+
+    [[nodiscard]] auto getDeadline() const -> std::chrono::microseconds
+    {
+        return deadline_ ? *deadline_ : std::chrono::microseconds{};
+    }
+
+    [[nodiscard]] auto getStage() const { return stage_; }
 
 private:
     using DelayRange = std::pair<std::chrono::microseconds, std::chrono::microseconds>;
@@ -425,30 +458,44 @@ private:
         }
         if (start_of_transfer)
         {
-            rx_state_ = {source_node_id, transfer_id, false, 0, {}};
+            rx_state_ = RxState(source_node_id, transfer_id);
         }
         else
         {
-            rx_state_.toggle = !rx_state_.toggle;
             const bool match = (source_node_id == rx_state_.source_node_id) &&  //
                                (transfer_id == rx_state_.transfer_id) &&        //
-                               (toggle_bit == rx_state_.toggle);
+                               (toggle_bit == !rx_state_.toggle);
             if (!match)
             {
                 return nullptr;
             }
+            rx_state_.toggle = !rx_state_.toggle;
         }
         const auto sz = std::min(payload_size, rx_state_.payload.size() - rx_state_.payload_size);
         std::copy_n(payload, sz, &rx_state_.payload.at(rx_state_.payload_size));
         rx_state_.payload_size += sz;
-        if (end_of_transfer && (rx_state_.payload_size > 2))
+        if (start_of_transfer && end_of_transfer)
+        {
+            auto* const out = acceptAllocationResponseMessage(now, rx_state_.payload_size, &rx_state_.payload.at(0));
+            rx_state_       = {};
+            return out;
+        }
+        if (!start_of_transfer && end_of_transfer && (rx_state_.payload_size > 2))
         {
             CRC16CCITT crc;
+            for (auto i = 0U; i < sizeof(DataTypeSignature); i++)
+            {
+                crc.update(static_cast<std::uint8_t>((DataTypeSignature >> (8U * i)) & 0xFFU));
+            }
             crc.update(rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
             if (crc.get() == (static_cast<std::uint32_t>(rx_state_.payload.at(1) << 8U) | rx_state_.payload.at(0)))
             {
-                return acceptAllocationResponseMessage(now, rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
+                auto* const out =
+                    acceptAllocationResponseMessage(now, rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
+                rx_state_ = {};
+                return out;
             }
+            // Transfer reassembly error -- CRC mismatch.
         }
         return nullptr;
     }
@@ -464,12 +511,13 @@ private:
         const auto received_uid_size = message_data_size - 1;
         if (0 != std::memcmp(local_uid_.data(), message_data + 1, received_uid_size))
         {
-            reset(now);
             return nullptr;
         }
-        if ((received_uid_size != local_uid_.size()) || (stage_ < 2))
+        if (received_uid_size < local_uid_.size())
         {
-            return nullptr;  // Proceed to the next stage, do not reset the state.
+            stage_ = (received_uid_size >= 12) ? 2 : 1;
+            schedule(now, DelayRangeFollowup);
+            return nullptr;
         }
         const std::uint8_t node_id = message_data[0] & 0x7FU;
         if ((node_id < 1) || (node_id > 127))  // Bad allocation
@@ -489,7 +537,6 @@ private:
     {
         if (0 == stage_)
         {
-            tx_transfer_id_++;
             const std::array<std::uint8_t, 8> buf{{
                 1,  // first_part_of_unique_id=true, any node-ID (no preference)
                 local_uid_.at(0),
@@ -500,19 +547,11 @@ private:
                 local_uid_.at(5),
                 static_cast<std::uint8_t>(0b1100'0000U | tx_transfer_id_),
             }};
-            if (send(buf))
-            {
-                stage_ = 1;
-                schedule(now, DelayRangeFollowup);
-            }
-            else
-            {
-                reset(now);
-            }
+            (void) send(buf);
         }
         else if (1 == stage_)
         {
-            const ICANDriver::PayloadBuffer buf{{
+            const std::array<std::uint8_t, 8> buf{{
                 0,  // first_part_of_unique_id=false, any node-ID (no preference)
                 local_uid_.at(6),
                 local_uid_.at(7),
@@ -522,19 +561,11 @@ private:
                 local_uid_.at(11),
                 static_cast<std::uint8_t>(0b1100'0000U | tx_transfer_id_),
             }};
-            if (send(buf))
-            {
-                stage_ = 2;
-                schedule(now, DelayRangeFollowup);
-            }
-            else
-            {
-                reset(now);
-            }
+            (void) send(buf);
         }
         else
         {
-            const ICANDriver::PayloadBuffer buf{{
+            const std::array<std::uint8_t, 6> buf{{
                 0,  // first_part_of_unique_id=false, any node-ID (no preference)
                 local_uid_.at(12),
                 local_uid_.at(13),
@@ -543,13 +574,15 @@ private:
                 static_cast<std::uint8_t>(0b1100'0000U | tx_transfer_id_),
             }};
             (void) send(buf);
-            reset(now);
         }
+        tx_transfer_id_++;
+        reset(now);
     }
 
     void reset(const std::chrono::microseconds now)
     {
-        stage_ = 0;
+        stage_    = 0;
+        rx_state_ = {};
         schedule(now, DelayRangeRequest);
     }
 
@@ -558,7 +591,7 @@ private:
         const auto delta      = std::abs(range.first.count() - range.second.count());
         const auto randomized = (std::rand() * delta) / RAND_MAX;  // NOSONAR rand() ok
         assert((0 <= randomized) && (randomized <= delta));
-        const auto delay = range.first + std::chrono::microseconds(randomized);
+        const auto delay = std::max(std::chrono::microseconds(1), range.first) + std::chrono::microseconds(randomized);
         assert(range.first <= delay);
         assert(range.second >= delay);
         deadline_ = now + delay;
@@ -567,6 +600,7 @@ private:
     template <std::size_t PayloadSize>
     [[nodoscard]] auto send(const std::array<std::uint8_t, PayloadSize>& payload) -> bool
     {
+        static_assert(PayloadSize <= 8);
         CRC16CCITT discriminator_crc;
         discriminator_crc.update(PayloadSize, payload.data());
         const std::uint32_t discriminator = discriminator_crc.get() & ((1UL << 14U) - 1U);
@@ -578,25 +612,31 @@ private:
     static constexpr DelayRange    DelayRangeFollowup{0, 400'000};
     static constexpr std::uint32_t CANIDMaskWithoutDiscriminator = 0x1E'0001'00UL;
 
-    static constexpr std::uint16_t DataTypeID = 1;  // uavcan.protocol.dynamic_node_id.Allocation
+    static constexpr std::uint16_t DataTypeID        = 1;  // uavcan.protocol.dynamic_node_id.Allocation
+    static constexpr std::uint64_t DataTypeSignature = 0x0B2A812620A11D40ULL;
 
     IAllocator&                allocator_;
     ICANDriver&                driver_;
     const SystemInfo::UniqueID local_uid_;
     const ICANDriver::Bitrate  bitrate_;
 
-    std::chrono::microseconds deadline_{};
-    std::uint8_t              stage_ = 0;
+    std::optional<std::chrono::microseconds> deadline_;
+    std::uint8_t                             stage_ = 0;
 
     std::uint8_t tx_transfer_id_ = 0;
 
     struct RxState
     {
         std::uint8_t                       source_node_id = 0;
-        std::uint8_t                       transfer_id    = 0;
+        std::uint8_t                       transfer_id    = std::numeric_limits<std::uint8_t>::max();
         bool                               toggle         = false;
         std::size_t                        payload_size   = 0;
         std::array<std::uint8_t, 7UL * 3U> payload{};
+
+        RxState() = default;
+        RxState(const std::uint8_t source_node_id, const std::uint8_t transfer_id) :
+            source_node_id(source_node_id), transfer_id(transfer_id)
+        {}
     } rx_state_{};
 };
 
@@ -797,7 +837,7 @@ private:
     const SystemInfo::UniqueID local_uid_;
 
     std::optional<ICANDriver::Mode> bus_mode_;
-    std::uint64_t                   setting_index_ = ICANDriver::StandardBitrates.size() - 1U;
+    std::size_t                     setting_index_ = ICANDriver::StandardBitrates.size() - 1U;
     std::chrono::microseconds       next_try_at_{};
 };
 
@@ -891,6 +931,7 @@ public:
 private:
     void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
     {
+        assert(uptime.count() >= 0);
         if (detail::IActivity* const new_activity = activity_->poll(reactor, uptime))
         {
             activity_allocator_.destroy(activity_);
