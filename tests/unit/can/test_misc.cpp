@@ -63,3 +63,8 @@ TEST_CASE("can::BlockAllocator")
     ba.destroy(c);
     REQUIRE(counter == 0);
 }
+
+TEST_CASE("can::parseFrame")
+{
+    //
+}

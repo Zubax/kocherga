@@ -188,10 +188,224 @@ template <>
         };
     }
     return {
-        0b000'00'0001111111100101'00000000U,  // Match on PnP node-ID allocation messages.
+        0b000'00'0001111111100101'00000000U,  // Match on PnP node-ID allocation response messages of both versions.
         0b000'11'1001111111111100'10000000U,
     };
 }
+
+/// This is valid for v1 only.
+struct FrameModel
+{
+    std::uint8_t priority    = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t transfer_id = std::numeric_limits<std::uint8_t>::max();
+
+    bool start_of_transfer = false;
+    bool end_of_transfer   = false;
+    bool toggle            = false;
+
+    std::uint8_t payload_size = 0;
+    const void*  payload      = nullptr;
+};
+
+struct MessageFrameModel : public FrameModel
+{
+    std::uint16_t               subject_id = std::numeric_limits<std::uint16_t>::max();
+    std::optional<std::uint8_t> source_node_id;
+};
+
+struct ServiceFrameModel : public FrameModel
+{
+    std::uint16_t service_id           = std::numeric_limits<std::uint16_t>::max();
+    std::uint8_t  source_node_id       = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t  destination_node_id  = std::numeric_limits<std::uint8_t>::max();
+    bool          request_not_response = false;
+};
+
+/// The payload of the returned frame will be pointing into the supplied payload buffer, so their lifetimes are linked.
+/// The CAN ID shall be less than 2**29.
+[[nodiscard]] inline auto parseFrame(const std::uint32_t extended_can_id,
+                                     const std::uint8_t  payload_size,
+                                     const void* const   payload)
+    -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
+{
+    assert(payload != nullptr);
+    if (0 != (extended_can_id & (1ULL << 23U)))  // Reserved bit.
+    {
+        return {};
+    }
+    if (payload_size < 1)
+    {
+        return {};
+    }
+    // Parse the tail byte.
+    const auto         out_payload_size  = static_cast<std::uint8_t>(payload_size - 1U);
+    const std::uint8_t tail              = *((static_cast<const uint8_t*>(payload)) + out_payload_size);  // NOSONAR
+    const bool         start_of_transfer = (tail & 0b1000'0000U) != 0;
+    const bool         end_of_transfer   = (tail & 0b0100'0000U) != 0;
+    const bool         toggle            = (tail & 0b0010'0000U) != 0;
+    const std::uint8_t transfer_id       = (tail & 0b0001'1111U);
+    if (start_of_transfer && (!toggle))
+    {
+        return {};  // UAVCAN v0
+    }
+    // Parse the CAN ID.
+    const auto priority                        = static_cast<std::uint8_t>((extended_can_id >> 26U) & 7U);
+    const auto source_node_id_or_discriminator = static_cast<std::uint8_t>(extended_can_id & 0x7FU);
+    if (const auto is_message = (0 == (extended_can_id & (1ULL << 25U))); is_message)
+    {
+        if (0 != (extended_can_id & (1ULL << 7U)))
+        {
+            return {};
+        }
+        MessageFrameModel out{};
+        out.priority          = priority;
+        out.transfer_id       = transfer_id;
+        out.start_of_transfer = start_of_transfer;
+        out.end_of_transfer   = end_of_transfer;
+        out.toggle            = toggle;
+        out.payload_size      = out_payload_size;
+        out.payload           = payload;
+        out.subject_id        = static_cast<std::uint16_t>((extended_can_id >> 8U) & 0x1FFFU);
+        if (const bool is_anonymous = (0 != (extended_can_id & (1ULL << 24U))); !is_anonymous)
+        {
+            out.source_node_id = source_node_id_or_discriminator;
+        }
+        else
+        {
+            if (!(start_of_transfer && end_of_transfer))
+            {
+                return {};  // Anonymous transfers can be only single-frame transfers.
+            }
+        }
+        return out;
+    }
+    ServiceFrameModel out{};
+    out.priority             = priority;
+    out.transfer_id          = transfer_id;
+    out.start_of_transfer    = start_of_transfer;
+    out.end_of_transfer      = end_of_transfer;
+    out.toggle               = toggle;
+    out.payload_size         = out_payload_size;
+    out.payload              = payload;
+    out.service_id           = static_cast<std::uint16_t>((extended_can_id >> 14U) & 0x1FFU);
+    out.source_node_id       = source_node_id_or_discriminator;
+    out.destination_node_id  = static_cast<std::uint8_t>((extended_can_id >> 7U) & 0x7FU);
+    out.request_not_response = 0 != (extended_can_id & (1ULL << 24U));
+    return out;
+}
+
+/// This transfer reassembler is only suitable for very basic applications such as this bootloader, where the edge
+/// cases that are not correctly handled by this implementation can be tolerated. Other applications should not rely
+/// on it; instead, a proper implementation such as that provided in libcanard should be used.
+/// The main limitation is that this reassembler does not support interleaved transfers, which is OK for the bootloader.
+/// The user of this class is responsible for checking the port-ID.
+template <std::size_t Extent>
+class SimplifiedTransferReassembler
+{
+public:
+    using Result = std::pair<std::size_t, const void*>;
+
+protected:
+    SimplifiedTransferReassembler() = default;
+
+    /// The payload pointer in the result remains valid until the next update.
+    [[nodiscard]] auto updateImpl(const FrameModel& frame, const std::uint8_t source) -> std::optional<Result>
+    {
+        if (frame.start_of_transfer)
+        {
+            reset(source, frame.transfer_id);
+        }
+        else
+        {
+            const bool match = (source == source_node_id_) &&          //
+                               (frame.transfer_id == transfer_id_) &&  //
+                               (frame.toggle == !toggle_);
+            if (!match)
+            {
+                return {};
+            }
+            toggle_ = !toggle_;
+        }
+        crc_.update(frame.payload_size, static_cast<const std::uint8_t*>(frame.payload));
+        const auto sz = std::min(frame.payload_size, payload_.size() - payload_size_);
+        std::copy_n(frame.payload, sz, &payload_.at(payload_size_));
+        payload_size_ += sz;
+        if (frame.end_of_transfer)
+        {
+            if (frame.start_of_transfer)  // This is a single-frame transfer.
+            {
+                const Result out{payload_size_, payload_.data()};
+                reset();
+                return out;
+            }
+            if ((payload_size_ >= CRC16CCITT::Size) && crc_.isResidueCorrect())
+            {
+                const Result out{payload_size_ - CRC16CCITT::Size, payload_.data()};
+                reset();
+                return out;
+            }
+        }
+        return {};
+    }
+
+private:
+    void reset() { reset(std::numeric_limits<std::uint8_t>::max(), std::numeric_limits<std::uint8_t>::max()); }
+
+    void reset(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
+    {
+        source_node_id_ = source_node_id;
+        transfer_id_    = transfer_id;
+        toggle_         = true;
+        crc_            = {};
+        payload_size_   = 0;
+    }
+
+    std::uint8_t                                        source_node_id_ = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t                                        transfer_id_    = std::numeric_limits<std::uint8_t>::max();
+    bool                                                toggle_         = true;
+    CRC16CCITT                                          crc_;
+    std::size_t                                         payload_size_ = 0;
+    std::array<std::uint8_t, Extent + CRC16CCITT::Size> payload_{};
+};
+
+template <std::size_t Extent>
+class SimplifiedMessageTransferReassembler : public SimplifiedTransferReassembler<Extent>
+{
+public:
+    using typename SimplifiedTransferReassembler<Extent>::Result;
+
+    /// The payload pointer in the result remains valid until the next update.
+    [[nodiscard]] auto update(const MessageFrameModel& frame) -> std::optional<Result>
+    {
+        if (!frame.source_node_id)
+        {
+            return Result{frame.payload_size, frame.payload};
+        }
+        return SimplifiedTransferReassembler<Extent>::updateImpl(frame, *frame.source_node_id);
+    }
+};
+
+template <std::size_t Extent>
+class SimplifiedServiceTransferReassembler : public SimplifiedTransferReassembler<Extent>
+{
+public:
+    using typename SimplifiedTransferReassembler<Extent>::Result;
+
+    explicit SimplifiedServiceTransferReassembler(const std::uint8_t local_node_id) : local_node_id_(local_node_id) {}
+
+    /// The payload pointer in the result remains valid until the next update.
+    [[nodiscard]] auto update(const ServiceFrameModel& frame) -> std::optional<Result>
+    {
+        if (local_node_id_ == frame.destination_node_id)
+        {
+            return SimplifiedTransferReassembler<Extent>::updateImpl(frame, frame.source_node_id);
+        }
+        return {};
+    }
+
+private:
+    const std::uint8_t local_node_id_;
+};
 
 class IAllocator
 {
@@ -324,7 +538,9 @@ public:
                    const SystemInfo::UniqueID& local_uid,
                    const std::uint8_t          local_node_id) :
         allocator_(allocator), driver_(driver), local_uid_(local_uid), local_node_id_(local_node_id)
-    {}
+    {
+        assert((local_node_id_ > 0) && (local_node_id_ < 128));
+    }
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
@@ -527,6 +743,7 @@ private:
         {
             return nullptr;
         }
+        assert(node_id < 128);
         // Allocation done, full match.
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<0>(node_id)))
         {
@@ -654,7 +871,6 @@ public:
         allocator_(allocator),
         driver_(driver),
         local_uid_(local_uid),
-        pseudo_unique_id_(makePseudoUniqueID(local_uid)),
         bus_mode_(bus_mode),
         local_node_id_(local_node_id)
     {}
@@ -666,7 +882,6 @@ public:
         (void) allocator_;
         (void) driver_;
         (void) local_uid_;
-        (void) pseudo_unique_id_;
         (void) bus_mode_;
         (void) local_node_id_;
         return nullptr;
@@ -676,7 +891,6 @@ private:
     IAllocator&                allocator_;
     ICANDriver&                driver_;
     const SystemInfo::UniqueID local_uid_;
-    const std::uint64_t        pseudo_unique_id_;
     const ICANDriver::Mode     bus_mode_;
     const std::uint8_t         local_node_id_;
 };
@@ -689,27 +903,124 @@ public:
                                const SystemInfo::UniqueID& local_uid,
                                const ICANDriver::Bitrate&  bitrate,
                                const ICANDriver::Mode      bus_mode) :
-        allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate), bus_mode_(bus_mode)
+        allocator_(allocator),
+        driver_(driver),
+        local_uid_(local_uid),
+        pseudo_uid_(makePseudoUniqueID(local_uid)),
+        bitrate_(bitrate),
+        bus_mode_(bus_mode)
     {}
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
         (void) reactor;
-        (void) uptime;
-        (void) allocator_;
-        (void) driver_;
-        (void) local_uid_;
-        (void) bitrate_;
-        (void) bus_mode_;
+        {
+            ICANDriver::PayloadBuffer buf{};
+            while (const auto frame = driver_.pop(buf))
+            {
+                const auto [can_id, payload_size] = *frame;
+                if (IActivity* const out = processReceivedFrame(can_id, payload_size, buf.data()))
+                {
+                    return out;
+                }
+            }
+        }
+        if (uptime >= deadline_)
+        {
+            handleDeadline();
+            deadline_ = uptime + getNextPeriod();
+        }
         return nullptr;
     }
 
 private:
+    static constexpr std::chrono::microseconds MaxPeriod{5'000'000};
+    static constexpr std::uint32_t             CANIDMaskWithoutDiscriminator = 0b110'01'0111111111100101'0'0000000UL;
+
+    [[nodiscard]] auto processReceivedFrame(const std::uint32_t       can_id,
+                                            const std::uint8_t        payload_size,
+                                            const std::uint8_t* const payload) -> IActivity*
+    {
+        (void) bitrate_;
+        (void) &V1NodeIDAllocationActivity::acceptResponseV1;
+        (void) &V1NodeIDAllocationActivity::acceptResponseV2;
+        if (const auto frame = parseFrame(can_id, payload_size, payload))
+        {
+            (void) frame;
+            return nullptr;
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] auto acceptResponseV1(const std::size_t body_size, const std::uint8_t* const body) -> IActivity*
+    {
+        (void) allocator_;
+        (void) body_size;
+        (void) body;
+        return nullptr;
+    }
+
+    [[nodiscard]] auto acceptResponseV2(const std::size_t body_size, const std::uint8_t* const body) -> IActivity*
+    {
+        (void) allocator_;
+        (void) body_size;
+        (void) body;
+        return nullptr;
+    }
+
+    void handleDeadline()
+    {
+        const auto tail_byte = static_cast<std::uint8_t>(0b1110'0000U | tx_transfer_id_);
+        if (bus_mode_ != ICANDriver::Mode::Classic)  // Send v2 only if the media layer supports long frames.
+        {
+            std::array<std::uint8_t, 20> buf_fd{};
+            buf_fd.at(0) = std::numeric_limits<std::uint8_t>::max();
+            buf_fd.at(1) = std::numeric_limits<std::uint8_t>::max();
+            std::copy(local_uid_.begin(), local_uid_.end(), &buf_fd.at(2));
+            buf_fd.back() = tail_byte;
+            (void) send(buf_fd);  // v2 shall be sent first because we want it to take precedence over v1.
+        }
+        // Send v1 always to enhance compatibility.
+        const std::array<std::uint8_t, 8> buf_classic{{
+            static_cast<std::uint8_t>(pseudo_uid_ >> 0U),
+            static_cast<std::uint8_t>(pseudo_uid_ >> 8U),
+            static_cast<std::uint8_t>(pseudo_uid_ >> 16U),
+            static_cast<std::uint8_t>(pseudo_uid_ >> 24U),
+            static_cast<std::uint8_t>(pseudo_uid_ >> 32U),
+            static_cast<std::uint8_t>(pseudo_uid_ >> 40U),
+            0,
+            tail_byte,
+        }};
+        (void) send(buf_classic);
+        tx_transfer_id_++;
+    }
+
+    template <std::size_t PayloadSize>
+    [[nodoscard]] auto send(const std::array<std::uint8_t, PayloadSize>& payload) -> bool
+    {
+        static_assert(PayloadSize <= 64);
+        CRC16CCITT discriminator_crc;
+        discriminator_crc.update(PayloadSize, payload.data());
+        const std::uint32_t can_id = CANIDMaskWithoutDiscriminator | (discriminator_crc.get() & 0x7FU);
+        return driver_.push(true, can_id, PayloadSize, payload.data());
+    }
+
+    static auto getNextPeriod() -> std::chrono::microseconds
+    {
+        const auto randomized = (std::rand() * MaxPeriod.count()) / RAND_MAX;  // NOSONAR rand() ok
+        assert((0 <= randomized) && (randomized <= MaxPeriod.count()));
+        return std::max(std::chrono::microseconds(1), std::chrono::microseconds(randomized));
+    }
+
     IAllocator&                allocator_;
     ICANDriver&                driver_;
     const SystemInfo::UniqueID local_uid_;
+    const std::uint64_t        pseudo_uid_;
     const ICANDriver::Bitrate  bitrate_;
     const ICANDriver::Mode     bus_mode_;
+
+    std::chrono::microseconds deadline_{getNextPeriod()};
+    std::uint8_t              tx_transfer_id_ = 0;
 };
 
 class ProtocolVersionDetectionActivity : public IActivity
