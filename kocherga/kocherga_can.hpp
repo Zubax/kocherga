@@ -337,6 +337,8 @@ public:
         return nullptr;
     }
 
+    [[nodiscard]] auto getLocalNodeID() const -> std::uint8_t { return local_node_id_; }
+
 private:
     IAllocator&                allocator_;
     ICANDriver&                driver_;
@@ -520,8 +522,8 @@ private:
             schedule(now, DelayRangeFollowup);
             return nullptr;
         }
-        const std::uint8_t node_id = message_data[0] & 0x7FU;
-        if ((node_id < 1) || (node_id > 127))  // Bad allocation
+        const std::uint8_t node_id = message_data[0] >> 1U;
+        if (node_id < 1)  // Bad allocation
         {
             return nullptr;
         }

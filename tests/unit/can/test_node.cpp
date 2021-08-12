@@ -313,7 +313,8 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
         REQUIRE(fr->payload == payload);
         // Send 1st stage allocation response matching this UID, prompting the 2nd stage request.
-        driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0000U}});
+        driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1110'0000U}});  // UAVCAN v1 ignore
+        driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0000U}});  // Valid accepted
         REQUIRE(0 == act.getStage());
         REQUIRE(!act.poll(reactor, deadline_b + 1000us));
         REQUIRE(1 == act.getStage());  // It's a match!
@@ -346,11 +347,12 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         REQUIRE(fr->payload == payload);
         REQUIRE(0 == act.getStage());
         // Regardless of the current stage, reception of a matching UID sub-sequence will advance the process.
+        driver.pushRx({0x1E'01FD'FFUL, {0xC0}});  // Ignore service transfer (this is a GetNodeInfo request)
         driver.pushRx({0x14'0001'7FUL, {0x9E, 0x3D, 0x00, 0x35, 0xFF, 0xD5, 0x05, 0x81}});
         driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});
         driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore duplicate
         driver.pushRx({0x14'0002'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore unrelated
-        driver.pushRx({0x14'0001'7EUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore wrong sender
+        driver.pushRx({0x14'0001'77UL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x21}});  // Ignore wrong sender
         driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x22}});  // Ignore wrong transfer-ID
         driver.pushRx({0x14'0001'7FUL, {0x43, 0x41}});
         driver.pushRx({0x14'0001'7FUL, {0x43, 0x41}});  // Ignore duplicate
@@ -377,6 +379,11 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         driver.pushRx({0x14'0001'7FUL, {0x43, 0x00, 0x00, 0x00, 0x00, 0x42}});
         REQUIRE(!act.poll(reactor, deadline_e));
         REQUIRE(!driver.popTx());
+        driver.pushRx({0x14'0001'7FUL, {0x57, 0x76, 0x00, 0x35, 0xFF, 0xD5, 0x05, 0x82}});  // Bad node-ID value!
+        driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x22}});
+        driver.pushRx({0x14'0001'7FUL, {0x43, 0x00, 0x00, 0x00, 0x00, 0x42}});
+        REQUIRE(!act.poll(reactor, deadline_e));
+        REQUIRE(!driver.popTx());
         driver.pushRx({0x14'0001'7FUL, {0x8C, 0x7A, 0xFA, 0x35, 0xFF, 0xD5, 0x05, 0x82}});  // Correct CRC here.
         driver.pushRx({0x14'0001'7FUL, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x22}});
         driver.pushRx({0x14'0001'7FUL, {0x43, 0x00, 0x00, 0x00, 0x00, 0x42}});
@@ -384,5 +391,6 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         REQUIRE(new_act != nullptr);
         REQUIRE(!driver.popTx());
         REQUIRE(dynamic_cast<V0MainActivity*>(new_act));
+        REQUIRE(dynamic_cast<V0MainActivity*>(new_act)->getLocalNodeID() == 125);
     }
 }
