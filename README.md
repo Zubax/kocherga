@@ -114,7 +114,7 @@ static constexpr std::size_t MaxAppSize = 1024 * 1024;
 
 class MyROMBackend : public kocherga::IROMBackend
 {
-    [[nodiscard]] virtual auto write(const std::size_t offset, const std::byte* const data, const std::size_t size)
+    auto write(const std::size_t offset, const std::byte* const data, const std::size_t size) override
         -> std::optional<std::size_t>
     {
         if (WRITE_ROM(offset, data, size))
@@ -124,16 +124,16 @@ class MyROMBackend : public kocherga::IROMBackend
         return {};  // Failure case
     }
 
-    [[nodiscard]] virtual auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
+    auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const override
         -> std::size_t
     {
-        return READ_ROM(offset, out_data, size);  // Return the actual number of bytes read (may be less than size).
+        return READ_ROM(offset, out_data, size);  // Return the number of bytes read (may be less than size).
     }
 };
 
 class MySerialPort : public kocherga::serial::ISerialPort
 {
-    [[nodiscard]] auto receive() -> std::optional<std::uint8_t> override
+    auto receive() -> std::optional<std::uint8_t> override
     {
         if (SERIAL_RX_PENDING())
         {
@@ -142,7 +142,7 @@ class MySerialPort : public kocherga::serial::ISerialPort
         return {};
     }
 
-    [[nodiscard]] auto send(const std::uint8_t b) -> bool override { return SERIAL_WRITE_BYTE(b); }
+    auto send(const std::uint8_t b) -> bool override { return SERIAL_WRITE_BYTE(b); }
 };
 
 int main()
@@ -151,7 +151,7 @@ int main()
     MySerialPort serial_port;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
     kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
-    const bool linger = false;  // If true, the bootloader will wait instead of booting the application immediately.
+    const bool linger = false;  // If true, the bootloader will wait instead of booting the app immediately.
     kocherga::Bootloader<1> boot(rom_backend, system_info, {&serial_node}, MaxAppSize, linger);
     while (true)
     {
@@ -168,9 +168,9 @@ int main()
             }
             assert(false);
         }
-        // Sleep until the next hardware event (like reception of CAN frame or UART byte) but no longer than 1 second.
-        // A fixed sleep is also acceptable but the resulting polling interval should be adequate to avoid data loss
-        // (about 100 microseconds is usually ok).
+        // Sleep until the next hardware event (like reception of CAN frame or UART byte) but no longer than
+        // 1 second. A fixed sleep is also acceptable but the resulting polling interval should be adequate
+        // to avoid data loss (about 100 microseconds is usually ok).
         WAIT_FOR_EVENT();
     }
 }

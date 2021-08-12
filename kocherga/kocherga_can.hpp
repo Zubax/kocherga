@@ -511,6 +511,7 @@ private:
         const auto received_uid_size = message_data_size - 1;
         if (0 != std::memcmp(local_uid_.data(), message_data + 1, received_uid_size))
         {
+            reset(now);  // This response is meant for somebody else, set up new schedule to avoid conflicts.
             return nullptr;
         }
         if (received_uid_size < local_uid_.size())
