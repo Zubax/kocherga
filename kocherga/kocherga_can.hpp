@@ -203,8 +203,8 @@ struct FrameModel
     bool end_of_transfer   = false;
     bool toggle            = false;
 
-    std::uint8_t payload_size = 0;
-    const void*  payload      = nullptr;
+    std::size_t         payload_size = 0;
+    const std::uint8_t* payload      = nullptr;
 };
 
 struct MessageFrameModel : public FrameModel
@@ -224,7 +224,7 @@ struct ServiceFrameModel : public FrameModel
 /// The payload of the returned frame will be pointing into the supplied payload buffer, so their lifetimes are linked.
 /// The CAN ID shall be less than 2**29.
 [[nodiscard]] inline auto parseFrame(const std::uint32_t extended_can_id,
-                                     const std::uint8_t  payload_size,
+                                     const std::size_t   payload_size,
                                      const void* const   payload)
     -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
 {
@@ -248,6 +248,14 @@ struct ServiceFrameModel : public FrameModel
     {
         return {};  // UAVCAN v0
     }
+    if ((!start_of_transfer || !end_of_transfer) && (out_payload_size == 0))
+    {
+        return {};  // Multi-frame transfer frames require payload.
+    }
+    if (!end_of_transfer && (out_payload_size < 7))
+    {
+        return {};  // Non-last frame of a multi-frame transfer cannot have less than 7 bytes of payload.
+    }
     // Parse the CAN ID.
     const auto priority                        = static_cast<std::uint8_t>((extended_can_id >> 26U) & 7U);
     const auto source_node_id_or_discriminator = static_cast<std::uint8_t>(extended_can_id & 0x7FU);
@@ -264,7 +272,7 @@ struct ServiceFrameModel : public FrameModel
         out.end_of_transfer   = end_of_transfer;
         out.toggle            = toggle;
         out.payload_size      = out_payload_size;
-        out.payload           = payload;
+        out.payload           = static_cast<const uint8_t*>(payload);
         out.subject_id        = static_cast<std::uint16_t>((extended_can_id >> 8U) & 0x1FFFU);
         if (const bool is_anonymous = (0 != (extended_can_id & (1ULL << 24U))); !is_anonymous)
         {
@@ -286,11 +294,15 @@ struct ServiceFrameModel : public FrameModel
     out.end_of_transfer      = end_of_transfer;
     out.toggle               = toggle;
     out.payload_size         = out_payload_size;
-    out.payload              = payload;
+    out.payload              = static_cast<const uint8_t*>(payload);
     out.service_id           = static_cast<std::uint16_t>((extended_can_id >> 14U) & 0x1FFU);
     out.source_node_id       = source_node_id_or_discriminator;
     out.destination_node_id  = static_cast<std::uint8_t>((extended_can_id >> 7U) & 0x7FU);
     out.request_not_response = 0 != (extended_can_id & (1ULL << 24U));
+    if (out.source_node_id == out.destination_node_id)
+    {
+        return {};
+    }
     return out;
 }
 
