@@ -339,47 +339,52 @@ protected:
             toggle_ = !toggle_;
         }
         crc_.update(frame.payload_size, static_cast<const std::uint8_t*>(frame.payload));
-        const auto sz = std::min(frame.payload_size, payload_.size() - payload_size_);
-        std::copy_n(frame.payload, sz, &payload_.at(payload_size_));
-        payload_size_ += sz;
+        const auto sz = std::min(frame.payload_size, payload_.size() - stored_payload_size_);
+        std::copy_n(frame.payload, sz, payload_.begin() + stored_payload_size_);
+        stored_payload_size_ += sz;
+        received_payload_size_ += frame.payload_size;
         if (frame.end_of_transfer)
         {
             if (frame.start_of_transfer)  // This is a single-frame transfer.
             {
-                const Result out{payload_size_, payload_.data()};
+                const Result out{stored_payload_size_, payload_.data()};
                 reset();
                 return out;
             }
-            if ((payload_size_ >= CRC16CCITT::Size) && crc_.isResidueCorrect())
+            if ((received_payload_size_ >= CRC16CCITT::Size) && crc_.isResidueCorrect())
             {
-                const Result out{payload_size_ - CRC16CCITT::Size, payload_.data()};
+                const std::size_t true_size = std::min(stored_payload_size_, received_payload_size_ - CRC16CCITT::Size);
                 reset();
-                return out;
+                return Result{true_size, payload_.data()};
             }
         }
         return {};
     }
+
+    std::array<std::uint8_t, Extent> payload_{};
 
 private:
     void reset() { reset(std::numeric_limits<std::uint8_t>::max(), std::numeric_limits<std::uint8_t>::max()); }
 
     void reset(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
     {
-        source_node_id_ = source_node_id;
-        transfer_id_    = transfer_id;
-        toggle_         = true;
-        crc_            = {};
-        payload_size_   = 0;
+        source_node_id_        = source_node_id;
+        transfer_id_           = transfer_id;
+        toggle_                = true;
+        crc_                   = {};
+        stored_payload_size_   = 0;
+        received_payload_size_ = 0;
     }
 
-    std::uint8_t                                        source_node_id_ = std::numeric_limits<std::uint8_t>::max();
-    std::uint8_t                                        transfer_id_    = std::numeric_limits<std::uint8_t>::max();
-    bool                                                toggle_         = true;
-    CRC16CCITT                                          crc_;
-    std::size_t                                         payload_size_ = 0;
-    std::array<std::uint8_t, Extent + CRC16CCITT::Size> payload_{};
+    std::uint8_t source_node_id_ = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t transfer_id_    = std::numeric_limits<std::uint8_t>::max();
+    bool         toggle_         = true;
+    CRC16CCITT   crc_;
+    std::size_t  stored_payload_size_   = 0;
+    std::size_t  received_payload_size_ = 0;
 };
 
+/// The user of this class is responsible for checking the subject-ID on the received frames.
 template <std::size_t Extent>
 class SimplifiedMessageTransferReassembler : public SimplifiedTransferReassembler<Extent>
 {
@@ -389,14 +394,20 @@ public:
     /// The payload pointer in the result remains valid until the next update.
     [[nodiscard]] auto update(const MessageFrameModel& frame) -> std::optional<Result>
     {
-        if (!frame.source_node_id)
+        if (!frame.source_node_id)  // Anonymous frames accepted unconditionally.
         {
-            return Result{frame.payload_size, frame.payload};
+            const auto sz = std::min(frame.payload_size, payload_.size());
+            std::copy_n(frame.payload, sz, payload_.data());
+            return Result{sz, payload_.data()};
         }
         return SimplifiedTransferReassembler<Extent>::updateImpl(frame, *frame.source_node_id);
     }
+
+private:
+    using SimplifiedTransferReassembler<Extent>::payload_;
 };
 
+/// The user of this class is responsible for checking the service-ID and request/response flag on the received frames.
 template <std::size_t Extent>
 class SimplifiedServiceTransferReassembler : public SimplifiedTransferReassembler<Extent>
 {

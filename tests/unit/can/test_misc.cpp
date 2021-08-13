@@ -190,3 +190,103 @@ TEST_CASE("can::parseFrame")
         REQUIRE(!parse(0b100'10'0000110011'0011010'0011010U, {255, 0b010'00000U | 1U}));  // Src == destination
     }
 }
+
+TEST_CASE("can::SimplifiedTransferReassembler")
+{
+    using kocherga::can::detail::SimplifiedTransferReassembler;
+    using kocherga::can::detail::SimplifiedMessageTransferReassembler;
+    using kocherga::can::detail::SimplifiedServiceTransferReassembler;
+    using kocherga::can::detail::MessageFrameModel;
+    using kocherga::can::detail::ServiceFrameModel;
+    using Buf = std::vector<std::uint8_t>;
+
+    const auto mk_msg = [](const std::optional<std::uint8_t> source_node_id,
+                           const std::uint8_t                transfer_id,
+                           const std::array<bool, 3>&        sot_eot_tog,
+                           const std::vector<std::uint8_t>&  payload) -> MessageFrameModel {
+        static std::vector<std::uint8_t> payload_storage;
+        payload_storage = payload;
+        MessageFrameModel out{};
+        out.transfer_id       = transfer_id;
+        out.source_node_id    = source_node_id;
+        out.start_of_transfer = sot_eot_tog.at(0);
+        out.end_of_transfer   = sot_eot_tog.at(1);
+        out.toggle            = sot_eot_tog.at(2);
+        out.payload_size      = payload_storage.size();
+        out.payload           = payload_storage.data();
+        return out;
+    };
+
+    const auto mk_srv = [](std::uint8_t                     source_node_id,
+                           std::uint8_t                     destination_node_id,
+                           const bool                       request_not_response,
+                           const std::uint8_t               transfer_id,
+                           const std::array<bool, 3>&       sot_eot_tog,
+                           const std::vector<std::uint8_t>& payload) -> ServiceFrameModel {
+        static std::vector<std::uint8_t> payload_storage;
+        payload_storage = payload;
+        ServiceFrameModel out{};
+        out.transfer_id          = transfer_id;
+        out.source_node_id       = source_node_id;
+        out.destination_node_id  = destination_node_id;
+        out.request_not_response = request_not_response;
+        out.start_of_transfer    = sot_eot_tog.at(0);
+        out.end_of_transfer      = sot_eot_tog.at(1);
+        out.toggle               = sot_eot_tog.at(2);
+        out.payload_size         = payload_storage.size();
+        out.payload              = payload_storage.data();
+        return out;
+    };
+
+    const auto check_result = [](const std::optional<std::pair<std::size_t, const void*>> result,
+                                 const Buf&                                               reference) -> bool {
+        if (result)
+        {
+            const auto [sz, ptr] = *result;
+            return (sz == reference.size()) && (0 == std::memcmp(ptr, reference.data(), reference.size()));
+        }
+        return false;
+    };
+    // Compute CRC using PyUAVCAN:
+    //  >>> crc = pyuavcan.transport.commons.crc.CRC16CCITT
+    //  >>> crc.new([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]).value_as_bytes
+    // Messages.
+    {
+        SimplifiedMessageTransferReassembler<10> rm;
+        // Anon
+        REQUIRE(check_result(rm.update(mk_msg({}, 0, {true, true, true}, {1, 2, 3})), {1, 2, 3}));
+        REQUIRE(check_result(rm.update(mk_msg({}, 0, {true, true, true}, {4})), {4}));
+        // SFT
+        REQUIRE(check_result(rm.update(mk_msg(123, 5, {true, true, true}, {4})), {4}));
+        // MFT with implicit truncation
+        REQUIRE(!rm.update(mk_msg(123, 5, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));
+        REQUIRE(!rm.update(mk_msg(123, 5, {false, false, false}, {7, 8, 9, 10, 11, 12, 13})));
+        REQUIRE(!rm.update(mk_msg(123, 5, {false, false, false}, {7, 8, 9, 10, 11, 12, 13})));  // Duplicate ignored
+        REQUIRE(!rm.update(mk_msg(124, 5, {false, true, true}, {14, 15, 59, 55})));             // Another src ignored
+        REQUIRE(!rm.update(mk_msg(123, 4, {false, true, true}, {14, 15, 59, 55})));             // Another tid ignored
+        REQUIRE(check_result(rm.update(mk_msg(123, 5, {false, true, true}, {14, 15, 59, 55})),
+                             {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}));
+        // MFT without implicit truncation
+        REQUIRE(!rm.update(mk_msg(123, 9, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));
+        REQUIRE(!rm.update(mk_msg(124, 7, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));  // New SOT, discard old
+        REQUIRE(check_result(rm.update(mk_msg(124, 7, {false, true, false}, {7, 8, 9, 194, 65})),
+                             {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}));
+        // CRC error
+        REQUIRE(!rm.update(mk_msg(124, 8, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));
+        REQUIRE(!rm.update(mk_msg(124, 8, {false, true, false}, {7, 8, 9, 0, 0})));
+    }
+
+    // Services.
+    {
+        SimplifiedServiceTransferReassembler<8> rs(9);
+        // Valid accepted
+        REQUIRE(check_result(rs.update(mk_srv(123, 9, true, 5, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
+                             {0, 1, 2, 3, 4, 5, 6, 7}));
+        // Destination mismatch
+        REQUIRE(!rs.update(mk_srv(123, 8, true, 6, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})));
+        // Partial CRC spillover
+        REQUIRE(!rs.update(mk_srv(123, 9, false, 9, {true, false, true}, {0, 1, 2, 3, 4, 5})));
+        REQUIRE(check_result(rs.update(mk_srv(123, 9, false, 9, {false, true, false}, {6, 40, 194})),
+                             {0, 1, 2, 3, 4, 5, 6}));
+    }
+}
