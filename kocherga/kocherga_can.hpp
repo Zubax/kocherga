@@ -68,6 +68,7 @@ public:
     /// The "silent" flag selects the silent mode, also known as listen-only mode.
     /// Bitrate autodetection is performed by the bootloader by trying different configurations sequentially.
     /// The return value indicates whether the controller supports CAN FD or only Classic CAN.
+    /// The bootloader is always able to accept CAN FD frames regardless of the returned value.
     /// The return value is an empty option if the controller is unable to accept the specified configuration.
     [[nodiscard]] virtual auto configure(const Bitrate&                   bitrate,
                                          const bool                       silent,
@@ -315,7 +316,7 @@ template <std::size_t Extent>
 class SimplifiedTransferReassembler
 {
 public:
-    using Result = std::pair<std::size_t, const void*>;
+    using Result = std::pair<std::size_t, const std::uint8_t*>;
 
 protected:
     SimplifiedTransferReassembler() = default;
@@ -910,6 +911,8 @@ public:
         return nullptr;
     }
 
+    [[nodiscard]] auto getLocalNodeID() const -> std::uint8_t { return local_node_id_; }
+
 private:
     IAllocator&                allocator_;
     ICANDriver&                driver_;
@@ -920,6 +923,8 @@ private:
 
 class V1NodeIDAllocationActivity : public IActivity
 {
+    static constexpr std::uint64_t PseudoUIDMask = (1ULL << 48U) - 1U;
+
 public:
     V1NodeIDAllocationActivity(IAllocator&                 allocator,
                                ICANDriver&                 driver,
@@ -929,7 +934,7 @@ public:
         allocator_(allocator),
         driver_(driver),
         local_uid_(local_uid),
-        pseudo_uid_(makePseudoUniqueID(local_uid)),
+        pseudo_uid_(makePseudoUniqueID(local_uid) & PseudoUIDMask),
         bitrate_(bitrate),
         bus_mode_(bus_mode)
     {}
@@ -957,54 +962,111 @@ public:
     }
 
 private:
-    static constexpr std::chrono::microseconds MaxPeriod{5'000'000};
-    static constexpr std::uint32_t             CANIDMaskWithoutDiscriminator = 0b110'01'0111111111100101'0'0000000UL;
+    // The upper bound of the randomization interval cannot be less than 1 second, the maximum is not limited by Spec.
+    static constexpr std::chrono::microseconds MaxPeriod{3'000'000};
 
     [[nodiscard]] auto processReceivedFrame(const std::uint32_t       can_id,
                                             const std::uint8_t        payload_size,
                                             const std::uint8_t* const payload) -> IActivity*
     {
-        (void) bitrate_;
-        (void) &V1NodeIDAllocationActivity::acceptResponseV1;
-        (void) &V1NodeIDAllocationActivity::acceptResponseV2;
         if (const auto frame = parseFrame(can_id, payload_size, payload))
         {
-            (void) frame;
-            return nullptr;
+            if (const auto* const m = std::get_if<MessageFrameModel>(&*frame); (m != nullptr) && m->source_node_id)
+            {
+                switch (m->subject_id)
+                {
+                case static_cast<std::uint16_t>(SubjectID::PnPNodeIDAllocationData_v1):
+                {
+                    if (const auto res = rx_v1_.update(*m))
+                    {
+                        return acceptResponseV1(res->first, res->second);
+                    }
+                    break;
+                }
+                case static_cast<std::uint16_t>(SubjectID::PnPNodeIDAllocationData_v2):
+                {
+                    if (const auto res = rx_v2_.update(*m))
+                    {
+                        return acceptResponseV2(res->first, res->second);
+                    }
+                    break;
+                }
+                default:
+                {
+                    break;
+                }
+                }
+            }
         }
         return nullptr;
     }
 
     [[nodiscard]] auto acceptResponseV1(const std::size_t body_size, const std::uint8_t* const body) -> IActivity*
     {
-        (void) allocator_;
-        (void) body_size;
-        (void) body;
-        return nullptr;
+        if (body_size < 9)
+        {
+            return nullptr;
+        }
+        std::uint64_t received_pseudo_uid = 0;
+        for (auto i = 0U; i < 6; i++)
+        {
+            received_pseudo_uid |= std::uint64_t(body[i]) << (8U * i);
+        }
+        if (pseudo_uid_ != received_pseudo_uid)
+        {
+            return nullptr;  // UID mismatch
+        }
+        if (const auto array_length = body[6]; array_length != 1)
+        {
+            return nullptr;  // Unexpected array length
+        }
+        const auto allocated_node_id = static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[8] << 8U) | body[7]);
+        if (allocated_node_id > 127)
+        {
+            return nullptr;  // Invalid for CAN
+        }
+        return constructSuccessor(static_cast<uint8_t>(allocated_node_id));
     }
 
     [[nodiscard]] auto acceptResponseV2(const std::size_t body_size, const std::uint8_t* const body) -> IActivity*
     {
-        (void) allocator_;
-        (void) body_size;
-        (void) body;
+        if (body_size < 18)
+        {
+            return nullptr;
+        }
+        const auto allocated_node_id = static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[1] << 8U) | body[0]);
+        if ((allocated_node_id < 128) && (0 == std::memcmp(&body[2], local_uid_.data(), local_uid_.size())))
+        {
+            return constructSuccessor(static_cast<uint8_t>(allocated_node_id));
+        }
         return nullptr;
     }
 
     void handleDeadline()
     {
-        const auto tail_byte = static_cast<std::uint8_t>(0b1110'0000U | tx_transfer_id_);
-        if (bus_mode_ != ICANDriver::Mode::Classic)  // Send v2 only if the media layer supports long frames.
+        if (bus_mode_ != ICANDriver::Mode::Classic)
         {
-            std::array<std::uint8_t, 20> buf_fd{};
-            buf_fd.at(0) = std::numeric_limits<std::uint8_t>::max();
-            buf_fd.at(1) = std::numeric_limits<std::uint8_t>::max();
-            std::copy(local_uid_.begin(), local_uid_.end(), &buf_fd.at(2));
-            buf_fd.back() = tail_byte;
-            (void) send(buf_fd);  // v2 shall be sent first because we want it to take precedence over v1.
+            if (version_toggle_)
+            {
+                publishRequestV1();
+                tx_transfer_id_++;
+            }
+            else
+            {
+                publishRequestV2();
+            }
+            version_toggle_ = !version_toggle_;
         }
-        // Send v1 always to enhance compatibility.
-        const std::array<std::uint8_t, 8> buf_classic{{
+        else
+        {
+            publishRequestV1();
+            tx_transfer_id_++;
+        }
+    }
+
+    void publishRequestV1()
+    {
+        const std::array<std::uint8_t, 8> buf{{
             static_cast<std::uint8_t>(pseudo_uid_ >> 0U),
             static_cast<std::uint8_t>(pseudo_uid_ >> 8U),
             static_cast<std::uint8_t>(pseudo_uid_ >> 16U),
@@ -1012,20 +1074,43 @@ private:
             static_cast<std::uint8_t>(pseudo_uid_ >> 32U),
             static_cast<std::uint8_t>(pseudo_uid_ >> 40U),
             0,
-            tail_byte,
+            static_cast<std::uint8_t>(0b1110'0000U | tx_transfer_id_),
         }};
-        (void) send(buf_classic);
-        tx_transfer_id_++;
+        (void) send(true, SubjectID::PnPNodeIDAllocationData_v1, buf);
+    }
+
+    void publishRequestV2()
+    {
+        assert(bus_mode_ != ICANDriver::Mode::Classic);
+        std::array<std::uint8_t, 20> buf{};
+        buf.at(0) = std::numeric_limits<std::uint8_t>::max();
+        buf.at(1) = std::numeric_limits<std::uint8_t>::max();
+        std::copy(local_uid_.begin(), local_uid_.end(), &buf.at(2));
+        buf.back() = static_cast<std::uint8_t>(0b1110'0000U | tx_transfer_id_);
+        (void) send(false, SubjectID::PnPNodeIDAllocationData_v2, buf);
     }
 
     template <std::size_t PayloadSize>
-    [[nodoscard]] auto send(const std::array<std::uint8_t, PayloadSize>& payload) -> bool
+    [[nodoscard]] auto send(const bool                                   force_classic_can,
+                            const SubjectID                              sid,
+                            const std::array<std::uint8_t, PayloadSize>& payload) -> bool
     {
+        static constexpr std::uint32_t CANIDMask = 0b110'01'0110000000000000'0'0000000UL;
         static_assert(PayloadSize <= 64);
         CRC16CCITT discriminator_crc;
         discriminator_crc.update(PayloadSize, payload.data());
-        const std::uint32_t can_id = CANIDMaskWithoutDiscriminator | (discriminator_crc.get() & 0x7FU);
-        return driver_.push(true, can_id, PayloadSize, payload.data());
+        const std::uint32_t can_id =
+            CANIDMask | (static_cast<std::uint32_t>(sid) << 8U) | (discriminator_crc.get() & 0x7FU);
+        return driver_.push(force_classic_can, can_id, PayloadSize, payload.data());
+    }
+
+    [[nodiscard]] auto constructSuccessor(const std::uint8_t allocated_node_id) -> IActivity*
+    {
+        if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<1>(allocated_node_id)))
+        {
+            return allocator_.construct<V1MainActivity>(allocator_, driver_, local_uid_, *bus_mode, allocated_node_id);
+        }
+        return nullptr;
     }
 
     static auto getNextPeriod() -> std::chrono::microseconds
@@ -1042,8 +1127,12 @@ private:
     const ICANDriver::Bitrate  bitrate_;
     const ICANDriver::Mode     bus_mode_;
 
+    SimplifiedMessageTransferReassembler<9>  rx_v1_;
+    SimplifiedMessageTransferReassembler<18> rx_v2_;
+
     std::chrono::microseconds deadline_{getNextPeriod()};
     std::uint8_t              tx_transfer_id_ = 0;
+    bool                      version_toggle_ = false;
 };
 
 class ProtocolVersionDetectionActivity : public IActivity

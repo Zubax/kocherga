@@ -394,3 +394,269 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         REQUIRE(dynamic_cast<V0MainActivity*>(new_act)->getLocalNodeID() == 125);
     }
 }
+
+TEST_CASE("can::detail::V1NodeIDAllocationActivity")
+{
+    using kocherga::SubjectID;
+    using kocherga::can::detail::IActivity;
+    using kocherga::can::detail::V1NodeIDAllocationActivity;
+    using kocherga::can::detail::V1MainActivity;
+    using std::chrono_literals::operator""us;
+    using Buf = std::vector<std::uint8_t>;
+
+    Allocator                            alloc;
+    CANDriverMock                        driver;
+    ReactorMock                          reactor;
+    const Bitrate                        br{1'000'000, 4'000'000};
+    const kocherga::SystemInfo::UniqueID uid{
+        {0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0x00, 0x00, 0x00, 0x00}};
+    // The pseudo-UID is computed as CRC64WE of the UID using PyUAVCAN.
+    const std::array<std::uint8_t, 6> pseudo_uid_bytes{50, 191, 169, 46, 145, 226};
+
+    std::optional<V1NodeIDAllocationActivity> act;
+    std::chrono::microseconds                 uptime(0);
+
+    const auto spin = [&reactor, &driver, &act, &uptime]() -> std::variant<IActivity*, CANDriverMock::TxFrame> {
+        const auto uptime_increment = 1000us;
+        const auto deadline         = uptime + 3'000'000us + uptime_increment;
+        while (uptime <= deadline)
+        {
+            uptime += uptime_increment;
+            if (auto* const res = act->poll(reactor, uptime))
+            {
+                return res;
+            }
+            if (const auto f = driver.popTx())
+            {
+                REQUIRE(!driver.popTx());  // Ensure there are no unexpected frames left.
+                return *f;
+            }
+        }
+        FAIL("TX FRAME NOT EMITTED BEFORE THE DEADLINE");
+        return nullptr;  // Unreachable
+    };
+
+    const auto ensure_subject_id = [](const std::uint32_t extended_can_id, const SubjectID sid) -> bool {
+        constexpr auto mask = 0b110'01'0110000000000000'0'1111111UL;
+        return (extended_can_id | 0x7FU) == (mask | (static_cast<std::uint32_t>(sid) << 8U));
+    };
+
+    // FD-capable bus; the allocator responds using v2
+    {
+        driver.setMode(CANDriverMock::Mode::FD);
+        act.emplace(alloc, driver, uid, br, CANDriverMock::Mode::FD);
+
+        // v2 is sent first because it is supposed to take precedence.
+        auto f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(!f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v2));
+        {
+            Buf ref(20, 0);  // We only need 19 bytes; +1 is due to CAN FD DLC padding.
+            ref.at(0) = std::numeric_limits<std::uint8_t>::max();
+            ref.at(1) = std::numeric_limits<std::uint8_t>::max();
+            std::copy(uid.begin(), uid.end(), &ref.at(2));
+            ref.back() = 0b1110'0000U;
+            REQUIRE(f.payload == ref);
+        }
+
+        // v1 send afterwards
+        f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v1));
+        {
+            Buf ref(8, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 0;
+            ref.at(7) = 0b1110'0000U;
+            REQUIRE(f.payload == ref);
+        }
+        REQUIRE(!driver.popTx());  // Ensure there are no unexpected frames left.
+
+        // Wait for the next request pair to ensure the transfer-ID is being properly incremented and v1/v2 alternate.
+        f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(!f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v2));
+        {
+            Buf ref(20, 0);  // We only need 19 bytes; +1 is due to CAN FD DLC padding.
+            ref.at(0) = std::numeric_limits<std::uint8_t>::max();
+            ref.at(1) = std::numeric_limits<std::uint8_t>::max();
+            std::copy(uid.begin(), uid.end(), &ref.at(2));
+            ref.back() = 0b1110'0001U;  // TID incremented!
+            REQUIRE(f.payload == ref);
+        }
+        f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v1));
+        {
+            Buf ref(8, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 0;
+            ref.at(7) = 0b1110'0001U;
+            REQUIRE(f.payload == ref);
+        }
+        REQUIRE(!driver.popTx());  // Ensure there are no unexpected frames left.
+
+        // Send v1 response with invalid node-ID to ensure it is ignored.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 1;
+            ref.at(7) = 0xFF;  // Not a valid node-ID
+            ref.at(8) = 0xFF;  // Second byte
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        // Send v1 response with mismatching UID to ensure it is ignored.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(5) = ~ref.at(5);  // Change one byte
+            ref.at(6) = 1;
+            ref.at(7) = 3;  // LSB
+            ref.at(8) = 0;  // MSB
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        // Send v1 response with bad array length to ensure it is ignored.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 2;  // Shall be either 0 (if request) or 1 (if response)
+            ref.at(7) = 3;  // LSB
+            ref.at(8) = 0;  // MSB
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        // Send malformed v1 response to ensure it is ignored.
+        {
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, {0b1111'1111U}});
+        }
+        // Send v2 response with invalid node-ID to ensure it is ignored.
+        {
+            Buf ref(20, 0);  // We only need 19 bytes; +1 is due to CAN FD DLC padding.
+            ref.at(0) = 0xAA;
+            ref.at(1) = 0xAA;
+            std::copy(uid.begin(), uid.end(), &ref.at(2));
+            ref.back() = 0b1111'1111U;
+            driver.pushRx({0b110'00'0111111111100101'0'1111110UL, ref});
+        }
+        // Send v2 response with mismatching UID to ensure it is ignored.
+        {
+            Buf ref(20, 0);  // We only need 19 bytes; +1 is due to CAN FD DLC padding.
+            ref.at(0) = 3;
+            ref.at(1) = 0;
+            std::copy(uid.begin(), uid.end(), &ref.at(2));
+            ref.at(17) = ~ref.at(17);  // Change one byte
+            ref.back() = 0b1111'1111U;
+            driver.pushRx({0b110'00'0111111111100101'0'1111110UL, ref});
+        }
+        // Send malformed v2 response to ensure it is ignored.
+        {
+            driver.pushRx({0b110'00'0111111111100101'0'1111110UL, {0b1111'1111U}});
+        }
+        // Yup, we simply get the next request -- the bad responses are ignored.
+        f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(!f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v2));
+        // Send the correct v2 response and ensure it is accepted.
+        {
+            Buf ref(20, 0);  // We only need 19 bytes; +1 is due to CAN FD DLC padding.
+            ref.at(0) = 7;
+            ref.at(1) = 0;
+            std::copy(uid.begin(), uid.end(), &ref.at(2));
+            ref.back() = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100101'0'1111110UL, ref});
+        }
+        const auto result = spin();
+        REQUIRE(std::holds_alternative<IActivity*>(result));
+        const auto* const main_act = dynamic_cast<V1MainActivity*>(std::get<IActivity*>(result));
+        REQUIRE(main_act);
+        REQUIRE(main_act->getLocalNodeID() == 7);  // Ensure the allocated value is extracted correctly.
+    }
+
+    // Classic CAN bus
+    {
+        driver.setMode(CANDriverMock::Mode::Classic);
+        act.emplace(alloc, driver, uid, br, CANDriverMock::Mode::Classic);
+
+        auto f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v1));
+        {
+            Buf ref(8, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 0;
+            ref.at(7) = 0b1110'0000U;
+            REQUIRE(f.payload == ref);
+        }
+        REQUIRE(!driver.popTx());  // Ensure there are no unexpected frames left.
+
+        // Wait for the next request to ensure the transfer-ID is being properly incremented.
+        f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v1));
+        {
+            Buf ref(8, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 0;
+            ref.at(7) = 0b1110'0001U;  // Incremented!
+            REQUIRE(f.payload == ref);
+        }
+        REQUIRE(!driver.popTx());  // Ensure there are no unexpected frames left.
+
+        // Send v1 response with invalid node-ID to ensure it is ignored.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 1;
+            ref.at(7) = 0xFF;  // Not a valid node-ID
+            ref.at(8) = 0xFF;  // Second byte
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        // Send v1 response with mismatching UID to ensure it is ignored.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(5) = ~ref.at(5);  // Change one byte
+            ref.at(6) = 1;
+            ref.at(7) = 3;  // LSB
+            ref.at(8) = 0;  // MSB
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        // Send v1 response with bad array length to ensure it is ignored.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 2;  // Shall be either 0 (if request) or 1 (if response)
+            ref.at(7) = 3;  // LSB
+            ref.at(8) = 0;  // MSB
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        // Send malformed v1 response to ensure it is ignored.
+        {
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, {0b1111'1111U}});
+        }
+        // Yup, we simply get the next request -- the bad responses are ignored.
+        f = std::get<CANDriverMock::TxFrame>(spin());
+        REQUIRE(f.force_classic_can);
+        REQUIRE(ensure_subject_id(f.extended_can_id, SubjectID::PnPNodeIDAllocationData_v1));
+        // Send the correct v1 response and ensure it is accepted.
+        {
+            Buf ref(10, 0);
+            std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
+            ref.at(6) = 1;
+            ref.at(7) = 15;  // LSB
+            ref.at(8) = 0;   // MSB
+            ref.at(9) = 0b1110'0000U;
+            driver.pushRx({0b110'00'0111111111100110'0'1111110UL, ref});
+        }
+        const auto result = spin();
+        REQUIRE(std::holds_alternative<IActivity*>(result));
+        const auto* const main_act = dynamic_cast<V1MainActivity*>(std::get<IActivity*>(result));
+        REQUIRE(main_act);
+        REQUIRE(main_act->getLocalNodeID() == 15);  // Ensure the allocated value is extracted correctly.
+    }
+}
