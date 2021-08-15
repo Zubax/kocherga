@@ -326,6 +326,10 @@ protected:
     {
         if (frame.start_of_transfer)
         {
+            if ((source == source_node_id_) && (frame.transfer_id == transfer_id_))
+            {
+                return {};  // Drop the duplicate.
+            }
             reset(source, frame.transfer_id);
         }
         else
@@ -365,16 +369,19 @@ protected:
     std::array<std::uint8_t, Extent> payload_{};
 
 private:
-    void reset() { reset(std::numeric_limits<std::uint8_t>::max(), std::numeric_limits<std::uint8_t>::max()); }
-
-    void reset(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
+    void reset()
     {
-        source_node_id_        = source_node_id;
-        transfer_id_           = transfer_id;
         toggle_                = true;
         crc_                   = {};
         stored_payload_size_   = 0;
         received_payload_size_ = 0;
+    }
+
+    void reset(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
+    {
+        reset();
+        source_node_id_ = source_node_id;
+        transfer_id_    = transfer_id;
     }
 
     std::uint8_t source_node_id_ = std::numeric_limits<std::uint8_t>::max();
@@ -896,7 +903,10 @@ public:
         driver_(driver),
         local_uid_(local_uid),
         bus_mode_(bus_mode),
-        local_node_id_(local_node_id)
+        local_node_id_(local_node_id),
+        rx_file_read_response_(local_node_id),
+        rx_get_info_request_(local_node_id),
+        rx_execute_command_request_(local_node_id)
     {}
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
@@ -907,7 +917,9 @@ public:
         (void) driver_;
         (void) local_uid_;
         (void) bus_mode_;
-        (void) local_node_id_;
+        (void) rx_file_read_response_;
+        (void) rx_get_info_request_;
+        (void) rx_execute_command_request_;
         return nullptr;
     }
 
@@ -919,6 +931,10 @@ private:
     const SystemInfo::UniqueID local_uid_;
     const ICANDriver::Mode     bus_mode_;
     const std::uint8_t         local_node_id_;
+
+    SimplifiedServiceTransferReassembler<300> rx_file_read_response_;
+    SimplifiedServiceTransferReassembler<0>   rx_get_info_request_;
+    SimplifiedServiceTransferReassembler<300> rx_execute_command_request_;
 };
 
 class V1NodeIDAllocationActivity : public IActivity

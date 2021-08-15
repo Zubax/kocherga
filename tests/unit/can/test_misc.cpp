@@ -259,12 +259,12 @@ TEST_CASE("can::SimplifiedTransferReassembler")
         // SFT
         REQUIRE(check_result(rm.update(mk_msg(123, 5, {true, true, true}, {4})), {4}));
         // MFT with implicit truncation
-        REQUIRE(!rm.update(mk_msg(123, 5, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));
-        REQUIRE(!rm.update(mk_msg(123, 5, {false, false, false}, {7, 8, 9, 10, 11, 12, 13})));
-        REQUIRE(!rm.update(mk_msg(123, 5, {false, false, false}, {7, 8, 9, 10, 11, 12, 13})));  // Duplicate ignored
-        REQUIRE(!rm.update(mk_msg(124, 5, {false, true, true}, {14, 15, 59, 55})));             // Another src ignored
+        REQUIRE(!rm.update(mk_msg(123, 6, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));
+        REQUIRE(!rm.update(mk_msg(123, 6, {false, false, false}, {7, 8, 9, 10, 11, 12, 13})));
+        REQUIRE(!rm.update(mk_msg(123, 6, {false, false, false}, {7, 8, 9, 10, 11, 12, 13})));  // Duplicate ignored
+        REQUIRE(!rm.update(mk_msg(124, 6, {false, true, true}, {14, 15, 59, 55})));             // Another src ignored
         REQUIRE(!rm.update(mk_msg(123, 4, {false, true, true}, {14, 15, 59, 55})));             // Another tid ignored
-        REQUIRE(check_result(rm.update(mk_msg(123, 5, {false, true, true}, {14, 15, 59, 55})),
+        REQUIRE(check_result(rm.update(mk_msg(123, 6, {false, true, true}, {14, 15, 59, 55})),
                              {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}));
         // MFT without implicit truncation
         REQUIRE(!rm.update(mk_msg(123, 9, {true, false, true}, {0, 1, 2, 3, 4, 5, 6})));
@@ -281,6 +281,11 @@ TEST_CASE("can::SimplifiedTransferReassembler")
         SimplifiedServiceTransferReassembler<8> rs(9);
         // Valid accepted
         REQUIRE(check_result(rs.update(mk_srv(123, 9, true, 5, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
+                             {0, 1, 2, 3, 4, 5, 6, 7}));
+        // Duplicate TID from same source, rejected
+        REQUIRE(!rs.update(mk_srv(123, 9, true, 5, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})));
+        // Duplicate TID from a different source, accepted
+        REQUIRE(check_result(rs.update(mk_srv(124, 9, true, 5, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
                              {0, 1, 2, 3, 4, 5, 6, 7}));
         // Destination mismatch
         REQUIRE(!rs.update(mk_srv(123, 8, true, 6, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})));
