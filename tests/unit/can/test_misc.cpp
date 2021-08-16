@@ -295,3 +295,100 @@ TEST_CASE("can::SimplifiedTransferReassembler")
                              {0, 1, 2, 3, 4, 5, 6}));
     }
 }
+
+TEST_CASE("can::transmit")
+{
+    using kocherga::can::detail::transmit;
+    using Buf       = std::vector<std::uint8_t>;
+    using MultiBuf  = std::vector<Buf>;
+    const auto once = [](const std::size_t  transport_layer_mtu,
+                         const std::uint8_t transfer_id,
+                         const Buf&         payload) -> std::optional<MultiBuf> {
+        MultiBuf frags;
+        //
+        const auto push = [&frags](const std::size_t frag_length, const std::uint8_t* const frag_ptr) -> bool {
+            frags.emplace_back(frag_ptr, frag_ptr + frag_length);
+            return true;
+        };
+        const bool result = transmit(push, transport_layer_mtu, transfer_id, payload.size(), payload.data());
+        return result ? frags : std::optional<MultiBuf>{};
+    };
+    const std::vector<std::uint8_t> dummy(1024);
+    // Bad arguments
+    {
+        REQUIRE(!once(7, 0, {}));   // MTU is too low
+        REQUIRE(!once(13, 0, {}));  // Bad DLC
+        REQUIRE(!once(63, 0, {}));  // Bad DLC
+        REQUIRE(!once(65, 0, {}));  // MTU is too high
+        REQUIRE(!once(64, 32, {}));
+    }
+    // Single-frame
+    {
+        // Without padding
+        REQUIRE(MultiBuf{Buf{0b1110'0000}} == *once(8, 0, {}));
+        REQUIRE(MultiBuf{Buf{0, 1, 2, 3, 4, 5, 6, 0b1110'1111}} == *once(8, 15, {0, 1, 2, 3, 4, 5, 6}));
+        REQUIRE(MultiBuf{Buf{0, 1, 2, 3, 4, 5, 6, 0b1110'1111}} == *once(32, 15, {0, 1, 2, 3, 4, 5, 6}));
+        REQUIRE(MultiBuf{Buf{0, 1, 2, 3, 4, 5, 6, 0b1110'1111}} == *once(64, 15, {0, 1, 2, 3, 4, 5, 6}));
+        // 25 bytes of payload, closest DLC is 32 bytes, plus one tail byte -> 6 bytes of padding
+        REQUIRE(
+            MultiBuf{Buf{0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
+                         16, 17, 18, 19, 20, 21, 22, 23, 24, 0, 0,  0,  0,  0,  0,  0b1110'1010}} ==
+            *once(64, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}));
+        // Push error, abort early
+        REQUIRE(!transmit([](auto, auto) { return false; }, 64, 0, 0, dummy.data()));
+    }
+    // Multi-frame
+    // Compute CRC using PyUAVCAN:
+    //  >>> crc = pyuavcan.transport.commons.crc.CRC16CCITT
+    //  >>> list(crc.new([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]).value_as_bytes)
+    {
+        // Classic, no padding
+        REQUIRE(MultiBuf{
+                    Buf{0, 1, 2, 3, 4, 5, 6, 0b1010'1010},         // 7 bytes
+                    Buf{7, 8, 9, 10, 11, 12, 13, 0b0000'1010},     // 7 bytes
+                    Buf{14, 15, 16, 17, 18, 19, 20, 0b0010'1010},  // 7 bytes
+                    Buf{21, 22, 23, 24, 9, 184, 0b0100'1010},      // 4 bytes + CRC
+                } == *once(8, 10, {0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12,
+                                   13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}));
+        REQUIRE(MultiBuf{
+                    Buf{0, 1, 2, 3, 4, 5, 6, 0b1010'1010},         // 7 bytes
+                    Buf{7, 8, 9, 10, 11, 12, 13, 0b0000'1010},     // 7 bytes
+                    Buf{14, 15, 16, 17, 18, 19, 20, 0b0010'1010},  // 7 bytes
+                    Buf{221, 10, 0b0100'1010},                     // CRC
+                } == *once(8, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}));
+        REQUIRE(MultiBuf{
+                    Buf{0, 1, 2, 3, 4, 5, 6, 0b1010'1010},         // 7 bytes
+                    Buf{7, 8, 9, 10, 11, 12, 13, 0b0000'1010},     // 7 bytes
+                    Buf{14, 15, 16, 17, 18, 19, 90, 0b0010'1010},  // 6 bytes + CRC[0]
+                    Buf{116, 0b0100'1010},                         // CRC[1]
+                } == *once(8, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}));
+        REQUIRE(MultiBuf{
+                    Buf{0, 1, 2, 3, 4, 5, 6, 0b1010'1010},         // 7 bytes
+                    Buf{7, 8, 9, 10, 11, 12, 13, 0b0000'1010},     // 7 bytes
+                    Buf{14, 15, 16, 17, 18, 232, 4, 0b0110'1010},  // 5 bytes + CRC
+                } == *once(8, 10, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}));
+        // CAN FD with padding: 120 bytes of payload, 4 bytes padding at the end, then CRC which includes the padding.
+        REQUIRE(MultiBuf{
+                    Buf{0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19,         20, 21,
+                        22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,         42, 43,
+                        44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 0b1010'1010},  //
+                    Buf{63,  64,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,
+                        79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,
+                        95,  96,  97,  98,  99,  100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+                        111, 112, 113, 114, 115, 116, 117, 118, 119, 0,   0,   0,   0,   119, 210, 0b0100'1010},  //
+                } ==
+                *once(64, 10, {0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,
+                               18,  19,  20,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,
+                               36,  37,  38,  39,  40,  41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51,  52,  53,
+                               54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,
+                               72,  73,  74,  75,  76,  77,  78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,
+                               90,  91,  92,  93,  94,  95,  96,  97,  98,  99,  100, 101, 102, 103, 104, 105, 106, 107,
+                               108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119}));
+        // Error handling -- ensure that errors are not suppressed at any stage.
+        for (auto i = 0; i < 4; i++)
+        {
+            auto remaining = i;
+            REQUIRE(!transmit([&remaining](auto, auto) { return remaining-- > 0; }, 8, 0, 20, dummy.data()));
+        }
+    }
+}

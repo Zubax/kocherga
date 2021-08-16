@@ -96,6 +96,19 @@ public:
     ICANDriver(ICANDriver&&)      = delete;
     auto operator=(const ICANDriver&) -> ICANDriver& = delete;
     auto operator=(ICANDriver&&) -> ICANDriver& = delete;
+
+    /// The length is rounded UP to the next valid DLC.
+    constexpr static std::array<std::uint8_t, 65> LengthToDLC{{
+        0,  1,  2,  3,  4,  5,  6,  7,  8,                               // 0-8
+        9,  9,  9,  9,                                                   // 9-12
+        10, 10, 10, 10,                                                  // 13-16
+        11, 11, 11, 11,                                                  // 17-20
+        12, 12, 12, 12,                                                  // 21-24
+        13, 13, 13, 13, 13, 13, 13, 13,                                  // 25-32
+        14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,  // 33-48
+        15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,  // 49-64
+    }};
+    constexpr static std::array<std::uint8_t, 16> DLCToLength{{0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64}};
 };
 
 namespace detail
@@ -103,7 +116,11 @@ namespace detail
 using kocherga::detail::BitsPerByte;
 
 static constexpr std::uint8_t TailByteStartOfTransfer = 0b1000'0000;
+static constexpr std::uint8_t TailByteEndOfTransfer   = 0b0100'0000;
 static constexpr std::uint8_t TailByteToggleBit       = 0b0010'0000;
+
+static constexpr std::uint8_t MaxNodeID     = 127;
+static constexpr std::uint8_t MaxTransferID = 31;
 
 class CRC16CCITT
 {
@@ -438,6 +455,106 @@ private:
     const std::uint8_t local_node_id_;
 };
 
+/// Send one UAVCAN/CAN v1 transfer. The push_frame callback is invoked per each transmitted frame; its type should be:
+///     (std::size_t, const std::uint8_t*) -> bool
+/// The return value is true on success, false otherwise.
+/// The callback shall not be an std::function<> or std::bind<> to avoid heap allocation.
+/// The MTU shall be representable as a valid DLC and be no less than 8 bytes.
+/// The caller is responsible for computing the CAN ID (which shall be the same for all frames of this transfer).
+template <typename Callback>
+[[nodiscard]] static inline auto transmit(const Callback&           push_frame,
+                                          const std::size_t         transport_layer_mtu,
+                                          const std::uint8_t        transfer_id,
+                                          const std::size_t         payload_length,
+                                          const std::uint8_t* const payload) -> bool
+{
+    std::array<std::uint8_t, ICANDriver::DLCToLength.back()> buf{};
+    if ((transport_layer_mtu < 8U) || (transport_layer_mtu > buf.size()) || (transfer_id > MaxTransferID) ||
+        (ICANDriver::DLCToLength.at(ICANDriver::LengthToDLC.at(transport_layer_mtu)) != transport_layer_mtu) ||
+        ((payload == nullptr) && (payload_length > 0)))
+    {
+        return false;
+    }
+    const std::size_t mtu = transport_layer_mtu - 1U;
+    assert((mtu >= 7U) && (mtu <= 63U));
+
+    // SINGLE-FRAME TRANSFER
+    if (payload_length <= mtu)
+    {
+        std::copy_n(payload, payload_length, buf.begin());
+        const auto dlc = ICANDriver::LengthToDLC.at(payload_length + 1);
+        const auto len = ICANDriver::DLCToLength.at(dlc);
+        assert(len > 0);
+        buf.at(len - 1) = static_cast<std::uint8_t>(static_cast<std::uint32_t>(TailByteStartOfTransfer) |
+                                                    TailByteEndOfTransfer | TailByteToggleBit | transfer_id);
+        return push_frame(len, buf.data());
+    }
+
+    // MULTI-FRAME TRANSFER
+    CRC16CCITT crc;
+    crc.update(payload_length, payload);
+    std::size_t         remaining = payload_length;
+    const std::uint8_t* ptr       = payload;
+    bool                toggle    = true;
+    while (remaining > mtu)
+    {
+        std::copy_n(ptr, mtu, buf.begin());
+        const auto tail_byte =
+            static_cast<std::uint8_t>(transfer_id |                        //
+                                      (toggle ? TailByteToggleBit : 0U) |  //
+                                      ((remaining == payload_length) ? TailByteStartOfTransfer : 0U));
+        toggle      = !toggle;
+        buf.at(mtu) = tail_byte;
+        if (!push_frame(mtu + 1U, buf.data()))
+        {
+            return false;
+        }
+        ptr += mtu;
+        remaining -= mtu;
+    }
+    // Last frame requires special treatment: the CRC may go into the same frame or be split off, this is convoluted.
+    std::copy_n(ptr, remaining, buf.begin());
+    if ((remaining + CRC16CCITT::Size) <= mtu)  // Remaining bytes plus CRC fit into one frame; padding may be needed.
+    {
+        auto*      dst = buf.begin() + remaining;
+        const auto dlc = ICANDriver::LengthToDLC.at(remaining + CRC16CCITT::Size + 1U);
+        const auto len = ICANDriver::DLCToLength.at(dlc);
+        assert(len >= (remaining + CRC16CCITT::Size + 1U));
+        const auto padding = len - remaining - CRC16CCITT::Size - 1U;
+        assert(padding < 16);
+        for (auto i = 0U; i < padding; i++)
+        {
+            crc.update(0);
+            *dst++ = 0;
+        }
+        for (auto x : crc.getBytes())
+        {
+            *dst++ = x;
+        }
+        *dst = static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U) | TailByteEndOfTransfer);
+        return push_frame(len, buf.data());
+    }
+    // Padding is not needed but one extra frame is required to contain (part of) the CRC.
+    const auto  crc_bytes    = crc.getBytes();
+    const auto* crc_bytes_it = crc_bytes.begin();
+    assert(mtu >= remaining);
+    for (auto i = remaining; i < mtu; i++)
+    {
+        buf.at(i) = *crc_bytes_it++;
+    }
+    buf.at(mtu) = static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U));
+    toggle      = !toggle;
+    if (!push_frame(mtu + 1U, buf.data()))
+    {
+        return false;
+    }
+    auto* buf_it = std::copy(crc_bytes_it, crc_bytes.end(), buf.begin());
+    *buf_it++    = static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U) | TailByteEndOfTransfer);
+    const auto size = buf_it - buf.begin();
+    assert((size >= 2U) && (size <= static_cast<std::int32_t>(CRC16CCITT::Size + 1U)));
+    return push_frame(static_cast<std::uint8_t>(size), buf.data());
+}
+
 class IAllocator
 {
 public:
@@ -570,7 +687,7 @@ public:
                    const std::uint8_t          local_node_id) :
         allocator_(allocator), driver_(driver), local_uid_(local_uid), local_node_id_(local_node_id)
     {
-        assert((local_node_id_ > 0) && (local_node_id_ < 128));
+        assert((local_node_id_ > 0) && (local_node_id_ <= MaxNodeID));
     }
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
@@ -774,7 +891,7 @@ private:
         {
             return nullptr;
         }
-        assert(node_id < 128);
+        assert(node_id <= MaxNodeID);
         // Allocation done, full match.
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<0>(node_id)))
         {
@@ -926,6 +1043,41 @@ public:
     [[nodiscard]] auto getLocalNodeID() const -> std::uint8_t { return local_node_id_; }
 
 private:
+    [[nodiscard]] auto sendRequest(const ServiceID           service_id,
+                                   const NodeID              server_node_id,
+                                   const TransferID          transfer_id,
+                                   const std::size_t         payload_length,
+                                   const std::uint8_t* const payload) -> bool override
+    {
+        (void) service_id;
+        (void) server_node_id;
+        (void) transfer_id;
+        (void) payload_length;
+        (void) payload;
+        return false;
+    }
+
+    void cancelRequest() override { pending_request_meta_.reset(); }
+
+    [[nodiscard]] auto publishMessage(const SubjectID           subject_id,
+                                      const TransferID          transfer_id,
+                                      const std::size_t         payload_length,
+                                      const std::uint8_t* const payload) -> bool override
+    {
+        (void) subject_id;
+        (void) transfer_id;
+        (void) payload_length;
+        (void) payload;
+        return false;
+    }
+
+    struct PendingRequestMetadata
+    {
+        std::uint8_t server_node_id{};
+        PortID       service_id{};
+        std::uint8_t transfer_id{};
+    };
+
     IAllocator&                allocator_;
     ICANDriver&                driver_;
     const SystemInfo::UniqueID local_uid_;
@@ -935,6 +1087,8 @@ private:
     SimplifiedServiceTransferReassembler<300> rx_file_read_response_;
     SimplifiedServiceTransferReassembler<0>   rx_get_info_request_;
     SimplifiedServiceTransferReassembler<300> rx_execute_command_request_;
+
+    std::optional<PendingRequestMetadata> pending_request_meta_;
 };
 
 class V1NodeIDAllocationActivity : public IActivity
@@ -1037,7 +1191,7 @@ private:
             return nullptr;  // Unexpected array length
         }
         const auto allocated_node_id = static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[8] << 8U) | body[7]);
-        if (allocated_node_id > 127)
+        if (allocated_node_id > MaxNodeID)
         {
             return nullptr;  // Invalid for CAN
         }
@@ -1051,7 +1205,7 @@ private:
             return nullptr;
         }
         const auto allocated_node_id = static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[1] << 8U) | body[0]);
-        if ((allocated_node_id < 128) && (0 == std::memcmp(&body[2], local_uid_.data(), local_uid_.size())))
+        if ((allocated_node_id <= MaxNodeID) && (0 == std::memcmp(&body[2], local_uid_.data(), local_uid_.size())))
         {
             return constructSuccessor(static_cast<uint8_t>(allocated_node_id));
         }
@@ -1301,7 +1455,7 @@ public:
     {
         if ((activity_ == nullptr) && can_bitrate &&     //
             uavcan_version && (*uavcan_version == 0) &&  //
-            local_node_id && (*local_node_id > 0) && (*local_node_id < 128))
+            local_node_id && (*local_node_id > 0) && (*local_node_id <= detail::MaxNodeID))
         {
             if (const auto bus_mode =
                     driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>(*local_node_id)))
@@ -1315,7 +1469,7 @@ public:
         }
         if ((activity_ == nullptr) && can_bitrate &&     //
             uavcan_version && (*uavcan_version == 1) &&  //
-            local_node_id && (*local_node_id < 128))
+            local_node_id && (*local_node_id <= detail::MaxNodeID))
         {
             if (const auto bus_mode =
                     driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<1>(*local_node_id)))

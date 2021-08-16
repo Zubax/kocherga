@@ -106,7 +106,6 @@ User-provided functions are shown in `SCREAMING_SNAKE_CASE()`.
 This is a stripped-down example; the full API documentation is available in the header files.
 
 ```c++
-#include <kocherga.hpp>
 #include <kocherga_serial.hpp>  // Pick the transports you need. In this example we are using UAVCAN/serial.
 
 /// Maximum possible size of the application image for your platform.
