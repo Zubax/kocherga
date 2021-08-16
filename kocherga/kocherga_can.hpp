@@ -351,36 +351,34 @@ protected:
         }
         else
         {
-            const bool match = (!done_) &&                             //
+            const bool match = (state_) &&                             //
                                (source == source_node_id_) &&          //
                                (frame.transfer_id == transfer_id_) &&  //
-                               (frame.toggle == !toggle_);
+                               (frame.toggle == !state_->toggle);
             if (!match)
             {
                 return {};
             }
-            toggle_ = !toggle_;
+            state_->toggle = !state_->toggle;
         }
-        crc_.update(frame.payload_size, frame.payload);
-        const auto sz = std::min(frame.payload_size, payload_.size() - stored_payload_size_);
-        std::copy_n(frame.payload, sz, payload_.begin() + stored_payload_size_);
-        stored_payload_size_ += sz;
-        received_payload_size_ += frame.payload_size;
+        state_->crc.update(frame.payload_size, frame.payload);
+        const auto sz = std::min(frame.payload_size, payload_.size() - state_->stored_payload_size);
+        std::copy_n(frame.payload, sz, payload_.begin() + state_->stored_payload_size);
+        state_->stored_payload_size += sz;
+        state_->received_payload_size += frame.payload_size;
         if (frame.end_of_transfer)
         {
+            const TransferState final = *state_;
+            state_.reset();
             if (frame.start_of_transfer)  // This is a single-frame transfer.
             {
-                const Result out{stored_payload_size_, payload_.data()};
-                stop();
-                return out;
+                return Result{final.stored_payload_size, payload_.data()};
             }
-            if ((received_payload_size_ >= CRC16CCITT::Size) && crc_.isResidueCorrect())
+            if ((final.received_payload_size >= CRC16CCITT::Size) && final.crc.isResidueCorrect())
             {
-                const std::size_t true_size = std::min(stored_payload_size_, received_payload_size_ - CRC16CCITT::Size);
-                stop();
-                return Result{true_size, payload_.data()};
+                return Result{std::min(final.stored_payload_size, final.received_payload_size - CRC16CCITT::Size),
+                              payload_.data()};
             }
-            stop();  // CRC error
         }
         return {};
     }
@@ -388,30 +386,24 @@ protected:
     std::array<std::uint8_t, Extent> payload_{};
 
 private:
-    void stop()
-    {
-        toggle_                = true;
-        done_                  = true;
-        crc_                   = {};
-        stored_payload_size_   = 0;
-        received_payload_size_ = 0;
-    }
-
     void start(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
     {
-        stop();
-        done_           = false;
+        state_.emplace();
         source_node_id_ = source_node_id;
         transfer_id_    = transfer_id;
     }
 
     std::uint8_t source_node_id_ = std::numeric_limits<std::uint8_t>::max();
     std::uint8_t transfer_id_    = std::numeric_limits<std::uint8_t>::max();
-    bool         toggle_         = true;
-    bool         done_           = true;
-    CRC16CCITT   crc_;
-    std::size_t  stored_payload_size_   = 0;
-    std::size_t  received_payload_size_ = 0;
+
+    struct TransferState
+    {
+        std::size_t stored_payload_size   = 0;
+        std::size_t received_payload_size = 0;
+        CRC16CCITT  crc;
+        bool        toggle = true;
+    };
+    std::optional<TransferState> state_;
 };
 
 /// The user of this class is responsible for checking the subject-ID on the received frames.
