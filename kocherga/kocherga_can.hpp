@@ -465,7 +465,7 @@ template <typename Callback>
                                           const std::size_t         payload_length,
                                           const std::uint8_t* const payload) -> bool
 {
-    std::array<std::uint8_t, ICANDriver::DLCToLength.back()> buf{};
+    ICANDriver::PayloadBuffer buf{};
     if ((transport_layer_mtu < 8U) || (transport_layer_mtu > buf.size()) || (transfer_id > MaxTransferID) ||
         (ICANDriver::DLCToLength.at(ICANDriver::LengthToDLC.at(transport_layer_mtu)) != transport_layer_mtu) ||
         ((payload == nullptr) && (payload_length > 0)))
