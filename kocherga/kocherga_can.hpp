@@ -258,10 +258,10 @@ struct ServiceFrameModel : public FrameModel
     // Parse the tail byte.
     const auto         out_payload_size  = static_cast<std::uint8_t>(payload_size - 1U);
     const std::uint8_t tail              = *((static_cast<const uint8_t*>(payload)) + out_payload_size);  // NOSONAR
-    const bool         start_of_transfer = (tail & 0b1000'0000U) != 0;
-    const bool         end_of_transfer   = (tail & 0b0100'0000U) != 0;
-    const bool         toggle            = (tail & 0b0010'0000U) != 0;
-    const std::uint8_t transfer_id       = (tail & 0b0001'1111U);
+    const bool         start_of_transfer = (tail & TailByteStartOfTransfer) != 0;
+    const bool         end_of_transfer   = (tail & TailByteEndOfTransfer) != 0;
+    const bool         toggle            = (tail & TailByteToggleBit) != 0;
+    const std::uint8_t transfer_id       = (tail & MaxTransferID);
     if (start_of_transfer && (!toggle))
     {
         return {};  // UAVCAN v0
@@ -347,11 +347,12 @@ protected:
             {
                 return {};  // Drop the duplicate.
             }
-            reset(source, frame.transfer_id);
+            start(source, frame.transfer_id);
         }
         else
         {
-            const bool match = (source == source_node_id_) &&          //
+            const bool match = (!done_) &&                             //
+                               (source == source_node_id_) &&          //
                                (frame.transfer_id == transfer_id_) &&  //
                                (frame.toggle == !toggle_);
             if (!match)
@@ -360,7 +361,7 @@ protected:
             }
             toggle_ = !toggle_;
         }
-        crc_.update(frame.payload_size, static_cast<const std::uint8_t*>(frame.payload));
+        crc_.update(frame.payload_size, frame.payload);
         const auto sz = std::min(frame.payload_size, payload_.size() - stored_payload_size_);
         std::copy_n(frame.payload, sz, payload_.begin() + stored_payload_size_);
         stored_payload_size_ += sz;
@@ -370,15 +371,16 @@ protected:
             if (frame.start_of_transfer)  // This is a single-frame transfer.
             {
                 const Result out{stored_payload_size_, payload_.data()};
-                reset();
+                stop();
                 return out;
             }
             if ((received_payload_size_ >= CRC16CCITT::Size) && crc_.isResidueCorrect())
             {
                 const std::size_t true_size = std::min(stored_payload_size_, received_payload_size_ - CRC16CCITT::Size);
-                reset();
+                stop();
                 return Result{true_size, payload_.data()};
             }
+            stop();  // CRC error
         }
         return {};
     }
@@ -386,17 +388,19 @@ protected:
     std::array<std::uint8_t, Extent> payload_{};
 
 private:
-    void reset()
+    void stop()
     {
         toggle_                = true;
+        done_                  = true;
         crc_                   = {};
         stored_payload_size_   = 0;
         received_payload_size_ = 0;
     }
 
-    void reset(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
+    void start(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
     {
-        reset();
+        stop();
+        done_           = false;
         source_node_id_ = source_node_id;
         transfer_id_    = transfer_id;
     }
@@ -404,6 +408,7 @@ private:
     std::uint8_t source_node_id_ = std::numeric_limits<std::uint8_t>::max();
     std::uint8_t transfer_id_    = std::numeric_limits<std::uint8_t>::max();
     bool         toggle_         = true;
+    bool         done_           = true;
     CRC16CCITT   crc_;
     std::size_t  stored_payload_size_   = 0;
     std::size_t  received_payload_size_ = 0;
@@ -802,10 +807,10 @@ private:
             return nullptr;
         }
         const std::uint8_t tail_byte = payload[payload_size - 1U];
-        const bool         sot       = (tail_byte & 0b1000'0000U) != 0;
-        const bool         eot       = (tail_byte & 0b0100'0000U) != 0;
-        const bool         tog       = (tail_byte & 0b0010'0000U) != 0;
-        const std::uint8_t tid       = (tail_byte & 0b0001'1111U);
+        const bool         sot       = (tail_byte & TailByteStartOfTransfer) != 0;
+        const bool         eot       = (tail_byte & TailByteEndOfTransfer) != 0;
+        const bool         tog       = (tail_byte & TailByteToggleBit) != 0;
+        const std::uint8_t tid       = (tail_byte & MaxTransferID);
         return acceptAllocationResponseFrame(now, source_node_id, payload_size - 1U, payload, sot, eot, tog, tid);
     }
 

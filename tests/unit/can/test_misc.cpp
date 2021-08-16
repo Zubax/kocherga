@@ -3,7 +3,10 @@
 // Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
 #include "kocherga_can.hpp"  // NOLINT include order: include Kocherga first to ensure no headers are missed.
+#include "util.hpp"          // NOLINT include order
 #include "catch.hpp"
+#include <algorithm>
+#include <iostream>
 #include <numeric>
 
 TEST_CASE("can::CRC")
@@ -390,5 +393,87 @@ TEST_CASE("can::transmit")
             auto remaining = i;
             REQUIRE(!transmit([&remaining](auto, auto) { return remaining-- > 0; }, 8, 0, 20, dummy.data()));
         }
+    }
+}
+
+TEST_CASE("CAN transfer roundtrip")
+{
+    using kocherga::can::detail::MessageFrameModel;
+    using kocherga::can::detail::SimplifiedMessageTransferReassembler;
+    using kocherga::can::detail::transmit;
+    using kocherga::can::detail::parseFrame;
+    using Buf = std::vector<std::uint8_t>;
+
+    static const auto synth_buf = []() -> Buf {
+        Buf out(util::getRandomInteger<std::uint8_t>());
+        for (auto& x : out)
+        {
+            x = util::getRandomInteger<std::uint8_t>();
+        }
+        return out;
+    };
+
+    // Generate many random transfers.
+    std::vector<Buf> original_transfers(10);
+    for (auto& x : original_transfers)
+    {
+        x = synth_buf();
+    }
+
+    // Run the send/receive roundtrip loop
+    std::vector<Buf>                             reassembled_transfers;
+    SimplifiedMessageTransferReassembler<0xFFFF> reassembler;
+    constexpr std::uint32_t                      extended_can_id = 0;
+    std::uint8_t                                 transfer_id     = 0;
+    for (const auto& in : original_transfers)
+    {
+        std::cout << "transfer=[";
+        for (auto x : in)
+        {
+            std::cout << static_cast<int>(x) << ",";
+        }
+        std::cout << "]" << std::endl;
+        REQUIRE(transmit(
+            [&reassembler, &reassembled_transfers](const std::size_t size, const std::uint8_t* const data) -> bool {
+                MessageFrameModel fr{std::get<MessageFrameModel>(*parseFrame(extended_can_id, size, data))};
+                std::cout << "frame "                            //
+                          << (fr.start_of_transfer ? "S" : " ")  //
+                          << (fr.end_of_transfer ? "E" : " ")    //
+                          << (fr.toggle ? "T" : " ")             //
+                          << " "                                 //
+                          << "tid=" << unsigned(fr.transfer_id)  //
+                          << " [";
+                for (auto i = 0U; i < fr.payload_size; i++)
+                {
+                    std::cout << unsigned(fr.payload[i]) << ",";
+                }
+                std::cout << "]" << std::endl;
+                if (const auto result = reassembler.update(fr))
+                {
+                    const auto [rs, rb] = *result;
+                    reassembled_transfers.emplace_back(rb, rb + rs);
+                    std::cout << "RECEIVED TRANSFER OF " << rs << " BYTES" << std::endl;
+                }
+                if (util::getRandomInteger<std::uint8_t>() > 128)  // Introduce random duplicates
+                {
+                    REQUIRE(!reassembler.update(fr));  // Ensure duplicates are always ignored.
+                }
+                return true;
+            },
+            64,
+            (transfer_id++) & 31U,
+            in.size(),
+            in.data()));
+    }
+
+    // Ensure we received the same number of transfers. Can't compare the payloads directly because UAVCAN/CAN may add
+    // spurious zeroes at the end due to the low CAN FD DLC granularity.
+    REQUIRE(reassembled_transfers.size() == original_transfers.size());
+    for (auto i = 0U; i < reassembled_transfers.size(); i++)
+    {
+        auto& org = original_transfers.at(i);
+        auto& res = reassembled_transfers.at(i);
+        REQUIRE(org.size() <= res.size());
+        REQUIRE(std::equal(org.begin(), org.end(), res.begin()));
     }
 }
