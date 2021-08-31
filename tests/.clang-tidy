@@ -30,6 +30,7 @@ Checks: >-
   -cert-msc30-c,
   -cert-msc50-cpp,
   -*-function-size,
+  -*-easily-swappable-parameters,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 AnalyzeTemporaryDtors: false

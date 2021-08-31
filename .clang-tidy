@@ -22,6 +22,7 @@ Checks: >-
   -cppcoreguidelines-non-private-member-variables-in-classes,
   -cert-msc30-c,
   -cert-msc50-cpp,
+  -*-easily-swappable-parameters,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 AnalyzeTemporaryDtors: false

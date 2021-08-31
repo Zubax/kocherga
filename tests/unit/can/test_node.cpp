@@ -510,7 +510,7 @@ TEST_CASE("can::detail::V1NodeIDAllocationActivity")
         {
             Buf ref(10, 0);
             std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
-            ref.at(5) = ~ref.at(5);  // Change one byte
+            ref.at(5) = static_cast<std::uint8_t>(~ref.at(5));  // Change one byte
             ref.at(6) = 1;
             ref.at(7) = 3;  // LSB
             ref.at(8) = 0;  // MSB
@@ -546,7 +546,7 @@ TEST_CASE("can::detail::V1NodeIDAllocationActivity")
             ref.at(0) = 3;
             ref.at(1) = 0;
             std::copy(uid.begin(), uid.end(), &ref.at(2));
-            ref.at(17) = ~ref.at(17);  // Change one byte
+            ref.at(17) = static_cast<std::uint8_t>(~ref.at(17));  // Change one byte
             ref.back() = 0b1111'1111U;
             driver.pushRx({0b110'00'0111111111100101'0'1111110UL, ref});
         }
@@ -618,7 +618,7 @@ TEST_CASE("can::detail::V1NodeIDAllocationActivity")
         {
             Buf ref(10, 0);
             std::copy(pseudo_uid_bytes.begin(), pseudo_uid_bytes.end(), ref.begin());
-            ref.at(5) = ~ref.at(5);  // Change one byte
+            ref.at(5) = static_cast<std::uint8_t>(~ref.at(5));  // Change one byte
             ref.at(6) = 1;
             ref.at(7) = 3;  // LSB
             ref.at(8) = 0;  // MSB

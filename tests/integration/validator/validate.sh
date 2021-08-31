@@ -8,7 +8,7 @@ function die()
     exit 1
 }
 
-export SOFTWARE_PACKAGE_DIR=`dirname "$0"`
+export SOFTWARE_PACKAGE_DIR=$(dirname "$0")
 
 python -m pip --disable-pip-version-check install yakut~=0.6 || die "Failed to install Yakut"
 

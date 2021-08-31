@@ -482,8 +482,8 @@ template <typename Callback>
         const auto dlc = ICANDriver::LengthToDLC.at(payload_length + 1);
         const auto len = ICANDriver::DLCToLength.at(dlc);
         assert(len > 0);
-        buf.at(len - 1) = static_cast<std::uint8_t>(static_cast<std::uint32_t>(TailByteStartOfTransfer) |
-                                                    TailByteEndOfTransfer | TailByteToggleBit | transfer_id);
+        buf.at(len - 1U) = static_cast<std::uint8_t>(static_cast<std::uint32_t>(TailByteStartOfTransfer) |
+                                                     TailByteEndOfTransfer | TailByteToggleBit | transfer_id);
         return push_frame(len, buf.data());
     }
 
@@ -883,7 +883,7 @@ private:
             schedule(now, DelayRangeFollowup);
             return nullptr;
         }
-        const std::uint8_t node_id = message_data[0] >> 1U;
+        const auto node_id = static_cast<std::uint8_t>(message_data[0] >> 1U);
         if (node_id < 1)  // Bad allocation
         {
             return nullptr;
@@ -1325,7 +1325,7 @@ public:
             const auto [can_id, payload_size] = *frame;
             if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
             {
-                if (const auto uavcan_version = tryDetectProtocolVersionFromFrame(can_id, buf.at(payload_size - 1)))
+                if (const auto uavcan_version = tryDetectProtocolVersionFromFrame(can_id, buf.at(payload_size - 1U)))
                 {
                     if (!highest_version_seen_)
                     {
