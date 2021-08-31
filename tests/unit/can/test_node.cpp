@@ -660,3 +660,8 @@ TEST_CASE("can::detail::V1NodeIDAllocationActivity")
         REQUIRE(main_act->getLocalNodeID() == 15);  // Ensure the allocated value is extracted correctly.
     }
 }
+
+TEST_CASE("can::CANNode v1")
+{
+    //
+}

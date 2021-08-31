@@ -678,12 +678,10 @@ public:
 class V0MainActivity : public IActivity
 {
 public:
-    V0MainActivity(IAllocator&                 allocator,
-                   ICANDriver&                 driver,
-                   const SystemInfo::UniqueID& local_uid,
-                   const std::uint8_t          local_node_id) :
-        allocator_(allocator), driver_(driver), local_uid_(local_uid), local_node_id_(local_node_id)
+    V0MainActivity(IAllocator& allocator, ICANDriver& driver, const std::uint8_t local_node_id) :
+        driver_(driver), local_node_id_(local_node_id)
     {
+        (void) allocator;
         assert((local_node_id_ > 0) && (local_node_id_ <= MaxNodeID));
     }
 
@@ -691,9 +689,7 @@ public:
     {
         (void) reactor;
         (void) uptime;
-        (void) allocator_;
         (void) driver_;
-        (void) local_uid_;
         (void) local_node_id_;
         return nullptr;
     }
@@ -701,10 +697,8 @@ public:
     [[nodiscard]] auto getLocalNodeID() const -> std::uint8_t { return local_node_id_; }
 
 private:
-    IAllocator&                allocator_;
-    ICANDriver&                driver_;
-    const SystemInfo::UniqueID local_uid_;
-    const std::uint8_t         local_node_id_;
+    ICANDriver&        driver_;
+    const std::uint8_t local_node_id_;
 };
 
 /// The following example shows the CAN exchange dump collected from a real network using the old UAVCAN v0 GUI Tool.
@@ -893,7 +887,7 @@ private:
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<0>(node_id)))
         {
             (void) bus_mode;
-            return allocator_.construct<V0MainActivity>(allocator_, driver_, local_uid_, node_id);
+            return allocator_.construct<V0MainActivity>(allocator_, driver_, node_id);
         }
         return nullptr;
     }
@@ -1008,32 +1002,36 @@ private:
 class V1MainActivity : public IActivity
 {
 public:
-    V1MainActivity(IAllocator&                 allocator,
-                   ICANDriver&                 driver,
-                   const SystemInfo::UniqueID& local_uid,
-                   const ICANDriver::Mode      bus_mode,
-                   const std::uint8_t          local_node_id) :
-        allocator_(allocator),
+    V1MainActivity(IAllocator&            allocator,
+                   ICANDriver&            driver,
+                   const ICANDriver::Mode bus_mode,
+                   const std::uint8_t     local_node_id) :
         driver_(driver),
-        local_uid_(local_uid),
         bus_mode_(bus_mode),
         local_node_id_(local_node_id),
         rx_file_read_response_(local_node_id),
         rx_get_info_request_(local_node_id),
         rx_execute_command_request_(local_node_id)
-    {}
+    {
+        (void) allocator;
+    }
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
-        (void) reactor;
         (void) uptime;
-        (void) allocator_;
-        (void) driver_;
-        (void) local_uid_;
-        (void) bus_mode_;
-        (void) rx_file_read_response_;
-        (void) rx_get_info_request_;
-        (void) rx_execute_command_request_;
+        ICANDriver::PayloadBuffer buf{};
+        while (const auto transport_frame = driver_.pop(buf))
+        {
+            const auto [can_id, payload_size] = *transport_frame;
+            if (const auto frame = detail::parseFrame(can_id, payload_size, buf.data()))
+            {
+                if (const auto* const s = std::get_if<ServiceFrameModel>(&*frame))
+                {
+                    processReceivedServiceFrame(reactor, *s);
+                }
+                // This implementation is not interested in accepting any message transfers.
+            }
+        }
         return nullptr;
     }
 
@@ -1046,12 +1044,37 @@ private:
                                    const std::size_t         payload_length,
                                    const std::uint8_t* const payload) -> bool override
     {
-        (void) service_id;
-        (void) server_node_id;
-        (void) transfer_id;
-        (void) payload_length;
-        (void) payload;
+        static constexpr std::uint32_t CANIDMask = 0b110'11'0000000000'0000000'0000000UL;
+        //
+        const auto can_id = CANIDMask |                                           //
+                            (static_cast<std::uint32_t>(service_id) << 14U) |     //
+                            (static_cast<std::uint32_t>(server_node_id) << 7U) |  //
+                            local_node_id_;
+        if (send(can_id, transfer_id, payload_length, payload))
+        {
+            pending_request_meta_ = PendingRequestMetadata{static_cast<std::uint8_t>(server_node_id),
+                                                           static_cast<PortID>(service_id),
+                                                           static_cast<std::uint8_t>(transfer_id & MaxTransferID)};
+            return true;
+        }
         return false;
+    }
+
+    [[nodiscard]] auto sendResponse(const std::uint8_t        priority,
+                                    const std::uint16_t       service_id,
+                                    const std::uint8_t        client_node_id,
+                                    const std::uint8_t        transfer_id,
+                                    const std::size_t         payload_length,
+                                    const std::uint8_t* const payload) -> bool
+    {
+        static constexpr std::uint32_t CANIDMask = 0b000'10'0000000000'0000000'0000000UL;
+        //
+        const auto can_id = CANIDMask |                                           //
+                            (static_cast<std::uint32_t>(priority) << 26U) |       //
+                            (static_cast<std::uint32_t>(service_id) << 14U) |     //
+                            (static_cast<std::uint32_t>(client_node_id) << 7U) |  //
+                            local_node_id_;
+        return send(can_id, transfer_id, payload_length, payload);
     }
 
     void cancelRequest() override { pending_request_meta_.reset(); }
@@ -1061,11 +1084,102 @@ private:
                                       const std::size_t         payload_length,
                                       const std::uint8_t* const payload) -> bool override
     {
-        (void) subject_id;
-        (void) transfer_id;
-        (void) payload_length;
-        (void) payload;
-        return false;
+        static constexpr std::uint32_t CANIDMask = 0b100'00'0110000000000000'0'0000000UL;
+        const auto can_id = CANIDMask | (static_cast<std::uint32_t>(subject_id) << 8U) | local_node_id_;
+        return send(can_id, transfer_id, payload_length, payload);
+    }
+
+    void processReceivedServiceFrame(IReactor& reactor, const ServiceFrameModel& frame)
+    {
+        if (frame.request_not_response)
+        {
+            if (frame.service_id == static_cast<std::uint16_t>(ServiceID::NodeGetInfo))
+            {
+                if (const auto req = rx_get_info_request_.update(frame))
+                {
+                    processServiceRequest(reactor, frame, req->first, req->second);
+                }
+            }
+            if (frame.service_id == static_cast<std::uint16_t>(ServiceID::NodeExecuteCommand))
+            {
+                if (const auto req = rx_execute_command_request_.update(frame))
+                {
+                    processServiceRequest(reactor, frame, req->first, req->second);
+                }
+            }
+        }
+        else
+        {
+            if (pending_request_meta_ &&                                            //
+                (pending_request_meta_->server_node_id == frame.source_node_id) &&  //
+                (pending_request_meta_->service_id == frame.service_id) &&          //
+                (pending_request_meta_->transfer_id == frame.transfer_id))
+            {
+                if (frame.service_id == static_cast<std::uint16_t>(ServiceID::FileRead))
+                {
+                    if (const auto res = rx_file_read_response_.update(frame))
+                    {
+                        processServiceResponse(reactor, res->first, res->second);
+                    }
+                }
+                else
+                {
+                    assert(false);  // This means that we've sent a request for which there is no response listener.
+                }
+            }
+        }
+    }
+
+    void processServiceRequest(IReactor&                 reactor,
+                               const ServiceFrameModel&  frame,
+                               const std::size_t         request_size,
+                               const std::uint8_t* const request_data)
+    {
+        assert(frame.destination_node_id == local_node_id_);
+        assert(frame.request_not_response);
+        std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
+        if (const auto response_size = reactor.processRequest(frame.service_id,
+                                                              frame.source_node_id,
+                                                              request_size,
+                                                              request_data,
+                                                              response_data.data()))
+        {
+            (void) sendResponse(frame.priority,
+                                frame.service_id,
+                                frame.source_node_id,
+                                frame.transfer_id,
+                                *response_size,
+                                response_data.data());
+        }
+    }
+
+    void processServiceResponse(IReactor&                 reactor,
+                                const std::size_t         response_size,
+                                const std::uint8_t* const response_data)
+    {
+        pending_request_meta_.reset();
+        reactor.processResponse(response_size, response_data);
+    }
+
+    [[nodiscard]] auto send(const std::uint32_t       extended_can_id,
+                            const TransferID          transfer_id,
+                            const std::size_t         payload_length,
+                            const std::uint8_t* const payload) -> bool
+    {
+        // This lambda is allocated on the stack, so that the closures do not require heap allocation.
+        return detail::transmit(
+            [this, extended_can_id](const std::size_t         frame_payload_size,
+                                    const std::uint8_t* const frame_payload) -> bool {
+                assert(frame_payload_size <= std::numeric_limits<std::uint8_t>::max());
+                return driver_.push(false,
+                                    extended_can_id,
+                                    static_cast<std::uint8_t>(frame_payload_size),
+                                    frame_payload);
+            },
+            (bus_mode_ == ICANDriver::Mode::Classic) ? 8U : 64U,
+            static_cast<std::uint8_t>(transfer_id & detail::MaxTransferID),
+            payload_length,
+            payload);
     }
 
     struct PendingRequestMetadata
@@ -1075,11 +1189,9 @@ private:
         std::uint8_t transfer_id{};
     };
 
-    IAllocator&                allocator_;
-    ICANDriver&                driver_;
-    const SystemInfo::UniqueID local_uid_;
-    const ICANDriver::Mode     bus_mode_;
-    const std::uint8_t         local_node_id_;
+    ICANDriver&            driver_;
+    const ICANDriver::Mode bus_mode_;
+    const std::uint8_t     local_node_id_;
 
     SimplifiedServiceTransferReassembler<300> rx_file_read_response_;
     SimplifiedServiceTransferReassembler<0>   rx_get_info_request_;
@@ -1275,7 +1387,7 @@ private:
     {
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<1>(allocated_node_id)))
         {
-            return allocator_.construct<V1MainActivity>(allocator_, driver_, local_uid_, *bus_mode, allocated_node_id);
+            return allocator_.construct<V1MainActivity>(allocator_, driver_, *bus_mode, allocated_node_id);
         }
         return nullptr;
     }
@@ -1458,10 +1570,8 @@ public:
                     driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>(*local_node_id)))
             {
                 (void) bus_mode;  // v0 doesn't care about mode because it only supports Classic CAN.
-                activity_ = activity_allocator_.construct<detail::V0MainActivity>(activity_allocator_,
-                                                                                  driver,
-                                                                                  local_unique_id,
-                                                                                  *local_node_id);
+                activity_ =
+                    activity_allocator_.construct<detail::V0MainActivity>(activity_allocator_, driver, *local_node_id);
             }
         }
         if ((activity_ == nullptr) && can_bitrate &&     //
@@ -1473,7 +1583,6 @@ public:
             {
                 activity_ = activity_allocator_.construct<detail::V1MainActivity>(activity_allocator_,
                                                                                   driver,
-                                                                                  local_unique_id,
                                                                                   *bus_mode,
                                                                                   *local_node_id);
             }
