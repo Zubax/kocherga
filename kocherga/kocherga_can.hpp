@@ -1623,6 +1623,7 @@ public:
 private:
     void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
     {
+        assert(activity_ != nullptr);
         assert(uptime.count() >= 0);
         if (detail::IActivity* const new_activity = activity_->poll(reactor, uptime))
         {
@@ -1637,6 +1638,7 @@ private:
                                    const std::size_t         payload_length,
                                    const std::uint8_t* const payload) -> bool override
     {
+        assert(activity_ != nullptr);
         return activity_->sendRequest(service_id, server_node_id, transfer_id, payload_length, payload);
     }
 
@@ -1647,6 +1649,7 @@ private:
                                       const std::size_t         payload_length,
                                       const std::uint8_t* const payload) -> bool override
     {
+        assert(activity_ != nullptr);
         return activity_->publishMessage(subject_id, transfer_id, payload_length, payload);
     }
 

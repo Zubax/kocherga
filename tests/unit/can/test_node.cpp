@@ -106,7 +106,7 @@ public:
     };
 
     /// Accepts request, returns the serialized response payload or nothing if no response should be sent.
-    using IncomingRequestHandler = std::function<std::optional<std::vector<std::uint8_t>>(IncomingRequest)>;
+    using IncomingRequestHandler = std::function<std::optional<std::vector<std::uint8_t>>(const IncomingRequest&)>;
 
     void setIncomingRequestHandler(const IncomingRequestHandler& irh) { request_handler_ = irh; }
 
@@ -663,5 +663,132 @@ TEST_CASE("can::detail::V1NodeIDAllocationActivity")
 
 TEST_CASE("can::CANNode v1")
 {
-    //
+    using kocherga::SubjectID;
+    using kocherga::ServiceID;
+    using kocherga::can::CANNode;
+    using std::chrono_literals::operator""us;
+    using Buf = std::vector<std::uint8_t>;
+
+    CANDriverMock             driver;
+    ReactorMock               reactor;
+    std::chrono::microseconds uptime(0);
+
+    const Bitrate                        br{1'000'000, 4'000'000};
+    const kocherga::SystemInfo::UniqueID uid{
+        {0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0x00, 0x00, 0x00, 0x00}};
+
+    driver.setMode(kocherga::can::ICANDriver::Mode::FD);
+    CANNode node(driver, uid, br, 1, 123);
+
+    const auto poll = [&reactor, &driver, &node, &uptime](const std::chrono::microseconds            uptime_delta,
+                                                          const std::optional<CANDriverMock::Frame>& rx_frame = {})
+        -> std::optional<CANDriverMock::TxFrame> {
+        if (rx_frame)
+        {
+            driver.pushRx(*rx_frame);
+        }
+        static_cast<kocherga::INode&>(node).poll(reactor, uptime);
+        uptime += uptime_delta;
+        if (const auto f = driver.popTx())
+        {
+            return *f;
+        }
+        return {};
+    };
+
+    // Run a few dry polls, kick the wheels.
+    REQUIRE(!poll(1000us));
+    REQUIRE(!poll(1000us));
+    REQUIRE(!poll(1000us));
+    REQUIRE(uptime == 3000us);
+    REQUIRE(!reactor.popPendingResponse());
+
+    // Check service requests.
+    reactor.setIncomingRequestHandler([](const ReactorMock::IncomingRequest& req) -> std::optional<Buf> {
+        REQUIRE(req.client_node_id == 42);
+        switch (req.service_id)
+        {
+        case static_cast<kocherga::PortID>(ServiceID::NodeGetInfo):
+        {
+            return Buf{1, 2, 3};
+        }
+        default:
+        {
+            FAIL("Unexpected service request");
+            break;
+        }
+        }
+        return {};
+    });
+    // Send GetInfo request.
+    auto tx_frame = poll(1000us,
+                         CANDriverMock::Frame{
+                             (0b110'11'0000000000'0000000'0000000UL |                        // Request
+                              (static_cast<std::uint32_t>(ServiceID::NodeGetInfo) << 14U) |  // Service-ID
+                              (static_cast<std::uint32_t>(123) << 7U) |                      // Destination node-ID
+                              (static_cast<std::uint32_t>(42) << 0U)),                       // Source node-ID
+                             {
+                                 0b1110'0000U,  // Tail byte
+                             },
+                         });
+    REQUIRE(tx_frame);
+    REQUIRE(!tx_frame->force_classic_can);
+    REQUIRE(tx_frame->payload == Buf{1, 2, 3, 0b1110'0000U});
+
+    // Do a request, send response back.
+    REQUIRE(static_cast<kocherga::INode&>(node)
+                .sendRequest(ServiceID::FileRead, 42, 15, 3, reinterpret_cast<const std::uint8_t*>("\x04\x05\x06")));
+    tx_frame = poll(1000us);
+    REQUIRE(tx_frame);
+    REQUIRE(!tx_frame->force_classic_can);
+    REQUIRE(tx_frame->payload == Buf{4, 5, 6, 0b1110'1111U});
+    REQUIRE(!poll(1000us));
+    REQUIRE(!reactor.popPendingResponse());
+    REQUIRE(!poll(1000us,
+                  CANDriverMock::Frame{
+                      (0b110'10'0000000000'0000000'0000000UL |                     // Response
+                       (static_cast<std::uint32_t>(ServiceID::FileRead) << 14U) |  // Service-ID
+                       (static_cast<std::uint32_t>(123) << 7U) |                   // Destination node-ID
+                       (static_cast<std::uint32_t>(42) << 0U)),                    // Source node-ID
+                      {
+                          3, 2, 1, 0b1110'1111U,  // Tail byte at the end
+                      },
+                  }));
+    auto resp = reactor.popPendingResponse();
+    REQUIRE(resp);
+    REQUIRE(*resp == Buf{3, 2, 1});
+    REQUIRE(!reactor.popPendingResponse());
+
+    // Same, but cancel the pending request midway, ensure response is ignored.
+    REQUIRE(static_cast<kocherga::INode&>(node)
+                .sendRequest(ServiceID::FileRead, 42, 31, 3, reinterpret_cast<const std::uint8_t*>("\x04\x05\x06")));
+    tx_frame = poll(1000us);
+    REQUIRE(tx_frame);
+    REQUIRE(!tx_frame->force_classic_can);
+    REQUIRE(tx_frame->payload == Buf{4, 5, 6, 0b1111'1111U});
+    REQUIRE(!poll(1000us));
+    REQUIRE(!reactor.popPendingResponse());
+    static_cast<kocherga::INode&>(node).cancelRequest();
+    REQUIRE(!poll(1000us,
+                  CANDriverMock::Frame{
+                      (0b110'10'0000000000'0000000'0000000UL |                     // Response
+                       (static_cast<std::uint32_t>(ServiceID::FileRead) << 14U) |  // Service-ID
+                       (static_cast<std::uint32_t>(123) << 7U) |                   // Destination node-ID
+                       (static_cast<std::uint32_t>(42) << 0U)),                    // Source node-ID
+                      {
+                          3, 2, 1, 0b1111'1111U,  // Tail byte at the end
+                      },
+                  }));
+    REQUIRE(!reactor.popPendingResponse());
+
+    // Publish a message.
+    REQUIRE(static_cast<kocherga::INode&>(node).publishMessage(SubjectID::DiagnosticRecord,
+                                                               7,
+                                                               3,
+                                                               reinterpret_cast<const std::uint8_t*>("\x07\x08\x09")));
+    tx_frame = poll(1000us);
+    REQUIRE(tx_frame);
+    REQUIRE(!tx_frame->force_classic_can);
+    REQUIRE(tx_frame->payload == Buf{7, 8, 9, 0b1110'0111U});
+    REQUIRE(!poll(1000us));
 }
