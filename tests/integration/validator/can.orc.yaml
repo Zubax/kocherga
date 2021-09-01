@@ -1,0 +1,32 @@
+#!/usr/bin/env -S yakut -v orchestrate
+
+uavcan:
+  can:
+    iface: socketcan:vcan0
+  diagnostic:
+    severity: 3
+
+$=:
+  - ?=: rm -f *.rom *.json
+  - ?=: sudo modprobe can ; sudo modprobe can_raw ; sudo modprobe vcan
+  -
+  - ?=: sudo ip link add dev vcan0 type vcan && sudo ip link set vcan0 mtu 72 && sudo ip link set up vcan0
+  -
+  - $=: yakut --verbose file-server --plug-and-play alloc.db --update-software $SOFTWARE_PACKAGE_DIR
+    uavcan.node.id: 32
+  - $=: yakut --format=json sub --with-metadata uavcan.node.Heartbeat.1.0    > heartbeats.json
+  - $=: yakut --format=json sub --with-metadata uavcan.diagnostic.Record.1.1 > diagnostics.json
+  - $=:
+      - ./bootloader
+      - # Wait for the bootloader to exit. It will only do that after it has successfully loaded and validated the app.
+      - exit 223  # A non-zero exit code will bring down the entire composition, which signifies the end of the test.
+    uavcan:
+      node:
+        hardware_version: [10, 30]
+        unique_id:        aaaaaaaaaaaaaaaa
+        certificate_of_authenticity:  this is a certificate
+    bootloader:
+      rom_file:     b.rom
+      rom_size:     1024
+      max_app_size: 512
+      linger:       false
