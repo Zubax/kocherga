@@ -678,10 +678,9 @@ public:
 class V0MainActivity : public IActivity
 {
 public:
-    V0MainActivity(IAllocator& allocator, ICANDriver& driver, const std::uint8_t local_node_id) :
+    V0MainActivity(ICANDriver& driver, const std::uint8_t local_node_id) :
         driver_(driver), local_node_id_(local_node_id)
     {
-        (void) allocator;
         assert((local_node_id_ > 0) && (local_node_id_ <= MaxNodeID));
     }
 
@@ -887,7 +886,7 @@ private:
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<0>(node_id)))
         {
             (void) bus_mode;
-            return allocator_.construct<V0MainActivity>(allocator_, driver_, node_id);
+            return allocator_.construct<V0MainActivity>(driver_, node_id);
         }
         return nullptr;
     }
@@ -1002,19 +1001,14 @@ private:
 class V1MainActivity : public IActivity
 {
 public:
-    V1MainActivity(IAllocator&            allocator,
-                   ICANDriver&            driver,
-                   const ICANDriver::Mode bus_mode,
-                   const std::uint8_t     local_node_id) :
+    V1MainActivity(ICANDriver& driver, const ICANDriver::Mode bus_mode, const std::uint8_t local_node_id) :
         driver_(driver),
         bus_mode_(bus_mode),
         local_node_id_(local_node_id),
         rx_file_read_response_(local_node_id),
         rx_get_info_request_(local_node_id),
         rx_execute_command_request_(local_node_id)
-    {
-        (void) allocator;
-    }
+    {}
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
@@ -1387,7 +1381,7 @@ private:
     {
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<1>(allocated_node_id)))
         {
-            return allocator_.construct<V1MainActivity>(allocator_, driver_, *bus_mode, allocated_node_id);
+            return allocator_.construct<V1MainActivity>(driver_, *bus_mode, allocated_node_id);
         }
         return nullptr;
     }
@@ -1570,8 +1564,7 @@ public:
                     driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>(*local_node_id)))
             {
                 (void) bus_mode;  // v0 doesn't care about mode because it only supports Classic CAN.
-                activity_ =
-                    activity_allocator_.construct<detail::V0MainActivity>(activity_allocator_, driver, *local_node_id);
+                activity_ = activity_allocator_.construct<detail::V0MainActivity>(driver, *local_node_id);
             }
         }
         if ((activity_ == nullptr) && can_bitrate &&     //
@@ -1581,10 +1574,7 @@ public:
             if (const auto bus_mode =
                     driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<1>(*local_node_id)))
             {
-                activity_ = activity_allocator_.construct<detail::V1MainActivity>(activity_allocator_,
-                                                                                  driver,
-                                                                                  *bus_mode,
-                                                                                  *local_node_id);
+                activity_ = activity_allocator_.construct<detail::V1MainActivity>(driver, *bus_mode, *local_node_id);
             }
         }
         if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 0))
