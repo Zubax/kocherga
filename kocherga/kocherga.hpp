@@ -518,20 +518,36 @@ public:
 };
 
 /// Unifies multiple INode and performs DSDL serialization. Manages the network at the presentation layer.
-template <std::uint8_t NumNodes>
 class Presenter final : public IReactor
 {
 public:
-    Presenter(const SystemInfo& system_info, const std::array<INode*, NumNodes>& nodes, IController& controller) :
-        system_info_(system_info), nodes_{nodes}, controller_(controller)
+    Presenter(const SystemInfo& system_info, IController& controller) :
+        system_info_(system_info), controller_(controller)
     {}
 
-    auto trigger(const INode* const        node,
-                 const NodeID              file_server_node_id,
-                 const std::size_t         app_image_file_path_length,
-                 const std::uint8_t* const app_image_file_path) -> bool
+    [[nodiscard]] auto addNode(INode* const node) -> bool
     {
-        for (std::uint8_t i = 0U; i < NumNodes; i++)
+        for (const auto* n : nodes_)
+        {
+            if (n == node)
+            {
+                return false;  // This node is already registered.
+            }
+        }
+        if (num_nodes_ < nodes_.size())
+        {
+            nodes_.at(num_nodes_++) = node;
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto trigger(const INode* const        node,
+                               const NodeID              file_server_node_id,
+                               const std::size_t         app_image_file_path_length,
+                               const std::uint8_t* const app_image_file_path) -> bool
+    {
+        for (std::uint8_t i = 0U; i < num_nodes_; i++)
         {
             if (nodes_.at(i) == node)
             {
@@ -542,13 +558,17 @@ public:
         return false;
     }
 
-    template <std::uint8_t NodeIndex>
-    void trigger(const NodeID              file_server_node_id,
-                 const std::size_t         app_image_file_path_length,
-                 const std::uint8_t* const app_image_file_path)
+    [[nodiscard]] auto trigger(const std::uint8_t        node_index,
+                               const NodeID              file_server_node_id,
+                               const std::size_t         app_image_file_path_length,
+                               const std::uint8_t* const app_image_file_path) -> bool
     {
-        static_assert(NodeIndex < NumNodes, "trigger<NodeIndex>(...): Node index out of range.");
-        beginUpdate(NodeIndex, file_server_node_id, app_image_file_path_length, app_image_file_path);
+        if (node_index < num_nodes_)
+        {
+            beginUpdate(node_index, file_server_node_id, app_image_file_path_length, app_image_file_path);
+            return true;
+        }
+        return false;
     }
 
     void poll(const std::chrono::microseconds uptime)
@@ -558,7 +578,10 @@ public:
         current_node_index_ = 0;
         for (INode* const node : nodes_)
         {
-            node->poll(*this, uptime);
+            if (node != nullptr)
+            {
+                node->poll(*this, uptime);
+            }
             ++current_node_index_;
         }
 
@@ -642,8 +665,11 @@ public:
         buf[8] = text_length;
         for (INode* const node : nodes_)
         {
-            // Ignore transient errors.
-            (void) node->publishMessage(SubjectID::DiagnosticRecord, tid_log_record_, text_length + 9U, buf.data());
+            if (node != nullptr)
+            {
+                // Ignore transient errors.
+                (void) node->publishMessage(SubjectID::DiagnosticRecord, tid_log_record_, text_length + 9U, buf.data());
+            }
         }
         ++tid_log_record_;
     }
@@ -821,8 +847,11 @@ private:
         }};
         for (INode* const node : nodes_)
         {
-            // Ignore transient errors.
-            (void) node->publishMessage(SubjectID::NodeHeartbeat, tid_heartbeat_, buf.size(), buf.data());
+            if (node != nullptr)
+            {
+                // Ignore transient errors.
+                (void) node->publishMessage(SubjectID::NodeHeartbeat, tid_heartbeat_, buf.size(), buf.data());
+            }
         }
         ++tid_heartbeat_;
     }
@@ -856,9 +885,12 @@ private:
         controller_.beginUpdate();
     }
 
-    const SystemInfo                   system_info_;
-    const std::array<INode*, NumNodes> nodes_;
-    IController&                       controller_;
+    static constexpr std::uint8_t MaxNodes = 8;
+
+    const SystemInfo             system_info_;
+    std::array<INode*, MaxNodes> nodes_{};
+    std::uint8_t                 num_nodes_ = 0;
+    IController&                 controller_;
 
     std::chrono::microseconds last_poll_at_{};
 
@@ -934,9 +966,9 @@ enum class Final
 ///
 /// The bootloader may run multiple nodes on different transports concurrently to support multi-transport functionality.
 /// For example, a device may provide the firmware update capability via CAN and a serial port.
+/// The nodes are registered using addNode() after the instance is constructed.
 ///
 /// If the boot delay is zero and the valid application is found, the bootloader proceeds to start it immediately.
-template <std::uint8_t NumNodes>
 class Bootloader : public detail::IController
 {
 public:
@@ -956,18 +988,22 @@ public:
     /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the update.
     /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
     /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
-    Bootloader(IROMBackend&                        rom_backend,
-               const SystemInfo&                   system_info,
-               const std::array<INode*, NumNodes>& nodes,
-               const std::size_t                   max_app_size,
-               const bool                          linger,
-               const std::chrono::seconds          boot_delay = std::chrono::seconds(0)) :
+    Bootloader(IROMBackend&               rom_backend,
+               const SystemInfo&          system_info,
+               const std::size_t          max_app_size,
+               const bool                 linger,
+               const std::chrono::seconds boot_delay = std::chrono::seconds(0)) :
         max_app_size_(max_app_size),
         boot_delay_(boot_delay),
         backend_(rom_backend),
-        presentation_(system_info, nodes, *this),
+        presentation_(system_info, *this),
         linger_(linger)
     {}
+
+    /// Nodes shall be registered using this method after the instance is constructed.
+    /// The return value is true on success, false if there are too many nodes already or this node is already
+    /// registered (no effect in this case).
+    [[nodiscard]] auto addNode(INode* const node) -> bool { return presentation_.addNode(node); }
 
     /// Non-blocking periodic state update.
     /// The outer logic should invoke this method after any hardware event (for example, if WFE/WFI is used on an
@@ -1019,7 +1055,7 @@ public:
 
     /// Manual trigger: commence the application update process without waiting for an external node to trigger it.
     /// This is normally used when the application commands the bootloader to begin the update directly.
-    /// Returns false if the node is not among those passed to the constructor; otherwise true.
+    /// Returns false if the node reference is invalid; otherwise true.
     /// The path is truncated if too long.
     auto trigger(const INode* const        node,
                  const NodeID              file_server_node_id,
@@ -1028,14 +1064,12 @@ public:
     {
         return presentation_.trigger(node, file_server_node_id, app_image_file_path_length, app_image_file_path);
     }
-
-    /// Like the overload, but the node is specified by index at compile time, so the call cannot fail at runtime.
-    template <std::uint8_t NodeIndex>
-    void trigger(const NodeID              file_server_node_id,
+    auto trigger(const std::uint8_t        node_index,
+                 const NodeID              file_server_node_id,
                  const std::size_t         app_image_file_path_length,
-                 const std::uint8_t* const app_image_file_path)
+                 const std::uint8_t* const app_image_file_path) -> bool
     {
-        presentation_.template trigger<NodeIndex>(file_server_node_id, app_image_file_path_length, app_image_file_path);
+        return presentation_.trigger(node_index, file_server_node_id, app_image_file_path_length, app_image_file_path);
     }
 
     /// Returns the information about the installed application, if there is one. Otherwise, returns an empty option.
@@ -1135,9 +1169,9 @@ private:
     const std::size_t          max_app_size_;
     const std::chrono::seconds boot_delay_;
 
-    IROMBackend&                backend_;
-    detail::Presenter<NumNodes> presentation_;
-    const bool                  linger_;
+    IROMBackend&      backend_;
+    detail::Presenter presentation_;
+    const bool        linger_;
 
     std::chrono::microseconds uptime_{};
     bool                      inited_ = false;

@@ -11,13 +11,13 @@ A standard-compliant implementation of the firmware update server is provided in
 
 ## Features
 
-- **Portability** -- Kochergá is written in standard C++17 and is distributed as a header-only library
-with no external dependencies.
+- **Portability** -- Kochergá is written in standard C++17 and is distributed as a header-only library with no external
+  dependencies.
 
-- **Robustness** -- Kochergá is brick-proof.
-The application (i.e., firmware) update process can be interrupted at any point (e.g., by turning off the power supply
-or by disconnecting the interface), and it is guaranteed that the device will always end up in a known valid state.
-If a dysfunctional application image is uploaded, Kochergá can regain control after a watchdog reset.
+- **Robustness** -- Kochergá is brick-proof. The application (i.e., firmware) update process can be interrupted at any
+  point (e.g., by turning off the power supply or by disconnecting the interface), and it is guaranteed that the device
+  will always end up in a known valid state. If a dysfunctional application image is uploaded, Kochergá can regain
+  control after a watchdog reset.
 
 - **Safety** -- Kochergá verifies the correctness of the application image with a 64-bit hash before every boot.
 
@@ -30,20 +30,18 @@ If a dysfunctional application image is uploaded, Kochergá can regain control a
 
 ### Integration
 
-The entire library is contained in the header file `kocherga.hpp`;
-protocol implementations are provided each in a separate header file named `kocherga_*.hpp`.
-Kocherga does not have any compilation units of its own.
+The entire library is contained in the header file `kocherga.hpp`; protocol implementations are provided each in a
+separate header file named `kocherga_*.hpp`. Kocherga does not have any compilation units of its own.
 
-To integrate Kocherga into your application, just include this repository as a git subtree/submodule,
-or simply copy-paste the required header files into your source tree.
+To integrate Kocherga into your application, just include this repository as a git subtree/submodule, or simply
+copy-paste the required header files into your source tree.
 
 ### Application signature
 
-The bootloader looks for an instance of the `AppInfo` structure located in the ROM image of the
-application at every boot.
-Only if a valid `AppInfo` structure is found the application will be launched.
-It is recommended to allocate the structure closer to the beginning of the image in order to speed up its verification.
-The structure is defined as follows:
+The bootloader looks for an instance of the `AppInfo` structure located in the ROM image of the application at every
+boot. Only if a valid `AppInfo` structure is found the application will be launched. It is recommended to allocate the
+structure closer to the beginning of the image in order to speed up its verification. The structure is defined as
+follows:
 
 Offset | Type     | Description
 -------|----------|-----------------------------------------------------------------------------------------------------
@@ -60,29 +58,27 @@ Offset | Type     | Description
 32     |`void64`  | Reserved.
 40     |`void64`  | Reserved.
 
-When computing the application image CRC, the process will eventually encounter the location where the CRC itself
-is stored.
-In order to avoid recursive dependency, the CRC storage location must be replaced with zero bytes
-when computing/verifying the CRC.
-The parameters of the CRC-64 algorithm are the following:
+When computing the application image CRC, the process will eventually encounter the location where the CRC itself is
+stored. In order to avoid recursive dependency, the CRC storage location must be replaced with zero bytes when
+computing/verifying the CRC. The parameters of the CRC-64 algorithm are the following:
+
 * Initial value: 0xFFFF'FFFF'FFFF'FFFF
 * Polynomial: 0x42F0'E1EB'A9EA'3693
 * Reverse: no
 * Output xor: 0xFFFF'FFFF'FFFF'FFFF
 * Check: 0x62EC'59E3'F1A4'F00A
 
-The CRC and size fields cannot be populated until after the application binary is compiled and linked.
-One possible way to populate these fields is to initialize them with zeroes in the source code,
-and then use the script `tools/kocherga_image.py` after the binary is generated to update the fields
-with their actual values.
-The script can be invoked from the build system (e.g., from a Makefile rule) trivially as follows:
+The CRC and size fields cannot be populated until after the application binary is compiled and linked. One possible way
+to populate these fields is to initialize them with zeroes in the source code, and then use the
+script `tools/kocherga_image.py` after the binary is generated to update the fields with their actual values. The script
+can be invoked from the build system (e.g., from a Makefile rule) trivially as follows:
 
 ```sh
 kocherga_image.py application-name-goes-here.bin
 ```
 
-The output will be stored in a file whose name follows the pattern expected by the firmware update server
-implemented in the [Yakut CLI tool](https://github.com/UAVCAN/yakut#updating-node-software).
+The output will be stored in a file whose name follows the pattern expected by the firmware update server implemented in
+the [Yakut CLI tool](https://github.com/UAVCAN/yakut#updating-node-software).
 
 ### State machine
 
@@ -101,9 +97,9 @@ AppUpdateInProgress  |`SOFTWARE_UPDATE`| `NOMINAL`  | number of read requests, a
 
 ### API usage
 
-The following snippet explains how to integrate Kocherga into your system.
-User-provided functions are shown in `SCREAMING_SNAKE_CASE()`.
-This is a stripped-down example; the full API documentation is available in the header files.
+The following snippet explains how to integrate Kocherga into your system. User-provided functions are shown
+in `SCREAMING_SNAKE_CASE()`. This is a stripped-down example; the full API documentation is available in the header
+files.
 
 ```c++
 #include <kocherga_serial.hpp>  // Pick the transports you need. In this example we are using UAVCAN/serial.
@@ -147,11 +143,13 @@ class MySerialPort : public kocherga::serial::ISerialPort
 int main()
 {
     MyROMBackend rom_backend;
-    MySerialPort serial_port;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
-    kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
     const bool linger = false;  // If true, the bootloader will wait instead of booting the app immediately.
-    kocherga::Bootloader<1> boot(rom_backend, system_info, {&serial_node}, MaxAppSize, linger);
+    kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, linger);
+    // Add a UAVCAN/serial node to the bootloader instance.
+    MySerialPort serial_port;
+    kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
+    boot.addNode(&serial_node);
     while (true)
     {
         const auto uptime = GET_TIME_SINCE_BOOT();

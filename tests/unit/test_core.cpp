@@ -66,11 +66,11 @@ TEST_CASE("Bootloader-fast-boot")
     const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
     util::FileROMBackend      rom(img);
     std::array<mock::Node, 3> nodes;
-    kocherga::Bootloader<3>   bl(rom,
-                               sys,
-                               {&nodes.at(0), &nodes.at(1), &nodes.at(2)},
-                               static_cast<std::size_t>(std::filesystem::file_size(img)),
-                               false);
+    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false);
+    REQUIRE(bl.addNode(&nodes.at(0)));
+    REQUIRE(bl.addNode(&nodes.at(1)));
+    REQUIRE(bl.addNode(&nodes.at(2)));
+    REQUIRE(!bl.addNode(&nodes.at(2)));  // Double registration has no effect.
 
     REQUIRE(bl.poll(500ms) == kocherga::Final::BootApp);
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
@@ -91,9 +91,10 @@ TEST_CASE("Bootloader-boot-delay")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
-    util::FileROMBackend    rom(img);
-    mock::Node              node;
-    kocherga::Bootloader<1> bl(rom, sys, {&node}, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    util::FileROMBackend rom(img);
+    mock::Node           node;
+    kocherga::Bootloader bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    REQUIRE(bl.addNode(&node));
 
     REQUIRE(!bl.poll(500ms));
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
@@ -123,11 +124,9 @@ TEST_CASE("Bootloader-linger-reboot")
     const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
     util::FileROMBackend      rom(img);
     std::array<mock::Node, 2> nodes;
-    kocherga::Bootloader<2>   bl(rom,
-                               sys,
-                               {&nodes.at(0), &nodes.at(1)},
-                               static_cast<std::size_t>(std::filesystem::file_size(img)),
-                               true);
+    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), true);
+    REQUIRE(bl.addNode(&nodes.at(0)));
+    REQUIRE(bl.addNode(&nodes.at(1)));
 
     REQUIRE(!bl.poll(500ms));
     REQUIRE(bl.getState() == kocherga::State::BootCanceled);  // LINGER -- NO BOOT
@@ -159,11 +158,9 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
     util::FileROMBackend      rom("rom.img.tmp");
     std::array<mock::Node, 2> nodes;
-    kocherga::Bootloader<2>   bl(rom,
-                               sys,
-                               {&nodes.at(0), &nodes.at(1)},
-                               static_cast<std::size_t>(std::filesystem::file_size(img)),
-                               true);
+    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), true);
+    REQUIRE(bl.addNode(&nodes.at(0)));
+    REQUIRE(bl.addNode(&nodes.at(1)));
 
     REQUIRE(!bl.poll(1'500ms));
     REQUIRE(bl.getState() == kocherga::State::BootCanceled);
@@ -256,12 +253,8 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
     util::FileROMBackend      rom("rom.img.tmp");
     std::array<mock::Node, 1> nodes;
-    kocherga::Bootloader<1>   bl(rom,
-                               sys,
-                               {&nodes.at(0)},
-                               static_cast<std::size_t>(std::filesystem::file_size(img)),
-                               false,
-                               2s);
+    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 2s);
+    REQUIRE(bl.addNode(&nodes.at(0)));
 
     REQUIRE(!bl.poll(1'100ms));
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
@@ -431,12 +424,11 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
     util::FileROMBackend      rom("rom.img.tmp");
     std::array<mock::Node, 3> nodes;
-    kocherga::Bootloader<3>   bl(rom,
-                               sys,
-                               {&nodes.at(0), &nodes.at(1), &nodes.at(2)},
-                               static_cast<std::size_t>(std::filesystem::file_size(img)),
-                               false,
-                               1s);
+    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    REQUIRE(bl.addNode(&nodes.at(0)));
+    REQUIRE(bl.addNode(&nodes.at(1)));
+    REQUIRE(bl.addNode(&nodes.at(2)));
+    REQUIRE(!bl.addNode(&nodes.at(2)));  // Double registration has no effect.
 
     REQUIRE(!bl.poll(100ms));
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
@@ -452,7 +444,8 @@ TEST_CASE("Bootloader-trigger")
     // MANUAL UPDATE TRIGGER
     const auto* const path =
         reinterpret_cast<const std::uint8_t*>("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
-    bl.trigger<2>(2222, 69, path);
+    REQUIRE(bl.trigger(2, 2222, 69, path));
+    REQUIRE(!bl.trigger(222, 2222, 69, path));  // No such node
     REQUIRE(bl.getState() == kocherga::State::AppUpdateInProgress);
     REQUIRE(!bl.poll(1'100ms));
     REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal, 1));

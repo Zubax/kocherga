@@ -2,15 +2,19 @@
 // Copyright (c) 2021 Zubax Robotics.
 // Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
-#include "kocherga.hpp"
 #include "kocherga_serial.hpp"
+#include "kocherga_can.hpp"
 #include "util.hpp"
 #include <cstdint>
 #include <iostream>
+#include <linux/can.h>
+#include <linux/can/raw.h>
 #include <memory>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -74,15 +78,103 @@ private:
     const int fd_;
 };
 
+class SocketCANDriver : public kocherga::can::ICANDriver
+{
+public:
+    explicit SocketCANDriver(const std::string& iface_name) : fd_(setup(iface_name)) {}
+
+private:
+    [[nodiscard]] auto configure(const Bitrate&                                  bitrate,
+                                 const bool                                      silent,
+                                 const kocherga::can::CANAcceptanceFilterConfig& filter) -> std::optional<Mode> override
+    {
+        (void) bitrate;
+        (void) silent;
+        (void) filter;
+        // Simplified implementation. The bit rate is configured externally.
+        return Mode::FD;
+    }
+
+    [[nodiscard]] auto push(const bool          force_classic_can,
+                            const std::uint32_t extended_can_id,
+                            const std::uint8_t  payload_size,
+                            const void* const   payload) -> bool override
+    {
+        ::canfd_frame frame{};
+        frame.can_id = extended_can_id | CAN_EFF_FLAG;
+        frame.len    = payload_size;
+        frame.flags  = force_classic_can ? 0 : CANFD_BRS;
+        (void) std::memcpy(frame.data, payload, payload_size);
+        return ::send(fd_, &frame, force_classic_can ? CAN_MTU : CANFD_MTU, MSG_DONTWAIT) > 0;
+    }
+
+    [[nodiscard]] auto pop(PayloadBuffer& payload_buffer)
+        -> std::optional<std::pair<std::uint32_t, std::uint8_t>> override
+    {
+        ::canfd_frame frame{};
+        const auto    rx_out = ::recv(fd_, &frame, sizeof(::canfd_frame), MSG_DONTWAIT);
+        if (sizeof(::canfd_frame) == rx_out)
+        {
+            if (((frame.flags & CAN_EFF_FLAG) != 0) &&  //
+                ((frame.flags & CAN_ERR_FLAG) == 0) &&  //
+                ((frame.flags & CAN_RTR_FLAG) == 0))
+            {
+                (void) std::memcpy(payload_buffer.data(),
+                                   frame.data,
+                                   std::min<std::size_t>(frame.len, payload_buffer.max_size()));
+                return std::pair{frame.can_id & CAN_EFF_MASK, frame.len};
+            }
+        }
+        return {};
+    }
+
+    [[nodiscard]] static auto setup(const std::string& iface_name) -> int
+    {
+        const int fd = ::socket(PF_CAN, SOCK_RAW | SOCK_NONBLOCK, CAN_RAW);
+        if (fd < 0)
+        {
+            throw std::runtime_error("Could not open CAN socket");
+        }
+        ::ifreq ifr{};
+        (void) std::memcpy(ifr.ifr_name, iface_name.data(), iface_name.length() + 1);  // NOLINT union
+        if (0 != ::ioctl(fd, SIOCGIFINDEX, &ifr))                                      // NOLINT vararg
+        {
+            (void) ::close(fd);
+            throw std::runtime_error("No such CAN interface: " + iface_name);
+        }
+        ::sockaddr_can adr{};
+        adr.can_family  = AF_CAN;
+        adr.can_ifindex = ifr.ifr_ifindex;  // NOLINT union
+        if (0 != ::bind(fd, reinterpret_cast<::sockaddr*>(&adr), sizeof(adr)))
+        {
+            (void) ::close(fd);
+            throw std::runtime_error("Could not bind CAN socket");
+        }
+        const int en = 1;
+        if (0 != ::setsockopt(fd, SOL_CAN_RAW, CAN_RAW_FD_FRAMES, &en, sizeof(en)))
+        {
+            (void) ::close(fd);
+            throw std::runtime_error("Could not enable FD mode on the CAN socket -- is CAN FD supported?");
+        }
+        return fd;
+    }
+
+    const int fd_;
+};
+
 auto initSerialPort() -> std::shared_ptr<kocherga::serial::ISerialPort>
 {
-    const auto               iface_env = util::getEnvironmentVariable("UAVCAN__SERIAL__IFACE");
-    static const std::string Prefix    = "socket://";
-    if (iface_env.find(Prefix) != 0)
+    const auto iface_env = util::getEnvironmentVariableMaybe("UAVCAN__SERIAL__IFACE");
+    if (!iface_env)
+    {
+        return nullptr;
+    }
+    static const std::string Prefix = "socket://";
+    if (iface_env->find(Prefix) != 0)
     {
         throw std::invalid_argument("Expected serial port prefix: " + Prefix);
     }
-    const auto endpoint  = iface_env.substr(Prefix.size());
+    const auto endpoint  = iface_env->substr(Prefix.size());
     const auto colon_pos = endpoint.find(':');
     if ((colon_pos == std::string::npos) || ((colon_pos + 1) >= endpoint.size()))
     {
@@ -97,6 +189,11 @@ auto initSerialPort() -> std::shared_ptr<kocherga::serial::ISerialPort>
         throw std::invalid_argument("Port number invalid: " + port_str);
     }
     return TCPSerialPort::connect(host.c_str(), port);
+}
+
+auto initCANDriver() -> std::shared_ptr<kocherga::can::ICANDriver>
+{
+    return nullptr;
 }
 
 auto getSystemInfo() -> kocherga::SystemInfo
@@ -146,13 +243,19 @@ auto main(const int argc, char* const argv[]) -> int
 
         util::FileROMBackend rom(rom_file, rom_size);
 
-        const auto system_info = getSystemInfo();
+        const auto           system_info = getSystemInfo();
+        kocherga::Bootloader boot(rom, system_info, max_app_size, linger);
 
-        std::shared_ptr<kocherga::serial::ISerialPort> serial_port = initSerialPort();
-        kocherga::serial::SerialNode                   serial_node(*serial_port, system_info.unique_id);
+        // Configure the serial port node.
+        auto serial_port = initSerialPort();
+        if (serial_port)
+        {
+            (void) boot.addNode(new kocherga::serial::SerialNode(*serial_port, system_info.unique_id));  // NOLINT owner
+        }
 
-        kocherga::Bootloader<1> boot(rom, system_info, {&serial_node}, max_app_size, linger);
-        const auto              started_at = std::chrono::steady_clock::now();
+        (void) initCANDriver;  // TODO
+
+        const auto started_at = std::chrono::steady_clock::now();
         std::clog << "Bootloader started" << std::endl;
         while (true)
         {

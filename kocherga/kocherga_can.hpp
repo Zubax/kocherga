@@ -548,7 +548,7 @@ template <typename Callback>
     auto* buf_it = std::copy(crc_bytes_it, crc_bytes.end(), buf.begin());
     *buf_it++    = static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U) | TailByteEndOfTransfer);
     const auto size = buf_it - buf.begin();
-    assert((size >= 2U) && (size <= static_cast<std::int32_t>(CRC16CCITT::Size + 1U)));
+    assert((size >= 2) && (size <= static_cast<std::int32_t>(CRC16CCITT::Size + 1U)));
     return push_frame(static_cast<std::uint8_t>(size), buf.data());
 }
 
