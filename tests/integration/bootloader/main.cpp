@@ -88,10 +88,12 @@ private:
                                  const bool                                      silent,
                                  const kocherga::can::CANAcceptanceFilterConfig& filter) -> std::optional<Mode> override
     {
-        (void) bitrate;
-        (void) silent;
-        (void) filter;
         // Simplified implementation. The bit rate is configured externally.
+        std::clog << "SocketCANDriver::configure("                                       //
+                  << "bitrate={" << bitrate.arbitration << "," << bitrate.data << "}, "  //
+                  << "silent=" << silent << ", "                                         //
+                  << "filter={" << filter.extended_can_id << "," << filter.mask << "})"  //
+                  << std::endl;
         return Mode::FD;
     }
 
@@ -113,11 +115,11 @@ private:
     {
         ::canfd_frame frame{};
         const auto    rx_out = ::recv(fd_, &frame, sizeof(::canfd_frame), MSG_DONTWAIT);
-        if (sizeof(::canfd_frame) == rx_out)
+        if (rx_out > 0)
         {
-            if (((frame.flags & CAN_EFF_FLAG) != 0) &&  //
-                ((frame.flags & CAN_ERR_FLAG) == 0) &&  //
-                ((frame.flags & CAN_RTR_FLAG) == 0))
+            if (((frame.can_id & CAN_EFF_FLAG) != 0) &&  //
+                ((frame.can_id & CAN_ERR_FLAG) == 0) &&  //
+                ((frame.can_id & CAN_RTR_FLAG) == 0))
             {
                 (void) std::memcpy(payload_buffer.data(),
                                    frame.data,
@@ -193,7 +195,22 @@ auto initSerialPort() -> std::shared_ptr<kocherga::serial::ISerialPort>
 
 auto initCANDriver() -> std::shared_ptr<kocherga::can::ICANDriver>
 {
-    return nullptr;
+    const auto iface_env = util::getEnvironmentVariableMaybe("UAVCAN__CAN__IFACE");
+    if (!iface_env)
+    {
+        return nullptr;
+    }
+    static const std::string Prefix = "socketcan:";
+    if (iface_env->find(Prefix) != 0)
+    {
+        throw std::invalid_argument("Unsupported iface name prefix: " + Prefix);
+    }
+    const auto socketcan_iface_name = iface_env->substr(Prefix.size());
+    if (socketcan_iface_name.empty())
+    {
+        throw std::runtime_error("SocketCAN iface name cannot be empty");
+    }
+    return std::make_shared<SocketCANDriver>(socketcan_iface_name);
 }
 
 auto getSystemInfo() -> kocherga::SystemInfo
@@ -250,10 +267,17 @@ auto main(const int argc, char* const argv[]) -> int
         auto serial_port = initSerialPort();
         if (serial_port)
         {
+            std::clog << "Using UAVCAN/serial" << std::endl;
             (void) boot.addNode(new kocherga::serial::SerialNode(*serial_port, system_info.unique_id));  // NOLINT owner
         }
 
-        (void) initCANDriver;  // TODO
+        // Configure the CAN node.
+        auto can_driver = initCANDriver();
+        if (can_driver)
+        {
+            std::clog << "Using UAVCAN/CAN" << std::endl;
+            (void) boot.addNode(new kocherga::can::CANNode(*can_driver, system_info.unique_id));  // NOLINT owner
+        }
 
         const auto started_at = std::chrono::steady_clock::now();
         std::clog << "Bootloader started" << std::endl;
