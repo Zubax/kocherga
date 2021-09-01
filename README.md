@@ -97,12 +97,13 @@ AppUpdateInProgress  |`SOFTWARE_UPDATE`| `NOMINAL`  | number of read requests, a
 
 ### API usage
 
-The following snippet explains how to integrate Kocherga into your system. User-provided functions are shown
-in `SCREAMING_SNAKE_CASE()`. This is a stripped-down example; the full API documentation is available in the header
-files.
+The following snippet explains how to integrate Kocherga into your system.
+User-provided functions are shown in `SCREAMING_SNAKE_CASE()`.
+This is a stripped-down example; the full API documentation is available in the header files.
 
 ```c++
-#include <kocherga_serial.hpp>  // Pick the transports you need. In this example we are using UAVCAN/serial.
+#include <kocherga_serial.hpp>  // Pick the transports you need.
+#include <kocherga_can.hpp>     // In this example we are using UAVCAN/serial + UAVCAN/CAN.
 
 /// Maximum possible size of the application image for your platform.
 static constexpr std::size_t MaxAppSize = 1024 * 1024;
@@ -140,6 +141,37 @@ class MySerialPort : public kocherga::serial::ISerialPort
     auto send(const std::uint8_t b) -> bool override { return SERIAL_WRITE_BYTE(b); }
 };
 
+class MyCANDriver : public kocherga::can::ICANDriver
+{
+    auto configure(const Bitrate&                                  bitrate,
+                   const bool                                      silent,
+                   const kocherga::can::CANAcceptanceFilterConfig& filter) -> std::optional<Mode> override
+    {
+        CAN_CONFIGURE(bitrate, silent, filter);
+        return Mode::FD;  // Or Mode::Classic if CAN FD is not supported by the CAN controller.
+    }
+
+    auto push(const bool          force_classic_can,
+              const std::uint32_t extended_can_id,
+              const std::uint8_t  payload_size,
+              const void* const   payload) -> bool override
+    {
+        if (force_classic_can)
+        {
+            return CAN_PUSH_CLASSIC(extended_can_id, payload_size, payload);  // No DLE, no BRS -- Classic only.
+        }
+        else
+        {
+            return CAN_PUSH_FD(extended_can_id, payload_size, payload);
+        }
+    }
+
+    auto pop(PayloadBuffer& payload_buffer) -> std::optional<std::pair<std::uint32_t, std::uint8_t>> override
+    {
+        return CAN_POP(payload_buffer.data());
+    }
+};
+
 int main()
 {
     MyROMBackend rom_backend;
@@ -150,6 +182,11 @@ int main()
     MySerialPort serial_port;
     kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
     boot.addNode(&serial_node);
+    // Add a UAVCAN/CAN node likewise.
+    MyCANDriver can_driver;
+    kocherga::can::CANNode can_node(can_driver, system_info.unique_id);
+    boot.addNode(&can_node);
+    // Run the main loop.
     while (true)
     {
         const auto uptime = GET_TIME_SINCE_BOOT();
