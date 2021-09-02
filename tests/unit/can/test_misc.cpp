@@ -194,6 +194,116 @@ TEST_CASE("can::parseFrame")
     }
 }
 
+TEST_CASE("can::parseFrameV0")
+{
+    using kocherga::can::detail::parseFrameV0;
+    using kocherga::can::detail::FrameModel;
+    using kocherga::can::detail::MessageFrameModel;
+    using kocherga::can::detail::ServiceFrameModel;
+
+    static const auto parse = [](const std::uint32_t extended_can_id, const std::vector<std::uint8_t>& payload)
+        -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>> {
+        static std::vector<std::uint8_t> payload_storage;
+        payload_storage = payload;
+        return parseFrameV0(extended_can_id, payload_storage.size(), payload_storage.data());
+    };
+
+    static const auto cmp_payload = [](const FrameModel& fm, const std::vector<std::uint8_t>& reference) {
+        return (fm.payload_size == reference.size()) &&
+               (0 == std::memcmp(fm.payload, reference.data(), fm.payload_size));
+    };
+    // Message
+    {
+        const auto m = std::get<MessageFrameModel>(*parse(1U, {0, 1, 2, 3, 4, 5, 6, 7}));
+        REQUIRE(m.priority == 0);
+        REQUIRE(m.subject_id == 0);
+        REQUIRE(*m.source_node_id == 1);
+        REQUIRE(m.transfer_id == 7);
+        REQUIRE(!m.start_of_transfer);
+        REQUIRE(!m.end_of_transfer);
+        REQUIRE(!m.toggle);
+        REQUIRE(cmp_payload(m, {0, 1, 2, 3, 4, 5, 6}));
+        // Similar but invalid.
+        REQUIRE(!parse(0U, {}));  // No tail byte.
+    }
+    // Message
+    {
+        const auto m = std::get<MessageFrameModel>(
+            *parse(0b00100'0110110011001100'0'0100111U, {0, 1, 2, 3, 4, 5, 6, 0b100'00000U | 23U}));
+        REQUIRE(m.priority == 4);
+        REQUIRE(m.subject_id == 0b0110110011001100U);
+        REQUIRE(*m.source_node_id == 0b0100111U);
+        REQUIRE(m.transfer_id == 23);
+        REQUIRE(m.start_of_transfer);
+        REQUIRE(!m.end_of_transfer);
+        REQUIRE(!m.toggle);
+        REQUIRE(cmp_payload(m, {0, 1, 2, 3, 4, 5, 6}));
+        // Similar but invalid:
+        // No tail byte
+        REQUIRE(!parse(0b00100'0110110011001100'0'0100111U, {}));
+        // Bad toggle (UAVCAN v1)
+        REQUIRE(!parse(0b00100'0110110011001100'0'0100111U, {0, 1, 2, 3, 4, 5, 6, 0b101'00000U | 23U}));
+        // Anon transfer is not single frame
+        REQUIRE(!parse(0b00101'0110110011001100'0'0000000U, {0, 1, 2, 3, 4, 5, 6, 0b100'00000U | 23U}));
+    }
+    // Anonymous message
+    {
+        {
+            const auto m =
+                std::get<MessageFrameModel>(*parse(0b01001'0000110011001101'0'0000000U, {0b110'00000U | 0U}));
+            REQUIRE(m.priority == 0b01001);
+            REQUIRE(m.subject_id == 0b01U);
+            REQUIRE(!m.source_node_id);
+            REQUIRE(m.transfer_id == 0);
+            REQUIRE(m.start_of_transfer);
+            REQUIRE(m.end_of_transfer);
+            REQUIRE(!m.toggle);
+            REQUIRE(cmp_payload(m, {}));
+        }
+        // Similar but invalid
+        REQUIRE(!parse(0b01001'0110110011001100'0'0000000U, {}));                   // No tail byte
+        REQUIRE(!parse(0b01001'0110110011001100'0'0000000U, {0b111'00000U | 0U}));  // Bad toggle
+    }
+    // Request
+    {
+        const auto model = std::get<ServiceFrameModel>(
+            *parse(0b01111'00001100'1'1001101'1'0100111U, {0, 1, 2, 3, 0b011'00000U | 31U}));
+        REQUIRE(model.priority == 0b01111);
+        REQUIRE(model.service_id == 0b00001100U);
+        REQUIRE(model.request_not_response);
+        REQUIRE(model.source_node_id == 0b0100111U);
+        REQUIRE(model.destination_node_id == 0b1001101U);
+        REQUIRE(model.transfer_id == 31U);
+        REQUIRE(!model.start_of_transfer);
+        REQUIRE(model.end_of_transfer);
+        REQUIRE(model.toggle);
+        REQUIRE(cmp_payload(model, {0, 1, 2, 3}));
+        // Similar but invalid
+        REQUIRE(!parse(0b01111'00001100'1'1001101'1'0100111U, {}));                                // No tail byte
+        REQUIRE(!parse(0b01111'00001100'1'1001101'1'0100111U, {0, 1, 2, 3, 0b111'00000U | 31U}));  // Bad toggle
+        REQUIRE(!parse(0b01111'00001100'1'0100111'1'0100111U, {0, 1, 2, 3, 0b011'00000U | 31U}));  // Src == destination
+    }
+    // Response
+    {
+        const auto model =
+            std::get<ServiceFrameModel>(*parse(0b01111'00001100'0'1001101'1'0100111U, {255, 0b010'00000U | 1U}));
+        REQUIRE(model.priority == 0b01111U);
+        REQUIRE(!model.request_not_response);
+        REQUIRE(model.service_id == 0b00001100U);
+        REQUIRE(model.source_node_id == 0b0100111U);
+        REQUIRE(model.destination_node_id == 0b1001101U);
+        REQUIRE(model.transfer_id == 1U);
+        REQUIRE(!model.start_of_transfer);
+        REQUIRE(model.end_of_transfer);
+        REQUIRE(!model.toggle);
+        REQUIRE(cmp_payload(model, {255}));
+        // Similar but invalid
+        REQUIRE(!parse(0b01111'00001100'0'1001101'1'0100111U, {}));                        // No tail byte
+        REQUIRE(!parse(0b01111'00001100'0'1001101'1'0100111U, {255, 0b101'00000U | 1U}));  // Bad toggle
+        REQUIRE(!parse(0b01111'00001100'0'1001101'1'1001101U, {255, 0b010'00000U | 1U}));  // Src == destination
+    }
+}
+
 TEST_CASE("can::SimplifiedTransferReassembler")
 {
     using kocherga::can::detail::SimplifiedTransferReassembler;

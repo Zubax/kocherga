@@ -211,7 +211,6 @@ template <>
     };
 }
 
-/// This is valid for v1 only.
 struct FrameModel
 {
     std::uint8_t priority    = std::numeric_limits<std::uint8_t>::max();
@@ -318,6 +317,72 @@ struct ServiceFrameModel : public FrameModel
     out.destination_node_id  = static_cast<std::uint8_t>((extended_can_id >> 7U) & 0x7FU);
     out.request_not_response = 0 != (extended_can_id & (1ULL << 24U));
     if (out.source_node_id == out.destination_node_id)
+    {
+        return {};
+    }
+    return out;
+}
+
+[[nodiscard]] inline auto parseFrameV0(const std::uint32_t extended_can_id,
+                                       const std::size_t   payload_size,
+                                       const void* const   payload)
+    -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
+{
+    assert(payload != nullptr);
+    if (payload_size < 1)
+    {
+        return {};
+    }
+    const auto         out_payload_size  = static_cast<std::uint8_t>(payload_size - 1U);
+    const std::uint8_t tail              = *((static_cast<const uint8_t*>(payload)) + out_payload_size);  // NOSONAR
+    const bool         start_of_transfer = (tail & TailByteStartOfTransfer) != 0;
+    const bool         end_of_transfer   = (tail & TailByteEndOfTransfer) != 0;
+    const bool         toggle            = (tail & TailByteToggleBit) != 0;
+    const std::uint8_t transfer_id       = (tail & MaxTransferID);
+    if (start_of_transfer && toggle)
+    {
+        return {};  // UAVCAN v1
+    }
+    const auto priority       = static_cast<std::uint8_t>((extended_can_id >> 24U) & 31U);
+    const auto source_node_id = static_cast<std::uint8_t>(extended_can_id & 0x7FU);
+    if (const auto is_message = (0 == (extended_can_id & (1ULL << 7U))); is_message)
+    {
+        MessageFrameModel out{};
+        out.priority          = priority;
+        out.transfer_id       = transfer_id;
+        out.start_of_transfer = start_of_transfer;
+        out.end_of_transfer   = end_of_transfer;
+        out.toggle            = toggle;
+        out.payload_size      = out_payload_size;
+        out.payload           = static_cast<const uint8_t*>(payload);
+        if (source_node_id != 0)
+        {
+            out.source_node_id = source_node_id;
+            out.subject_id     = static_cast<std::uint16_t>((extended_can_id >> 8U) & 0xFFFFU);
+        }
+        else
+        {
+            if (!(start_of_transfer && end_of_transfer))
+            {
+                return {};  // Anonymous transfers can be only single-frame transfers.
+            }
+            out.subject_id = static_cast<std::uint16_t>((extended_can_id >> 8U) & 0b11U);  // Ignore the discriminator.
+        }
+        return out;
+    }
+    ServiceFrameModel out{};
+    out.priority             = priority;
+    out.transfer_id          = transfer_id;
+    out.start_of_transfer    = start_of_transfer;
+    out.end_of_transfer      = end_of_transfer;
+    out.toggle               = toggle;
+    out.payload_size         = out_payload_size;
+    out.payload              = static_cast<const uint8_t*>(payload);
+    out.service_id           = static_cast<std::uint16_t>((extended_can_id >> 16U) & 0xFFU);
+    out.source_node_id       = source_node_id;
+    out.destination_node_id  = static_cast<std::uint8_t>((extended_can_id >> 8U) & 0x7FU);
+    out.request_not_response = 0 != (extended_can_id & (1ULL << 15U));
+    if ((out.source_node_id == out.destination_node_id) || (out.source_node_id == 0) || (out.destination_node_id == 0))
     {
         return {};
     }
@@ -675,6 +740,15 @@ public:
     auto operator=(IActivity&&) -> IActivity& = delete;
 };
 
+/// The v0 main activity is a simplified translation layer between UAVCAN/CAN v1 and UAVCAN v0.
+/// The following ports are supported:
+///
+///     Service                 RX                  TX
+///     -----------------------------------------------------------------------------
+///     FileRead                MFT response        MFT request
+///     GetInfo                 SFT request         MFT response
+///     ExecuteCommand          MFT request         SFT response
+///     Heartbeat                                   SFT
 class V0MainActivity : public IActivity
 {
 public:
@@ -686,18 +760,66 @@ public:
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
     {
-        (void) reactor;
         (void) uptime;
-        (void) driver_;
-        (void) local_node_id_;
+        ICANDriver::PayloadBuffer buf{};
+        while (const auto transport_frame = driver_.pop(buf))
+        {
+            const auto [can_id, payload_size] = *transport_frame;
+            if (const auto frame = detail::parseFrame(can_id, payload_size, buf.data()))
+            {
+                if (const auto* const s = std::get_if<ServiceFrameModel>(&*frame))
+                {
+                    (void) reactor;
+                    (void) s;
+                }
+                // This implementation is not interested in accepting any message transfers.
+            }
+        }
         return nullptr;
     }
 
     [[nodiscard]] auto getLocalNodeID() const -> std::uint8_t { return local_node_id_; }
 
 private:
+    [[nodiscard]] auto sendRequest(const ServiceID           service_id,
+                                   const NodeID              server_node_id,
+                                   const TransferID          transfer_id,
+                                   const std::size_t         payload_length,
+                                   const std::uint8_t* const payload) -> bool override
+    {
+        (void) service_id;
+        (void) server_node_id;
+        (void) transfer_id;
+        (void) payload_length;
+        (void) payload;
+        return false;
+    }
+
+    void cancelRequest() override { pending_request_meta_.reset(); }
+
+    [[nodiscard]] auto publishMessage(const SubjectID           subject_id,
+                                      const TransferID          transfer_id,
+                                      const std::size_t         payload_length,
+                                      const std::uint8_t* const payload) -> bool override
+    {
+        (void) subject_id;
+        (void) transfer_id;
+        (void) payload_length;
+        (void) payload;
+        return false;
+    }
+
+    struct PendingRequestMetadata
+    {
+        std::uint8_t server_node_id{};
+        PortID       service_id{};
+        std::uint8_t transfer_id{};
+    };
+
     ICANDriver&        driver_;
     const std::uint8_t local_node_id_;
+
+    std::optional<PendingRequestMetadata> pending_request_meta_;
 };
 
 /// The following example shows the CAN exchange dump collected from a real network using the old UAVCAN v0 GUI Tool.
