@@ -1131,86 +1131,18 @@ private:
                                             const std::size_t               payload_size,
                                             const std::uint8_t* const       payload) -> IActivity*
     {
-        if ((can_id & 0x80U) != 0)  // Ignore if this is a service transfer frame.
+        if (const auto f = detail::parseFrameV0(can_id, payload_size, payload))
         {
-            return nullptr;
-        }
-        const std::uint8_t source_node_id = can_id & 0x7FU;
-        const bool         anonymous      = source_node_id == 0;
-        if (const auto data_type_id = (can_id >> 8U) & (anonymous ? 0b11U : 0xFFFFU); data_type_id != DataTypeID)
-        {
-            return nullptr;
-        }
-        if (anonymous)  // This is a request from somebody else, set up new schedule to avoid conflicts.
-        {
-            reset(now);
-            return nullptr;
-        }
-        if ((payload_size < 1) || (payload_size > 8))  // Ignore bad frames
-        {
-            return nullptr;
-        }
-        const std::uint8_t tail_byte = payload[payload_size - 1U];
-        const bool         sot       = (tail_byte & TailByteStartOfTransfer) != 0;
-        const bool         eot       = (tail_byte & TailByteEndOfTransfer) != 0;
-        const bool         tog       = (tail_byte & TailByteToggleBit) != 0;
-        const std::uint8_t tid       = (tail_byte & MaxTransferID);
-        return acceptAllocationResponseFrame(now, source_node_id, payload_size - 1U, payload, sot, eot, tog, tid);
-    }
-
-    [[nodiscard]] auto acceptAllocationResponseFrame(const std::chrono::microseconds now,
-                                                     const std::uint8_t              source_node_id,
-                                                     const std::size_t               payload_size,
-                                                     const std::uint8_t* const       payload,
-                                                     const bool                      start_of_transfer,
-                                                     const bool                      end_of_transfer,
-                                                     const bool                      toggle_bit,
-                                                     const std::uint8_t              transfer_id) -> IActivity*
-    {
-        if (start_of_transfer && toggle_bit)  // Not UAVCAN v0
-        {
-            return nullptr;
-        }
-        if (start_of_transfer)
-        {
-            rx_state_ = RxState(source_node_id, transfer_id);
-        }
-        else
-        {
-            const bool match = (source_node_id == rx_state_.source_node_id) &&  //
-                               (transfer_id == rx_state_.transfer_id) &&        //
-                               (toggle_bit == !rx_state_.toggle);
-            if (!match)
+            if (const auto* const mf = std::get_if<detail::MessageFrameModel>(&*f))
             {
-                return nullptr;
+                if (mf->subject_id == DataTypeID)
+                {
+                    if (const auto res = rx_.update(*mf))
+                    {
+                        return acceptAllocationResponseMessage(now, res->first, res->second);
+                    }
+                }
             }
-            rx_state_.toggle = !rx_state_.toggle;
-        }
-        const auto sz = std::min(payload_size, rx_state_.payload.size() - rx_state_.payload_size);
-        std::copy_n(payload, sz, &rx_state_.payload.at(rx_state_.payload_size));
-        rx_state_.payload_size += sz;
-        if (start_of_transfer && end_of_transfer)
-        {
-            auto* const out = acceptAllocationResponseMessage(now, rx_state_.payload_size, &rx_state_.payload.at(0));
-            rx_state_       = {};
-            return out;
-        }
-        if (!start_of_transfer && end_of_transfer && (rx_state_.payload_size > 2))
-        {
-            CRC16CCITT crc;
-            for (auto i = 0U; i < sizeof(DataTypeSignature); i++)
-            {
-                crc.update(static_cast<std::uint8_t>((DataTypeSignature >> (8U * i)) & 0xFFU));
-            }
-            crc.update(rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
-            if (crc.get() == (static_cast<std::uint32_t>(rx_state_.payload.at(1) << 8U) | rx_state_.payload.at(0)))
-            {
-                auto* const out =
-                    acceptAllocationResponseMessage(now, rx_state_.payload_size - 2U, &rx_state_.payload.at(2));
-                rx_state_ = {};
-                return out;
-            }
-            // Transfer reassembly error -- CRC mismatch.
         }
         return nullptr;
     }
@@ -1298,8 +1230,7 @@ private:
 
     void reset(const std::chrono::microseconds now)
     {
-        stage_    = 0;
-        rx_state_ = {};
+        stage_ = 0;
         schedule(now, DelayRangeRequest);
     }
 
@@ -1329,8 +1260,7 @@ private:
     static constexpr DelayRange    DelayRangeFollowup{0, 400'000};
     static constexpr std::uint32_t CANIDMaskWithoutDiscriminator = 0x1E'0001'00UL;
 
-    static constexpr std::uint16_t DataTypeID        = 1;  // uavcan.protocol.dynamic_node_id.Allocation
-    static constexpr std::uint64_t DataTypeSignature = 0x0B2A812620A11D40ULL;
+    static constexpr std::uint16_t DataTypeID = 1;  // uavcan.protocol.dynamic_node_id.Allocation
 
     IAllocator&                allocator_;
     ICANDriver&                driver_;
@@ -1342,19 +1272,7 @@ private:
 
     std::uint8_t tx_transfer_id_ = 0;
 
-    struct RxState
-    {
-        std::uint8_t                       source_node_id = 0;
-        std::uint8_t                       transfer_id    = std::numeric_limits<std::uint8_t>::max();
-        bool                               toggle         = false;
-        std::size_t                        payload_size   = 0;
-        std::array<std::uint8_t, 7UL * 3U> payload{};
-
-        RxState() = default;
-        RxState(const std::uint8_t source_node_id, const std::uint8_t transfer_id) :
-            source_node_id(source_node_id), transfer_id(transfer_id)
-        {}
-    } rx_state_{};
+    SimplifiedMessageTransferReassemblerV0<19> rx_{0x0B2A812620A11D40ULL};
 };
 
 class V1MainActivity : public IActivity
