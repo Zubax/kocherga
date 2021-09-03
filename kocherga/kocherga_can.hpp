@@ -323,6 +323,7 @@ struct ServiceFrameModel : public FrameModel
     return out;
 }
 
+/// This function refers to the "data type ID" as "subject/service-ID" for reasons of unification with v1.
 [[nodiscard]] inline auto parseFrameV0(const std::uint32_t extended_can_id,
                                        const std::size_t   payload_size,
                                        const void* const   payload)
@@ -509,6 +510,146 @@ public:
         if (local_node_id_ == frame.destination_node_id)
         {
             return SimplifiedTransferReassembler<Extent>::updateImpl(frame, frame.source_node_id);
+        }
+        return {};
+    }
+
+private:
+    const std::uint8_t local_node_id_;
+};
+
+/// This is like the above but for the legacy v0 protocol.
+/// Unlike the v1 implementation, this one does not implement implicit payload truncation as it is not defined for v0.
+template <std::size_t MaxPayloadSize>
+class SimplifiedTransferReassemblerV0
+{
+public:
+    using Result = std::pair<std::size_t, const std::uint8_t*>;
+
+protected:
+    explicit SimplifiedTransferReassemblerV0(const std::uint64_t signature) : signature_(signature) {}
+
+    /// The payload pointer in the result remains valid until the next update.
+    [[nodiscard]] auto updateImpl(const FrameModel& frame, const std::uint8_t source) -> std::optional<Result>
+    {
+        if (frame.start_of_transfer)
+        {
+            if ((source == source_node_id_) && (frame.transfer_id == transfer_id_))
+            {
+                return {};  // Drop the duplicate.
+            }
+            start(source, frame.transfer_id);
+        }
+        else
+        {
+            if (!((state_) && (source == source_node_id_) && (frame.transfer_id == transfer_id_) &&
+                  (frame.toggle == !state_->toggle)))
+            {
+                return {};
+            }
+            state_->toggle = !state_->toggle;
+        }
+        if (frame.payload_size > (buffer_.size() - state_->payload_size))
+        {
+            state_.reset();  // Too much payload -- UAVCAN v0 does not define payload truncation.
+            return {};
+        }
+        std::copy_n(frame.payload, frame.payload_size, buffer_.begin() + state_->payload_size);
+        state_->payload_size += frame.payload_size;
+        if (frame.end_of_transfer)
+        {
+            const TransferState final = *state_;
+            state_.reset();
+            if (frame.start_of_transfer)  // This is a single-frame transfer.
+            {
+                return Result{final.payload_size, buffer_.data()};
+            }
+            if (final.payload_size >= CRC16CCITT::Size)
+            {
+                CRC16CCITT crc;
+                for (auto i = 0U; i < 8U; i++)
+                {
+                    crc.update(static_cast<std::uint8_t>((signature_ >> (i * 8U)) & 0xFFU));
+                }
+                crc.update(final.payload_size - CRC16CCITT::Size, buffer_.begin() + CRC16CCITT::Size);
+                if ((buffer_.at(0) == (crc.get() & 0xFFU)) && (buffer_.at(1) == (crc.get() >> 8U)))
+                {
+                    return Result{final.payload_size - CRC16CCITT::Size, buffer_.begin() + CRC16CCITT::Size};
+                }
+            }
+        }
+        return {};
+    }
+
+    std::array<std::uint8_t, MaxPayloadSize + CRC16CCITT::Size> buffer_{};
+
+private:
+    void start(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
+    {
+        state_.emplace();
+        source_node_id_ = source_node_id;
+        transfer_id_    = transfer_id;
+    }
+
+    std::uint8_t source_node_id_ = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t transfer_id_    = std::numeric_limits<std::uint8_t>::max();
+
+    struct TransferState
+    {
+        std::size_t payload_size = 0;
+        bool        toggle       = false;
+    };
+    std::optional<TransferState> state_;
+
+    const std::uint64_t signature_;
+};
+
+/// The user of this class is responsible for checking the subject-ID on the received frames.
+template <std::size_t MaxPayloadSize>
+class SimplifiedMessageTransferReassemblerV0 : public SimplifiedTransferReassemblerV0<MaxPayloadSize>
+{
+    using Base = SimplifiedTransferReassemblerV0<MaxPayloadSize>;
+
+public:
+    using typename Base::Result;
+
+    explicit SimplifiedMessageTransferReassemblerV0(const std::uint64_t signature) : Base(signature) {}
+
+    /// The payload pointer in the result remains valid until the next update.
+    [[nodiscard]] auto update(const MessageFrameModel& frame) -> std::optional<Result>
+    {
+        if (!frame.source_node_id)  // Anonymous frames accepted unconditionally.
+        {
+            const auto sz = std::min(frame.payload_size, buffer_.size());
+            std::copy_n(frame.payload, sz, buffer_.data());
+            return Result{sz, buffer_.data()};
+        }
+        return Base::updateImpl(frame, *frame.source_node_id);
+    }
+
+private:
+    using Base::buffer_;
+};
+
+/// The user of this class is responsible for checking the service-ID and request/response flag on the received frames.
+template <std::size_t MaxPayloadSize>
+class SimplifiedServiceTransferReassemblerV0 : public SimplifiedTransferReassemblerV0<MaxPayloadSize>
+{
+    using Base = SimplifiedTransferReassemblerV0<MaxPayloadSize>;
+
+public:
+    using typename Base::Result;
+
+    SimplifiedServiceTransferReassemblerV0(const std::uint64_t signature, const std::uint8_t local_node_id) :
+        Base(signature), local_node_id_(local_node_id)
+    {}
+
+    /// The payload pointer in the result remains valid until the next update.
+    [[nodiscard]] auto update(const ServiceFrameModel& frame) -> std::optional<Result>
+    {
+        if (local_node_id_ == frame.destination_node_id)
+        {
+            return Base::updateImpl(frame, frame.source_node_id);
         }
         return {};
     }
@@ -765,12 +906,11 @@ public:
         while (const auto transport_frame = driver_.pop(buf))
         {
             const auto [can_id, payload_size] = *transport_frame;
-            if (const auto frame = detail::parseFrame(can_id, payload_size, buf.data()))
+            if (const auto frame = detail::parseFrameV0(can_id, payload_size, buf.data()))
             {
                 if (const auto* const s = std::get_if<ServiceFrameModel>(&*frame))
                 {
-                    (void) reactor;
-                    (void) s;
+                    processReceivedServiceFrame(reactor, *s);
                 }
                 // This implementation is not interested in accepting any message transfers.
             }
@@ -807,6 +947,38 @@ private:
         (void) payload_length;
         (void) payload;
         return false;
+    }
+
+    void processReceivedServiceFrame(IReactor& reactor, const ServiceFrameModel& frame)
+    {
+        if (frame.request_not_response)
+        {
+            if (frame.service_id == static_cast<std::uint16_t>(ServiceID::NodeGetInfo))
+            {
+                (void) reactor;
+            }
+            if (frame.service_id == static_cast<std::uint16_t>(ServiceID::NodeExecuteCommand))
+            {
+                (void) reactor;
+            }
+        }
+        else
+        {
+            if (pending_request_meta_ &&                                            //
+                (pending_request_meta_->server_node_id == frame.source_node_id) &&  //
+                (pending_request_meta_->service_id == frame.service_id) &&          //
+                (pending_request_meta_->transfer_id == frame.transfer_id))
+            {
+                if (frame.service_id == static_cast<std::uint16_t>(ServiceID::FileRead))
+                {
+                    (void) reactor;
+                }
+                else
+                {
+                    assert(false);  // This means that we've sent a request for which there is no response listener.
+                }
+            }
+        }
     }
 
     struct PendingRequestMetadata

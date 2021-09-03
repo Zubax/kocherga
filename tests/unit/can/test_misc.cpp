@@ -409,6 +409,115 @@ TEST_CASE("can::SimplifiedTransferReassembler")
     }
 }
 
+TEST_CASE("can::SimplifiedTransferReassemblerV0")
+{
+    using kocherga::can::detail::SimplifiedTransferReassemblerV0;
+    using kocherga::can::detail::SimplifiedMessageTransferReassemblerV0;
+    using kocherga::can::detail::SimplifiedServiceTransferReassemblerV0;
+    using kocherga::can::detail::MessageFrameModel;
+    using kocherga::can::detail::ServiceFrameModel;
+    using Buf = std::vector<std::uint8_t>;
+
+    const auto msg = [](const std::optional<std::uint8_t> source_node_id,
+                        const std::uint8_t                transfer_id,
+                        const std::array<bool, 3>&        sot_eot_tog,
+                        const std::vector<std::uint8_t>&  payload) -> MessageFrameModel {
+        static std::vector<std::uint8_t> payload_storage;
+        payload_storage = payload;
+        MessageFrameModel out{};
+        out.transfer_id       = transfer_id;
+        out.source_node_id    = source_node_id;
+        out.start_of_transfer = sot_eot_tog.at(0);
+        out.end_of_transfer   = sot_eot_tog.at(1);
+        out.toggle            = sot_eot_tog.at(2);
+        out.payload_size      = payload_storage.size();
+        out.payload           = payload_storage.data();
+        return out;
+    };
+    const auto srv = [](std::uint8_t                     source_node_id,
+                        std::uint8_t                     destination_node_id,
+                        const bool                       request_not_response,
+                        const std::uint8_t               transfer_id,
+                        const std::array<bool, 3>&       sot_eot_tog,
+                        const std::vector<std::uint8_t>& payload) -> ServiceFrameModel {
+        static std::vector<std::uint8_t> payload_storage;
+        payload_storage = payload;
+        ServiceFrameModel out{};
+        out.transfer_id          = transfer_id;
+        out.source_node_id       = source_node_id;
+        out.destination_node_id  = destination_node_id;
+        out.request_not_response = request_not_response;
+        out.start_of_transfer    = sot_eot_tog.at(0);
+        out.end_of_transfer      = sot_eot_tog.at(1);
+        out.toggle               = sot_eot_tog.at(2);
+        out.payload_size         = payload_storage.size();
+        out.payload              = payload_storage.data();
+        return out;
+    };
+    const auto check_result = [](const std::optional<std::pair<std::size_t, const void*>> result,
+                                 const Buf&                                               reference) -> bool {
+        if (result)
+        {
+            const auto [sz, ptr] = *result;
+            return (sz == reference.size()) && (0 == std::memcmp(ptr, reference.data(), reference.size()));
+        }
+        return false;
+    };
+    // Messages.
+    {
+        SimplifiedMessageTransferReassemblerV0<17> rm(0x0B2A812620A11D40ULL);
+        // Anon
+        REQUIRE(check_result(rm.update(msg({}, 0, {true, true, false}, {1, 2, 3})), {1, 2, 3}));
+        REQUIRE(check_result(rm.update(msg({}, 0, {true, true, false}, {4})), {4}));
+        // SFT
+        REQUIRE(check_result(rm.update(msg(123, 5, {true, true, false}, {4})), {4}));
+        // MFT
+        REQUIRE(!rm.update(msg(123, 6, {true, false, false}, {0x8C, 0x7A, 0xFA, 0x35, 0xFF, 0xD5, 0x05})));
+        REQUIRE(!rm.update(msg(123, 6, {false, false, true}, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23})));
+        REQUIRE(!rm.update(msg(123, 6, {false, false, true}, {0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23})));
+        REQUIRE(!rm.update(msg(124, 6, {false, true, false}, {0x43, 0x00, 0x00, 0x00, 0x00})));
+        REQUIRE(!rm.update(msg(123, 4, {false, true, false}, {0x43, 0x00, 0x00, 0x00, 0x00})));
+        const Buf
+            ref{0xFA, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0x00, 0x00, 0x00, 0x00};
+        REQUIRE(check_result(rm.update(msg(123, 6, {false, true, false}, {0x43, 0x00, 0x00, 0x00, 0x00})), ref));
+        // MFT with excessive data, discarded (no truncation)
+        REQUIRE(!rm.update(msg(125, 7, {true, false, false}, {0, 1, 2, 3, 4, 5, 6})));
+        REQUIRE(!rm.update(msg(125, 7, {false, false, true}, {7, 8, 9, 10, 11, 12, 13})));
+        REQUIRE(!rm.update(msg(125, 7, {false, true, false}, {14, 15, 16, 17, 18, 19, 20})));
+        // CRC error
+        REQUIRE(!rm.update(msg(124, 8, {true, false, false}, {0, 1, 2, 3, 4, 5, 6})));
+        REQUIRE(!rm.update(msg(124, 8, {false, true, true}, {7, 8, 9, 0, 0})));
+    }
+    // Services.
+    {
+        SimplifiedServiceTransferReassemblerV0<100> rs(0xEE468A8121C46A9EULL, 9);
+        // Valid accepted
+        REQUIRE(check_result(rs.update(srv(123, 9, true, 5, {true, true, false}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
+                             {0, 1, 2, 3, 4, 5, 6, 7, 8}));
+        // Duplicate TID from same source, rejected
+        REQUIRE(!rs.update(srv(123, 9, true, 5, {true, true, false}, {0, 1, 2, 3, 4, 5, 6, 7, 8})));
+        // Duplicate TID from a different source, accepted
+        REQUIRE(check_result(rs.update(srv(124, 9, true, 5, {true, true, false}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
+                             {0, 1, 2, 3, 4, 5, 6, 7, 8}));
+        // Destination mismatch
+        REQUIRE(!rs.update(srv(123, 8, true, 6, {true, true, false}, {0, 1, 2, 3, 4, 5, 6, 7, 8})));
+        // Multiframe -- a real GetNodeInfo response.
+        const Buf ref{0x04, 0x00, 0x00, 0x00, 0xD0, 0xC1, 0xFE, 0x00, 0x04, 0x03, 0x6E, 0xFF, 0x55, 0x8E, 0x0D,
+                      0xCE, 0x43, 0x9D, 0x90, 0x5E, 0xD9, 0xF4, 0x01, 0x02, 0x3C, 0x00, 0x1E, 0x00, 0x0D, 0x50,
+                      0x53, 0x37, 0x54, 0x31, 0x37, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6F, 0x6D, 0x2E,
+                      0x7A, 0x75, 0x62, 0x61, 0x78, 0x2E, 0x74, 0x65, 0x6C, 0x65, 0x67, 0x61};
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {true, false, false}, {0xAC, 0x11, 0x04, 0x00, 0x00, 0x00, 0xD0})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, true}, {0xC1, 0xFE, 0x00, 0x04, 0x03, 0x6E, 0xFF})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, false}, {0x55, 0x8E, 0x0D, 0xCE, 0x43, 0x9D, 0x90})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, true}, {0x5E, 0xD9, 0xF4, 0x01, 0x02, 0x3C, 0x00})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, false}, {0x1E, 0x00, 0x0D, 0x50, 0x53, 0x37, 0x54})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, true}, {0x31, 0x37, 0x20, 0x00, 0x00, 0x00, 0x00})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, false}, {0x00, 0x63, 0x6F, 0x6D, 0x2E, 0x7A, 0x75})));
+        REQUIRE(!rs.update(srv(123, 9, false, 9, {false, false, true}, {0x62, 0x61, 0x78, 0x2E, 0x74, 0x65, 0x6C})));
+        REQUIRE(check_result(rs.update(srv(123, 9, false, 9, {false, true, false}, {0x65, 0x67, 0x61})), ref));
+    }
+}
+
 TEST_CASE("can::transmit")
 {
     using kocherga::can::detail::transmit;
