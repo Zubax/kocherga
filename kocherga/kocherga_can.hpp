@@ -758,6 +758,71 @@ template <typename Callback>
     return push_frame(static_cast<std::uint8_t>(size), buf.data());
 }
 
+/// This is like transmit() but for the legacy v0 protocol.
+/// It is substantially simpler because v0 does not need padding and the CRC is located in the first frame.
+template <typename Callback>
+[[nodiscard]] static inline auto transmitV0(const Callback&           push_frame,
+                                            const std::uint64_t       signature,
+                                            const std::uint8_t        transfer_id,
+                                            const std::size_t         payload_length,
+                                            const std::uint8_t* const payload) -> bool
+{
+    static constexpr auto              MTU = 7U;
+    std::array<std::uint8_t, MTU + 1U> buf{};
+    if ((transfer_id > MaxTransferID) || ((payload == nullptr) && (payload_length > 0)))
+    {
+        return false;
+    }
+    // SINGLE-FRAME TRANSFER
+    if (payload_length <= MTU)
+    {
+        std::copy_n(payload, payload_length, buf.begin());
+        buf.at(payload_length) = static_cast<std::uint8_t>(static_cast<std::uint32_t>(TailByteStartOfTransfer) |
+                                                           TailByteEndOfTransfer | transfer_id);
+        return push_frame(payload_length + 1, buf.data());
+    }
+    // MULTI-FRAME TRANSFER
+    CRC16CCITT crc;
+    for (auto i = 0U; i < 8U; i++)
+    {
+        crc.update(static_cast<std::uint8_t>((signature >> (i * 8U)) & 0xFFU));
+    }
+    crc.update(payload_length, payload);
+    std::size_t         remaining = payload_length;
+    const std::uint8_t* ptr       = payload;
+    // First frame
+    buf.at(0) = static_cast<std::uint8_t>(crc.get() >> 0U);
+    buf.at(1) = static_cast<std::uint8_t>(crc.get() >> 8U);
+    std::copy_n(ptr, MTU - CRC16CCITT::Size, buf.begin() + CRC16CCITT::Size);
+    buf.at(MTU) = static_cast<std::uint8_t>(transfer_id | TailByteStartOfTransfer);
+    ptr += MTU - CRC16CCITT::Size;
+    remaining -= MTU - CRC16CCITT::Size;
+    if (!push_frame(MTU + 1U, buf.data()))
+    {
+        return false;
+    }
+    // Middle frames
+    bool toggle = true;
+    while (remaining > MTU)
+    {
+        std::copy_n(ptr, MTU, buf.begin());
+        buf.at(MTU) = static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U));
+        if (!push_frame(MTU + 1U, buf.data()))
+        {
+            return false;
+        }
+        toggle = !toggle;
+        ptr += MTU;
+        remaining -= MTU;
+    }
+    // Last frame
+    assert(remaining <= MTU);
+    std::copy_n(ptr, remaining, buf.begin());
+    buf.at(remaining) =
+        static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U) | TailByteEndOfTransfer);
+    return push_frame(static_cast<std::uint8_t>(remaining + 1U), buf.data());
+}
+
 class IAllocator
 {
 public:

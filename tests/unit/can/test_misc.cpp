@@ -615,6 +615,67 @@ TEST_CASE("can::transmit")
     }
 }
 
+TEST_CASE("can::transmitV0")
+{
+    using kocherga::can::detail::transmitV0;
+    using Buf       = std::vector<std::uint8_t>;
+    using MultiBuf  = std::vector<Buf>;
+    const auto once = [](const std::uint64_t signature,
+                         const std::uint8_t  transfer_id,
+                         const Buf&          payload) -> std::optional<MultiBuf> {
+        MultiBuf frags;
+        return transmitV0(
+                   [&frags](const std::size_t frag_length, const std::uint8_t* const frag_ptr) -> bool {
+                       frags.emplace_back(frag_ptr, frag_ptr + frag_length);
+                       return true;
+                   },
+                   signature,
+                   transfer_id,
+                   payload.size(),
+                   payload.data())
+                   ? frags
+                   : std::optional<MultiBuf>{};
+    };
+    const std::vector<std::uint8_t> dummy(1024);
+    // Bad arguments
+    {
+        REQUIRE(!once(64, 32, {}));  // Bad transfer-ID
+    }
+    // Single-frame
+    {
+        REQUIRE(MultiBuf{Buf{0b1100'0000}} == *once(8, 0, {}));
+        REQUIRE(MultiBuf{Buf{0, 1, 2, 3, 4, 5, 6, 0b1100'1111}} == *once(0, 15, {0, 1, 2, 3, 4, 5, 6}));
+        // Push error, abort early
+        REQUIRE(!transmitV0([](auto, auto) { return false; }, 0, 0, 0, dummy.data()));
+    }
+    // Multi-frame
+    {
+        // GetNodeInfo response
+        REQUIRE(MultiBuf{
+                    Buf{0xAC, 0x11, 0x04, 0x00, 0x00, 0x00, 0xD0, 0b1000'1010},
+                    Buf{0xC1, 0xFE, 0x00, 0x04, 0x03, 0x6E, 0xFF, 0b0010'1010},
+                    Buf{0x55, 0x8E, 0x0D, 0xCE, 0x43, 0x9D, 0x90, 0b0000'1010},
+                    Buf{0x5E, 0xD9, 0xF4, 0x01, 0x02, 0x3C, 0x00, 0b0010'1010},
+                    Buf{0x1E, 0x00, 0x0D, 0x50, 0x53, 0x37, 0x54, 0b0000'1010},
+                    Buf{0x31, 0x37, 0x20, 0x00, 0x00, 0x00, 0x00, 0b0010'1010},
+                    Buf{0x00, 0x63, 0x6F, 0x6D, 0x2E, 0x7A, 0x75, 0b0000'1010},
+                    Buf{0x62, 0x61, 0x78, 0x2E, 0x74, 0x65, 0x6C, 0b0010'1010},
+                    Buf{0x65, 0x67, 0x61, 0b0100'1010},
+                } == *once(0xEE468A8121C46A9EULL,  // Signature of GetNodeInfo
+                           10,
+                           {0x04, 0x00, 0x00, 0x00, 0xD0, 0xC1, 0xFE, 0x00, 0x04, 0x03, 0x6E, 0xFF, 0x55, 0x8E, 0x0D,
+                            0xCE, 0x43, 0x9D, 0x90, 0x5E, 0xD9, 0xF4, 0x01, 0x02, 0x3C, 0x00, 0x1E, 0x00, 0x0D, 0x50,
+                            0x53, 0x37, 0x54, 0x31, 0x37, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6F, 0x6D, 0x2E,
+                            0x7A, 0x75, 0x62, 0x61, 0x78, 0x2E, 0x74, 0x65, 0x6C, 0x65, 0x67, 0x61}));
+        // Error handling -- ensure that errors are not suppressed at any stage.
+        for (auto i = 0; i < 4; i++)
+        {
+            auto remaining = i;
+            REQUIRE(!transmitV0([&remaining](auto, auto) { return remaining-- > 0; }, 0, 0, 20, dummy.data()));
+        }
+    }
+}
+
 TEST_CASE("CAN transfer roundtrip")
 {
     using kocherga::can::detail::MessageFrameModel;
