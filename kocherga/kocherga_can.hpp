@@ -226,16 +226,16 @@ struct FrameModel
 
 struct MessageFrameModel : public FrameModel
 {
-    std::uint16_t               subject_id = std::numeric_limits<std::uint16_t>::max();
+    PortID                      subject_id = std::numeric_limits<PortID>::max();
     std::optional<std::uint8_t> source_node_id;
 };
 
 struct ServiceFrameModel : public FrameModel
 {
-    std::uint16_t service_id           = std::numeric_limits<std::uint16_t>::max();
-    std::uint8_t  source_node_id       = std::numeric_limits<std::uint8_t>::max();
-    std::uint8_t  destination_node_id  = std::numeric_limits<std::uint8_t>::max();
-    bool          request_not_response = false;
+    PortID       service_id           = std::numeric_limits<PortID>::max();
+    std::uint8_t source_node_id       = std::numeric_limits<std::uint8_t>::max();
+    std::uint8_t destination_node_id  = std::numeric_limits<std::uint8_t>::max();
+    bool         request_not_response = false;
 };
 
 /// The payload of the returned frame will be pointing into the supplied payload buffer, so their lifetimes are linked.
@@ -992,12 +992,32 @@ private:
                                    const std::size_t         payload_length,
                                    const std::uint8_t* const payload) -> bool override
     {
-        (void) service_id;
-        (void) server_node_id;
-        (void) transfer_id;
-        (void) payload_length;
-        (void) payload;
-        return false;
+        if (service_id == ServiceID::FileRead)
+        {
+            return sendFileReadRequest(server_node_id,
+                                       static_cast<std::uint8_t>(transfer_id & MaxTransferID),
+                                       payload_length,
+                                       payload);
+        }
+        return false;  // Don't know how to translate this request v1 --> v0.
+    }
+
+    [[nodiscard]] auto sendResponse(const std::uint64_t       signature,
+                                    const std::uint8_t        priority,
+                                    const std::uint16_t       service_id,
+                                    const std::uint8_t        client_node_id,
+                                    const std::uint8_t        transfer_id,
+                                    const std::size_t         payload_length,
+                                    const std::uint8_t* const payload) -> bool
+    {
+        static constexpr std::uint32_t CANIDMask = 0b00000'00000000'0'0000000'1'0000000UL;
+        //
+        const auto can_id = CANIDMask |                                           //
+                            (static_cast<std::uint32_t>(priority) << 24U) |       //
+                            (static_cast<std::uint32_t>(service_id) << 16U) |     //
+                            (static_cast<std::uint32_t>(client_node_id) << 8U) |  //
+                            local_node_id_;
+        return send(signature, can_id, transfer_id, payload_length, payload);
     }
 
     void cancelRequest() override { pending_request_meta_.reset(); }
@@ -1007,24 +1027,34 @@ private:
                                       const std::size_t         payload_length,
                                       const std::uint8_t* const payload) -> bool override
     {
-        (void) subject_id;
-        (void) transfer_id;
-        (void) payload_length;
-        (void) payload;
-        return false;
+        if (subject_id == SubjectID::NodeHeartbeat)
+        {
+            return publishHeartbeat(transfer_id, payload_length, payload);
+        }
+        if (subject_id == SubjectID::DiagnosticRecord)
+        {
+            return publishDiagnosticRecord(transfer_id, payload_length, payload);
+        }
+        return false;  // Don't know how to translate this message v1 --> v0.
     }
 
     void processReceivedServiceFrame(IReactor& reactor, const ServiceFrameModel& frame)
     {
         if (frame.request_not_response)
         {
-            if (frame.service_id == static_cast<std::uint16_t>(ServiceID::NodeGetInfo))
+            if (frame.service_id == static_cast<std::uint16_t>(ServiceTypeID::GetNodeInfo))
             {
-                (void) reactor;
+                if (const auto req = rx_req_get_node_info_.update(frame))
+                {
+                    processGetNodeInfoRequest(reactor, frame, req->first, req->second);
+                }
             }
-            if (frame.service_id == static_cast<std::uint16_t>(ServiceID::NodeExecuteCommand))
+            if (frame.service_id == static_cast<std::uint16_t>(ServiceTypeID::BeginFirmwareUpdate))
             {
-                (void) reactor;
+                if (const auto req = rx_req_begin_fw_upd_.update(frame))
+                {
+                    processBeginFirmwareUpdateRequest(reactor, frame, req->first, req->second);
+                }
             }
         }
         else
@@ -1034,9 +1064,13 @@ private:
                 (pending_request_meta_->service_id == frame.service_id) &&          //
                 (pending_request_meta_->transfer_id == frame.transfer_id))
             {
-                if (frame.service_id == static_cast<std::uint16_t>(ServiceID::FileRead))
+                if (frame.service_id == static_cast<std::uint16_t>(ServiceTypeID::FileRead))
                 {
-                    (void) reactor;
+                    if (const auto res = rx_res_file_read_.update(frame))
+                    {
+                        pending_request_meta_.reset();
+                        processFileReadResponse(reactor, res->first, res->second);
+                    }
                 }
                 else
                 {
@@ -1046,6 +1080,165 @@ private:
         }
     }
 
+    void processGetNodeInfoRequest(IReactor&                 reactor,
+                                   const ServiceFrameModel&  frame,
+                                   const std::size_t         request_size,
+                                   const std::uint8_t* const request_data)
+    {
+        assert(frame.destination_node_id == local_node_id_);
+        assert(frame.request_not_response);
+        (void) request_size;  // No data is needed.
+        std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
+        if (const auto response_size = reactor.processRequest(static_cast<PortID>(ServiceID::NodeGetInfo),
+                                                              frame.source_node_id,
+                                                              0,
+                                                              request_data,
+                                                              response_data.data()))
+        {
+            // Translate the response v1 -> v0.
+            std::array<std::uint8_t, 128> buf{};
+            buf.back()        = 0xAAU;  // Canary.
+            std::uint8_t* ptr = buf.begin();
+            (void) std::memcpy(ptr, last_node_status_.data(), last_node_status_.size());
+            ptr += last_node_status_.size();
+            *ptr++ = response_data.at(4);  // Software version
+            *ptr++ = response_data.at(5);
+            ptr += 13U;                    // Optional fields not available: no VCS hash, no CRC
+            *ptr++ = response_data.at(2);  // Hardware version.
+            *ptr++ = response_data.at(3);
+            (void) std::memcpy(ptr, response_data.begin() + 14, 16);  // Unique-ID
+            ptr += 17U;                                               // Skip UID and CoA
+            const auto name_len = std::min<std::size_t>(response_data.at(30), 80);
+            (void) std::memcpy(ptr, response_data.begin() + 31, name_len);
+            assert(buf.back() == 0xAAU);  // Check the canary.
+            (void) sendResponse(GetNodeInfoSignature,
+                                frame.priority,
+                                frame.service_id,
+                                frame.source_node_id,
+                                frame.transfer_id,
+                                name_len + 17U,
+                                buf.data());
+        }
+    }
+
+    void processBeginFirmwareUpdateRequest(IReactor&                 reactor,
+                                           const ServiceFrameModel&  frame,
+                                           const std::size_t         request_size,
+                                           const std::uint8_t* const request_data)
+    {
+        assert(frame.destination_node_id == local_node_id_);
+        assert(frame.request_not_response);
+        std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
+        if (const auto response_size = reactor.processRequest(static_cast<PortID>(ServiceID::NodeExecuteCommand),
+                                                              frame.source_node_id,
+                                                              request_size,
+                                                              request_data,
+                                                              response_data.data()))
+        {
+            (void) sendResponse(BeginFirmwareUpdateSignature,
+                                frame.priority,
+                                frame.service_id,
+                                frame.source_node_id,
+                                frame.transfer_id,
+                                *response_size,
+                                response_data.data());
+        }
+    }
+
+    void processFileReadResponse(IReactor&                 reactor,
+                                 const std::size_t         response_size,
+                                 const std::uint8_t* const response_data)
+    {
+        (void) reactor;
+        (void) response_size;
+        (void) response_data;
+        (void) driver_;
+    }
+
+    [[nodiscard]] auto sendFileReadRequest(const NodeID              server_node_id,
+                                           const std::uint8_t        transfer_id,
+                                           const std::size_t         payload_length,
+                                           const std::uint8_t* const payload) -> bool
+    {
+        (void) payload_length;
+        (void) payload;
+        pending_request_meta_ = PendingRequestMetadata{static_cast<std::uint8_t>(server_node_id),
+                                                       static_cast<std::uint16_t>(ServiceTypeID::FileRead),
+                                                       transfer_id};
+        return false;
+    }
+
+    [[nodiscard]] auto publishHeartbeat(const TransferID          transfer_id,
+                                        const std::size_t         payload_length,
+                                        const std::uint8_t* const payload) -> bool
+    {
+        if (payload_length < 7U)
+        {
+            return false;
+        }
+        // Translate the message from v1's Heartbeat into v0's NodeStatus.
+        std::memcpy(last_node_status_.begin(), payload, 4);
+        last_node_status_.at(4) = static_cast<std::uint8_t>(payload[4] << 6U) |  // Health
+                                  static_cast<std::uint8_t>(payload[5] << 3U);   // Mode
+        last_node_status_.at(5) = payload[6];                                    // Vendor-specific status code.
+        // Publish the v0 NodeStatus
+        static constexpr std::uint32_t CANIDMask = 0b10000'0000000101010101'0'0000000ULL;
+        return send(NodeStatusSignature,
+                    CANIDMask | local_node_id_,
+                    transfer_id,
+                    last_node_status_.size(),
+                    last_node_status_.data());
+    }
+
+    [[nodiscard]] auto publishDiagnosticRecord(const TransferID          transfer_id,
+                                               const std::size_t         payload_length,
+                                               const std::uint8_t* const payload) -> bool
+    {
+        if (payload_length < 9U)
+        {
+            return false;
+        }
+        std::array<std::uint8_t, 128> buf{};
+        buf.at(0)           = 0b010'00100U;
+        buf.at(1)           = 'B';
+        buf.at(2)           = 'o';
+        buf.at(3)           = 'o';
+        buf.at(4)           = 't';
+        const auto text_len = std::min<std::size_t>(payload[8], 90);
+        std::copy_n(&payload[9], text_len, buf.begin() + 5U);
+        static constexpr std::uint32_t CANIDMask = 0b11111'0011111111111111'0'0000000ULL;
+        return send(LogMessageSignature, CANIDMask | local_node_id_, transfer_id, text_len + 5U, buf.data());
+    }
+
+    [[nodiscard]] auto send(const std::uint64_t       signature,
+                            const std::uint32_t       extended_can_id,
+                            const TransferID          transfer_id,
+                            const std::size_t         payload_length,
+                            const std::uint8_t* const payload) -> bool
+    {
+        // This lambda is allocated on the stack, so that the closures do not require heap allocation.
+        return detail::transmitV0(
+            [this, extended_can_id](const std::size_t         frame_payload_size,
+                                    const std::uint8_t* const frame_payload) -> bool {
+                assert(frame_payload_size <= std::numeric_limits<std::uint8_t>::max());
+                return driver_.push(true,  // Force Classic CAN mode.
+                                    extended_can_id,
+                                    static_cast<std::uint8_t>(frame_payload_size),
+                                    frame_payload);
+            },
+            signature,
+            static_cast<std::uint8_t>(transfer_id & detail::MaxTransferID),
+            payload_length,
+            payload);
+    }
+
+    enum class ServiceTypeID : std::uint8_t
+    {
+        GetNodeInfo         = 1,
+        BeginFirmwareUpdate = 40,
+        FileRead            = 48,
+    };
+
     struct PendingRequestMetadata
     {
         std::uint8_t server_node_id{};
@@ -1053,10 +1246,22 @@ private:
         std::uint8_t transfer_id{};
     };
 
+    static constexpr std::uint64_t NodeStatusSignature          = 0x0F0868D0C1A7C6F1ULL;
+    static constexpr std::uint64_t LogMessageSignature          = 0XD654A48E0C049D75ULL;
+    static constexpr std::uint64_t GetNodeInfoSignature         = 0xEE468A8121C46A9EULL;
+    static constexpr std::uint64_t BeginFirmwareUpdateSignature = 0xB7D725DF72724126ULL;
+    static constexpr std::uint64_t FileReadSignature            = 0x8DCDCA939F33F678ULL;
+
     ICANDriver&        driver_;
     const std::uint8_t local_node_id_;
 
     std::optional<PendingRequestMetadata> pending_request_meta_;
+
+    std::array<std::uint8_t, 7> last_node_status_{};
+
+    SimplifiedServiceTransferReassemblerV0<0>   rx_req_get_node_info_{GetNodeInfoSignature, local_node_id_};
+    SimplifiedServiceTransferReassemblerV0<200> rx_req_begin_fw_upd_{BeginFirmwareUpdateSignature, local_node_id_};
+    SimplifiedServiceTransferReassemblerV0<300> rx_res_file_read_{FileReadSignature, local_node_id_};
 };
 
 /// The following example shows the CAN exchange dump collected from a real network using the old UAVCAN v0 GUI Tool.

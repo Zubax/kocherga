@@ -3,9 +3,11 @@
 // Author: Pavel Kirienko <pavel.kirienko@zubax.com>
 
 #include "kocherga_can.hpp"  // NOLINT include order: include Kocherga first to ensure no headers are missed.
+#include "util.hpp"          // NOLINT include order
 #include "catch.hpp"
 #include <algorithm>
 #include <deque>
+#include <iostream>
 
 namespace
 {
@@ -791,4 +793,236 @@ TEST_CASE("can::CANNode v1")
     REQUIRE(!tx_frame->force_classic_can);
     REQUIRE(tx_frame->payload == Buf{7, 8, 9, 0b1110'0111U});
     REQUIRE(!poll(1000us));
+}
+
+TEST_CASE("can::CANNode v0")
+{
+    using kocherga::PortID;
+    using kocherga::SubjectID;
+    using kocherga::ServiceID;
+    using kocherga::can::CANNode;
+    using kocherga::can::detail::SimplifiedTransferReassemblerV0;
+    using kocherga::can::detail::SimplifiedMessageTransferReassemblerV0;
+    using kocherga::can::detail::SimplifiedServiceTransferReassemblerV0;
+    using kocherga::can::detail::MessageFrameModel;
+    using kocherga::can::detail::ServiceFrameModel;
+    using std::chrono_literals::operator""us;
+    using Buf = std::vector<std::uint8_t>;
+
+    CANDriverMock             driver;
+    ReactorMock               reactor;
+    std::chrono::microseconds uptime(0);
+
+    const Bitrate                        br{1'000'000, 4'000'000};
+    const kocherga::SystemInfo::UniqueID uid{
+        {0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0x00, 0x00, 0x00, 0x00}};
+
+    driver.setMode(kocherga::can::ICANDriver::Mode::FD);
+    CANNode node(driver, uid, br, 0, 123);
+
+    struct Transfer
+    {
+        std::uint8_t priority    = std::numeric_limits<std::uint8_t>::max();
+        std::uint8_t transfer_id = std::numeric_limits<std::uint8_t>::max();
+        Buf          payload;
+
+        Transfer() = default;
+        Transfer(std::uint8_t priority, std::uint8_t transfer_id, const Buf& payload) :
+            priority(priority), transfer_id(transfer_id), payload(payload)
+        {}
+
+        [[nodiscard]] virtual auto makeCANID() const -> std::uint32_t = 0;
+
+        virtual ~Transfer()                        = default;
+        [[maybe_unused]] Transfer(const Transfer&) = delete;
+        [[maybe_unused]] Transfer(Transfer&&)      = delete;
+        auto operator=(const Transfer&) -> Transfer& = delete;
+        auto operator=(Transfer&&) -> Transfer& = delete;
+    };
+
+    struct MessageTransfer : public Transfer
+    {
+        PortID                      subject_id = std::numeric_limits<PortID>::max();
+        std::optional<std::uint8_t> source_node_id;
+
+        MessageTransfer() = default;
+        MessageTransfer(std::uint8_t                priority,
+                        std::uint8_t                transfer_id,
+                        PortID                      subject_id,
+                        std::optional<std::uint8_t> source_node_id,
+                        const Buf&                  payload) :
+            Transfer(priority, transfer_id, payload), subject_id(subject_id), source_node_id(source_node_id)
+        {}
+
+        [[nodiscard]] auto makeCANID() const -> std::uint32_t override
+        {
+            if (source_node_id)
+            {
+                return (static_cast<std::uint32_t>(priority) << 24U) | (static_cast<std::uint32_t>(subject_id) << 8U) |
+                       *source_node_id;
+            }
+            FAIL("Anonymous transfers not supported in this implementation");
+            return 0;
+        }
+    };
+
+    struct ServiceTransfer : public Transfer
+    {
+        PortID       service_id           = std::numeric_limits<PortID>::max();
+        std::uint8_t source_node_id       = std::numeric_limits<std::uint8_t>::max();
+        std::uint8_t destination_node_id  = std::numeric_limits<std::uint8_t>::max();
+        bool         request_not_response = false;
+
+        ServiceTransfer() = default;
+        ServiceTransfer(std::uint8_t priority,
+                        std::uint8_t transfer_id,
+                        PortID       service_id,
+                        std::uint8_t source_node_id,
+                        std::uint8_t destination_node_id,
+                        const bool   request_not_response,
+                        const Buf&   payload) :
+            Transfer(priority, transfer_id, payload),
+            service_id(service_id),
+            source_node_id(source_node_id),
+            destination_node_id(destination_node_id),
+            request_not_response(request_not_response)
+        {}
+
+        [[nodiscard]] auto makeCANID() const -> std::uint32_t override
+        {
+            return (static_cast<std::uint32_t>(priority) << 24U) |                         // Priority
+                   (static_cast<std::uint32_t>(service_id) << 16U) |                       // Service-ID
+                   static_cast<std::uint32_t>(request_not_response ? (1UL << 15U) : 0U) |  // Request not response
+                   static_cast<std::uint32_t>(1UL << 7U) |                                 // Service not message
+                   (static_cast<std::uint32_t>(destination_node_id) << 8U) |               // To
+                   static_cast<std::uint32_t>(source_node_id);                             // From
+        }
+    };
+
+    std::unordered_map<PortID, std::shared_ptr<SimplifiedMessageTransferReassemblerV0<1024>>> ra_msg;
+    ra_msg[341]   = std::make_shared<SimplifiedMessageTransferReassemblerV0<1024>>(0x0F0868D0C1A7C6F1ULL);
+    ra_msg[16383] = std::make_shared<SimplifiedMessageTransferReassemblerV0<1024>>(0XD654A48E0C049D75ULL);
+    std::unordered_map<PortID, std::shared_ptr<SimplifiedServiceTransferReassemblerV0<1024>>> ra_req;
+    ra_req[48] = std::make_shared<SimplifiedServiceTransferReassemblerV0<1024>>(0x8DCDCA939F33F678ULL, 42);
+    std::unordered_map<PortID, std::shared_ptr<SimplifiedServiceTransferReassemblerV0<1024>>> ra_res;
+    ra_res[1]  = std::make_shared<SimplifiedServiceTransferReassemblerV0<1024>>(0xEE468A8121C46A9EULL, 42);
+    ra_res[40] = std::make_shared<SimplifiedServiceTransferReassemblerV0<1024>>(0xB7D725DF72724126ULL, 42);
+
+    using SignatureTransferPair = std::pair<std::uint64_t, std::shared_ptr<Transfer>>;
+    // At the network layer, we are dealing with v0-translated transfers, not v1.
+    const auto poll = [&](const std::chrono::microseconds             uptime_delta,
+                          const std::optional<SignatureTransferPair>& rx_transfer = {}) -> std::shared_ptr<Transfer> {
+        if (rx_transfer)
+        {
+            const auto [sig, tr]       = *rx_transfer;
+            const std::uint32_t can_id = tr->makeCANID();
+            REQUIRE(kocherga::can::detail::transmitV0(
+                [&driver, can_id](const std::size_t frame_payload_size, const std::uint8_t* const frame_payload) {
+                    std::cout << "RX " << std::hex << can_id << std::dec << " "
+                              << util::makeHexDump(frame_payload, frame_payload + frame_payload_size) << std::endl;
+                    driver.pushRx(CANDriverMock::Frame{can_id, Buf{frame_payload, frame_payload + frame_payload_size}});
+                    return true;
+                },
+                sig,
+                tr->transfer_id,
+                tr->payload.size(),
+                tr->payload.data()));
+        }
+        static_cast<kocherga::INode&>(node).poll(reactor, uptime);
+        uptime += uptime_delta;
+        while (const auto raw_frame = driver.popTx())
+        {
+            std::cout << "TX " << std::hex << raw_frame->extended_can_id << std::dec << " "
+                      << util::makeHexDump(raw_frame->payload) << std::endl;
+            REQUIRE(raw_frame->force_classic_can);  // v0 shall use Classic only.
+            const auto frame = *kocherga::can::detail::parseFrameV0(raw_frame->extended_can_id,
+                                                                    raw_frame->payload.size(),
+                                                                    raw_frame->payload.data());
+            if (const auto* const f_m = std::get_if<MessageFrameModel>(&frame))
+            {
+                if (const auto res = ra_msg.at(f_m->subject_id)->update(*f_m))
+                {
+                    return std::make_shared<MessageTransfer>(f_m->priority,
+                                                             f_m->transfer_id,
+                                                             f_m->subject_id,
+                                                             f_m->source_node_id,
+                                                             Buf(res->second, res->second + res->first));
+                }
+            }
+            else if (const auto* const f_s = std::get_if<ServiceFrameModel>(&frame))
+            {
+                auto& ra = f_s->request_not_response ? ra_req : ra_res;
+                if (const auto res = ra.at(f_s->service_id)->update(*f_s))
+                {
+                    return std::make_shared<ServiceTransfer>(f_s->priority,
+                                                             f_s->transfer_id,
+                                                             f_s->service_id,
+                                                             f_s->source_node_id,
+                                                             f_s->destination_node_id,
+                                                             f_s->request_not_response,
+                                                             Buf(res->second, res->second + res->first));
+                }
+            }
+            else
+            {
+                throw std::logic_error("Unexpected option");
+            }
+        }
+        return {};
+    };
+
+    REQUIRE(!poll(1000us));
+    REQUIRE(!poll(1000us));
+    REQUIRE(!poll(1000us));
+    REQUIRE(uptime == 3000us);
+
+    // Can't publish unknown messages.
+    REQUIRE(!static_cast<kocherga::INode&>(node).publishMessage(SubjectID::PnPNodeIDAllocationData_v2, 0, 0, nullptr));
+
+    // Publish heartbeat, check translation.
+    REQUIRE(static_cast<kocherga::INode&>(node).publishMessage(  //
+        SubjectID::NodeHeartbeat,
+        5,
+        7,
+        reinterpret_cast<const std::uint8_t*>("\x03\x00\x00\x00\x03\x03\x00")));
+    auto tx = poll(1000us);
+    REQUIRE(tx);
+    REQUIRE(tx->transfer_id == 5);
+    REQUIRE(tx->priority == 16);
+    REQUIRE(tx->payload == Buf{0x03, 0x00, 0x00, 0x00, 0xd8, 0x00, 0x00});  // This is v0 format.
+    REQUIRE(dynamic_cast<MessageTransfer&>(*tx).subject_id == 341);         // v0 NodeStatus, not v1 Heartbeat
+    REQUIRE(*dynamic_cast<MessageTransfer&>(*tx).source_node_id == 123);
+
+    REQUIRE(!reactor.popPendingResponse());
+    reactor.setIncomingRequestHandler([](const ReactorMock::IncomingRequest& req) -> std::optional<Buf> {
+        REQUIRE(req.client_node_id == 42);
+        switch (req.service_id)
+        {
+        case static_cast<kocherga::PortID>(ServiceID::NodeGetInfo):
+        {
+            return Buf{1, 2, 3};
+        }
+        case static_cast<kocherga::PortID>(ServiceID::NodeExecuteCommand):
+        {
+            return Buf{1, 2};
+        }
+        default:
+        {
+            FAIL("Unexpected service request");
+            break;
+        }
+        }
+        return {};
+    });
+    // Validate GetInfo -- ensure the service is operational and v1/v0 translation is correct.
+    tx = poll(1000us,
+              SignatureTransferPair{0xEE468A8121C46A9EULL,
+                                    std::make_shared<ServiceTransfer>(4,
+                                                                      15,
+                                                                      static_cast<PortID>(ServiceID::NodeGetInfo),
+                                                                      42,
+                                                                      123,
+                                                                      true,
+                                                                      Buf{})});
+    REQUIRE(tx);
 }
