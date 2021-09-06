@@ -1176,11 +1176,27 @@ private:
                                            const std::size_t         payload_length,
                                            const std::uint8_t* const payload) -> bool
     {
-        (void) payload_length;
-        (void) payload;
-        pending_request_meta_ = PendingRequestMetadata{static_cast<std::uint8_t>(server_node_id),
-                                                       static_cast<std::uint16_t>(ServiceTypeID::FileRead),
-                                                       transfer_id};
+        if (payload_length >= 6U)
+        {
+            // Convert v1 --> v0: apply TAO by removing the length field.
+            std::array<std::uint8_t, 270> buf{};
+            buf.back() = 0xAA;
+            (void) std::memcpy(buf.data(), payload, 5U);
+            const auto path_len = payload[5];
+            (void) std::memcpy(buf.data() + 5U, payload + 6U, path_len);
+            assert(buf.back() == 0xAA);
+            static constexpr std::uint32_t CANIDMask       = 0b11110'00000000'1'0000000'1'0000000ULL;
+            const std::uint32_t            extended_can_id = CANIDMask |
+                                                  (static_cast<std::uint32_t>(ServiceTypeID::FileRead) << 16U) |
+                                                  (static_cast<std::uint32_t>(server_node_id) << 8U) | local_node_id_;
+            if (send(FileReadSignature, extended_can_id, transfer_id, path_len + 5U, buf.data()))
+            {
+                pending_request_meta_ = PendingRequestMetadata{static_cast<std::uint8_t>(server_node_id),
+                                                               static_cast<std::uint16_t>(ServiceTypeID::FileRead),
+                                                               transfer_id};
+                return true;
+            }
+        }
         return false;
     }
 
