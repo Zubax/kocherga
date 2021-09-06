@@ -1,0 +1,25 @@
+#!/usr/bin/env -S yakut -v orchestrate
+# This composition is mostly intended for manual testing due to lack of adequate automation tools for UAVCAN v0.
+
+uavcan:
+  can:
+    iface: socketcan:vcan0
+  node:
+    hardware_version: [20, 21]
+    unique_id:        cccccccccccccccc
+    certificate_of_authenticity:  this is a certificate
+bootloader:
+  rom_file:     c.rom
+  rom_size:     1024
+  max_app_size: 512
+  linger:       true
+
+
+$=:
+  - ?=: rm -f *.rom *.json
+  - ?=: sudo modprobe can ; sudo modprobe can_raw ; sudo modprobe vcan
+  -
+  - ?=: sudo ip link add dev vcan0 type vcan && sudo ip link set vcan0 mtu 72 && sudo ip link set up vcan0
+  -
+  - uavcan_gui_tool   # Start the tool for manual testing.
+  - ./bootloader

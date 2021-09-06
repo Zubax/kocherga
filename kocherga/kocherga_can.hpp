@@ -330,8 +330,8 @@ struct ServiceFrameModel : public FrameModel
     -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
 {
     assert(payload != nullptr);
-    if (payload_size < 1)
-    {
+    if ((payload_size < 1) || (payload_size > 8))  // Legacy UAVCAN v0 is compatible only with Classic CAN.
+    {                                              // This is because the low granularity of DLC in CAN FD breaks TAO.
         return {};
     }
     const auto         out_payload_size  = static_cast<std::uint8_t>(payload_size - 1U);
