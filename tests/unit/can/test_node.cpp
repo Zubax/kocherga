@@ -993,6 +993,24 @@ TEST_CASE("can::CANNode v0")
     REQUIRE(dynamic_cast<MessageTransfer&>(*tx).subject_id == 341);         // v0 NodeStatus, not v1 Heartbeat
     REQUIRE(*dynamic_cast<MessageTransfer&>(*tx).source_node_id == 123);
 
+    // Publish log message, check translation.
+    REQUIRE(
+        static_cast<kocherga::INode&>(node).publishMessage(SubjectID::DiagnosticRecord,
+                                                           14,
+                                                           23,
+                                                           reinterpret_cast<const std::uint8_t*>(
+                                                               "\x00\x00\x00\x00\x00\x00\x00\x03\x0EUpdate started")));
+    tx = poll(1000us);
+    REQUIRE(tx);
+    REQUIRE(tx->transfer_id == 14);
+    REQUIRE(tx->priority == 31);
+    REQUIRE(
+        tx->payload ==
+        Buf{0b010'00100U, 'B', 'o', 'o', 't', 'U', 'p', 'd', 'a', 't', 'e', ' ', 's', 't', 'a', 'r', 't', 'e', 'd'});
+    REQUIRE(dynamic_cast<MessageTransfer&>(*tx).subject_id == 16383);
+    REQUIRE(*dynamic_cast<MessageTransfer&>(*tx).source_node_id == 123);
+
+    // Check service calls.
     REQUIRE(!reactor.popPendingResponse());
     reactor.setIncomingRequestHandler([](const ReactorMock::IncomingRequest& req) -> std::optional<Buf> {
         REQUIRE(req.client_node_id == 42);

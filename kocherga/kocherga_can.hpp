@@ -1263,7 +1263,7 @@ private:
     };
 
     static constexpr std::uint64_t NodeStatusSignature          = 0x0F0868D0C1A7C6F1ULL;
-    static constexpr std::uint64_t LogMessageSignature          = 0XD654A48E0C049D75ULL;
+    static constexpr std::uint64_t LogMessageSignature          = 0xD654A48E0C049D75ULL;
     static constexpr std::uint64_t GetNodeInfoSignature         = 0xEE468A8121C46A9EULL;
     static constexpr std::uint64_t BeginFirmwareUpdateSignature = 0xB7D725DF72724126ULL;
     static constexpr std::uint64_t FileReadSignature            = 0x8DCDCA939F33F678ULL;
