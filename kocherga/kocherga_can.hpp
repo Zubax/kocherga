@@ -1129,20 +1129,35 @@ private:
     {
         assert(frame.destination_node_id == local_node_id_);
         assert(frame.request_not_response);
-        std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
-        if (const auto response_size = reactor.processRequest(static_cast<PortID>(ServiceID::NodeExecuteCommand),
-                                                              frame.source_node_id,
-                                                              request_size,
-                                                              request_data,
-                                                              response_data.data()))
+        std::array<std::uint8_t, 210> scratchpad{};
+        scratchpad.back() = 0xAA;  // Canary
+        // Translate the request v0 --> v1, store into the scratchpad.
+        scratchpad.at(0) = 0xFD;
+        scratchpad.at(1) = 0xFF;
+        if ((request_size >= 2) && (request_size <= 202))
         {
-            (void) sendResponse(BeginFirmwareUpdateSignature,
-                                frame.priority,
-                                frame.service_id,
-                                frame.source_node_id,
-                                frame.transfer_id,
-                                *response_size,
-                                response_data.data());
+            const auto path_len = static_cast<std::uint8_t>(request_size - 1U);
+            scratchpad.at(2)    = path_len;
+            (void) std::memcpy(scratchpad.begin() + 3U, request_data + 1U, path_len);
+            assert(scratchpad.back() == 0xAA);
+            std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
+            if (const auto response_size = reactor.processRequest(static_cast<PortID>(ServiceID::NodeExecuteCommand),
+                                                                  frame.source_node_id,
+                                                                  path_len + 3U,
+                                                                  scratchpad.data(),
+                                                                  response_data.data());
+                response_size >= 1U)
+            {
+                // Translate the response v1 --> v0 re-using the same scratchpad.
+                scratchpad.at(0) = (response_data.at(0) == 0) ? 0 : 255;  // Either ERROR_OK or ERROR_UNKNOWN.
+                (void) sendResponse(BeginFirmwareUpdateSignature,
+                                    frame.priority,
+                                    frame.service_id,
+                                    frame.source_node_id,
+                                    frame.transfer_id,
+                                    1U,
+                                    scratchpad.data());
+            }
         }
     }
 
