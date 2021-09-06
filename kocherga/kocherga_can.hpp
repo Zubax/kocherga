@@ -1093,7 +1093,8 @@ private:
                                                               frame.source_node_id,
                                                               0,
                                                               request_data,
-                                                              response_data.data()))
+                                                              response_data.data());
+            response_size >= 31)
         {
             // Translate the response v1 -> v0.
             std::array<std::uint8_t, 128> buf{};
@@ -1116,7 +1117,7 @@ private:
                                 frame.service_id,
                                 frame.source_node_id,
                                 frame.transfer_id,
-                                name_len + 17U,
+                                name_len + 41U,
                                 buf.data());
         }
     }

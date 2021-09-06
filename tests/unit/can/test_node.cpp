@@ -1000,7 +1000,21 @@ TEST_CASE("can::CANNode v0")
         {
         case static_cast<kocherga::PortID>(ServiceID::NodeGetInfo):
         {
-            return Buf{1, 2, 3};
+            return Buf{
+                0x01, 0x00,                                      // Protocol version
+                0x0A, 0x1E,                                      // Hardware version
+                0x07, 0x99,                                      // Software version
+                0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,  // Software VCS revision ID
+                0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61,  // UID
+                0x23,  // Name length: "com.zubax.kocherga.test.integration"
+                0x63, 0x6F, 0x6D, 0x2E, 0x7A, 0x75, 0x62, 0x61, 0x78, 0x2E, 0x6B, 0x6F, 0x63, 0x68, 0x65, 0x72,
+                0x67, 0x61, 0x2E, 0x74, 0x65, 0x73, 0x74, 0x2E, 0x69, 0x6E, 0x74, 0x65, 0x67, 0x72, 0x61, 0x74,
+                0x69, 0x6F, 0x6E,  // End of name
+                0x00,              // No image CRC
+                0x15,              // CoA length, then the CoA itself
+                0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61, 0x20, 0x63, 0x65, 0x72, 0x74, 0x69, 0x66,
+                0x69, 0x63, 0x61, 0x74, 0x65,
+            };
         }
         case static_cast<kocherga::PortID>(ServiceID::NodeExecuteCommand):
         {
@@ -1017,12 +1031,25 @@ TEST_CASE("can::CANNode v0")
     // Validate GetInfo -- ensure the service is operational and v1/v0 translation is correct.
     tx = poll(1000us,
               SignatureTransferPair{0xEE468A8121C46A9EULL,
-                                    std::make_shared<ServiceTransfer>(4,
-                                                                      15,
-                                                                      static_cast<PortID>(ServiceID::NodeGetInfo),
-                                                                      42,
-                                                                      123,
-                                                                      true,
-                                                                      Buf{})});
+                                    std::make_shared<ServiceTransfer>(4, 15, 1, 42, 123, true, Buf{})});
     REQUIRE(tx);
+    REQUIRE(tx->priority == 4);
+    REQUIRE(tx->transfer_id == 15);
+    const Buf translated_node_info{
+        0x03, 0x00, 0x00, 0x00, 0xd8, 0x00, 0x00,        // NodeStatus
+        0x07, 0x99,                                      // Software version major.minor
+        0x00,                                            // Optional field flags (none available)
+        0x00, 0x00, 0x00, 0x00,                          // VCS commit
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Image CRC
+        0x0a, 0x1e,                                      // Hardware version major minor
+        0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61, 0x61,  // UID
+        0x00,  // CoA is not translated for simplicity; the next field is the name
+        0x63, 0x6f, 0x6d, 0x2e, 0x7a, 0x75, 0x62, 0x61, 0x78, 0x2e, 0x6b, 0x6f, 0x63, 0x68, 0x65, 0x72, 0x67, 0x61,
+        0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x69, 0x6e, 0x74, 0x65, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e,
+    };
+    REQUIRE(tx->payload == translated_node_info);
+    REQUIRE(dynamic_cast<ServiceTransfer&>(*tx).service_id == 1);
+    REQUIRE(dynamic_cast<ServiceTransfer&>(*tx).source_node_id == 123);
+    REQUIRE(dynamic_cast<ServiceTransfer&>(*tx).destination_node_id == 42);
+    REQUIRE(!dynamic_cast<ServiceTransfer&>(*tx).request_not_response);
 }
