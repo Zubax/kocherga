@@ -1161,14 +1161,26 @@ private:
         }
     }
 
-    void processFileReadResponse(IReactor&                 reactor,
-                                 const std::size_t         response_size,
-                                 const std::uint8_t* const response_data)
+    static void processFileReadResponse(IReactor&                 reactor,
+                                        const std::size_t         response_size,
+                                        const std::uint8_t* const response_data)
     {
-        (void) reactor;
-        (void) response_size;
-        (void) response_data;
-        (void) driver_;
+        if (response_size >= 4)
+        {
+            std::array<std::uint8_t, 270> buf{};
+            buf.back()     = 0xAA;
+            buf.at(0)      = response_data[0];
+            buf.at(1)      = response_data[1];
+            const auto len = response_size - 2U;
+            if (len <= 256U)
+            {
+                buf.at(2) = static_cast<std::uint8_t>(len >> 0U);
+                buf.at(3) = static_cast<std::uint8_t>(len >> 8U);
+                (void) std::memcpy(buf.begin() + 4, response_data + 2U, len);
+                assert(buf.back() == 0xAA);
+                reactor.processResponse(len + 4U, buf.data());
+            }
+        }
     }
 
     [[nodiscard]] auto sendFileReadRequest(const NodeID              server_node_id,
