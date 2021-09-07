@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/PR-SVG-20010719/DTD/svg10.dtd">
+<svg width="42cm" height="20cm" viewBox="419 238 823 383" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <g>
+    <ellipse style="fill: #ffffff" cx="540" cy="340" rx="100" ry="40"/>
+    <ellipse style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #c80000" cx="540" cy="340" rx="100" ry="40"/>
+    <text font-size="12.8" style="fill: #c80000;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:normal" x="540" y="343.881">
+      <tspan x="540" y="343.881">NoAppToBoot</tspan>
+    </text>
+  </g>
+  <g>
+    <ellipse style="fill: #ffffff" cx="820" cy="340" rx="100" ry="40"/>
+    <ellipse style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" cx="820" cy="340" rx="100" ry="40"/>
+    <text font-size="12.8" style="fill: #00c800;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:normal" x="820" y="343.881">
+      <tspan x="820" y="343.881">BootDelay</tspan>
+    </text>
+  </g>
+  <g>
+    <ellipse style="fill: #ffffff" cx="1020" cy="490" rx="100" ry="40"/>
+    <ellipse style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" cx="1020" cy="490" rx="100" ry="40"/>
+    <text font-size="12.8" style="fill: #00c800;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:normal" x="1020" y="493.881">
+      <tspan x="1020" y="493.881">BootCanceled</tspan>
+    </text>
+  </g>
+  <g>
+    <ellipse style="fill: #ffffff" cx="540" cy="560" rx="100" ry="40"/>
+    <ellipse style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" cx="540" cy="560" rx="100" ry="40"/>
+    <text font-size="12.8" style="fill: #0000c8;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:normal" x="540" y="563.881">
+      <tspan x="540" y="563.881">AppUpdateInProgress</tspan>
+    </text>
+  </g>
+  <g>
+    <rect style="fill: #ffffff" x="600" y="240" width="160" height="40"/>
+    <rect style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #000000" x="600" y="240" width="160" height="40"/>
+    <text font-size="12.8" style="fill: #000000;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:normal" x="680" y="263.881">
+      <tspan x="680" y="263.881">Bootloader started</tspan>
+    </text>
+  </g>
+  <g>
+    <line style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" x1="920.995" y1="340" x2="1089.27" y2="340"/>
+    <polygon style="fill: #00c800" points="1096.77,340 1086.77,345 1089.27,340 1086.77,335 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="1096.77,340 1086.77,345 1089.27,340 1086.77,335 "/>
+  </g>
+  <text font-size="12.8" style="fill: #00c800;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="830" y="410">
+    <tspan x="830" y="410">Boot cancelled</tspan>
+  </text>
+  <g>
+    <line style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" x1="540" y1="380.995" x2="540" y2="509.269"/>
+    <polygon style="fill: #0000c8" points="540,516.769 535,506.769 540,509.269 545,506.769 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" points="540,516.769 535,506.769 540,509.269 545,506.769 "/>
+  </g>
+  <g>
+    <rect style="fill: #ffffff" x="1100" y="300" width="120" height="80"/>
+    <rect style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #000000" x="1100" y="300" width="120" height="80"/>
+    <text font-size="12.8" style="fill: #000000;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:normal" x="1160" y="335.881">
+      <tspan x="1160" y="335.881">Boot the</tspan>
+      <tspan x="1160" y="351.881">application</tspan>
+    </text>
+  </g>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #c80000" points="600,260 600,260 540,260 540,289.287 "/>
+    <polygon style="fill: #c80000" points="540,296.787 535,286.787 540,289.287 545,286.787 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #c80000" points="540,296.787 535,286.787 540,289.287 545,286.787 "/>
+  </g>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="760,260 760,260 820,260 820,289.287 "/>
+    <polygon style="fill: #00c800" points="820,296.787 815,286.787 820,289.287 825,286.787 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="820,296.787 815,286.787 820,289.287 825,286.787 "/>
+  </g>
+  <text font-size="12.8" style="fill: #00c800;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="770" y="250">
+    <tspan x="770" y="250">Valid application found</tspan>
+  </text>
+  <text font-size="12.8" style="fill: #c80000;text-anchor:end;font-family:sans-serif;font-style:normal;font-weight:normal" x="590" y="250">
+    <tspan x="590" y="250">No valid application found</tspan>
+  </text>
+  <g>
+    <line style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" x1="919.102" y1="490" x2="549.736" y2="490"/>
+    <polygon style="fill: #0000c8" points="542.236,490 552.236,485 549.736,490 552.236,495 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" points="542.236,490 552.236,485 549.736,490 552.236,495 "/>
+  </g>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" points="720,340 720,340 700,340 700,410 549.736,410 "/>
+    <polygon style="fill: #0000c8" points="542.236,410 552.236,405 549.736,410 552.236,415 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000c8" points="542.236,410 552.236,405 549.736,410 552.236,415 "/>
+  </g>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #c80000" points="439.102,560 420,560 420,340 430.264,340 "/>
+    <polygon style="fill: #c80000" points="437.764,340 427.764,345 430.264,340 427.764,335 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #c80000" points="437.764,340 427.764,345 430.264,340 427.764,335 "/>
+  </g>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="540,600 540,620 1240,620 1240,260 820,260 820,290.264 "/>
+    <polygon style="fill: #00c800" points="820,297.764 815,287.764 820,290.264 825,287.764 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="820,297.764 815,287.764 820,290.264 825,287.764 "/>
+  </g>
+  <text font-size="12.8" style="fill: #00c800;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="620" y="610">
+    <tspan x="620" y="610">Update successful, received image is valid</tspan>
+  </text>
+  <text font-size="12.8" style="fill: #00c800;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="940" y="310">
+    <tspan x="940" y="310">Boot delay expired</tspan>
+    <tspan x="940" y="326">(zero by default)</tspan>
+  </text>
+  <text font-size="12.8" style="fill: #0000c8;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="550" y="460">
+    <tspan x="550" y="460">Update requested</tspan>
+  </text>
+  <text font-size="12.8" style="fill: #c80000;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="430" y="470">
+    <tspan x="430" y="470">Update failed,</tspan>
+    <tspan x="430" y="486">no valid image</tspan>
+    <tspan x="430" y="502">is now</tspan>
+    <tspan x="430" y="518">available</tspan>
+  </text>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000ff" points="640,560 661,560 661,560 1020,560 1020,539.736 "/>
+    <polygon style="fill: #0000ff" points="1020,532.236 1025,542.236 1020,539.736 1015,542.236 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #0000ff" points="1020,532.236 1025,542.236 1020,539.736 1015,542.236 "/>
+  </g>
+  <text font-size="12.8" style="fill: #0000ff;text-anchor:start;font-family:sans-serif;font-style:normal;font-weight:normal" x="650" y="530">
+    <tspan x="650" y="530">Update failed,</tspan>
+    <tspan x="650" y="546">but the existing valid image was not altered</tspan>
+  </text>
+  <g>
+    <polyline style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="820,380 820,430 1020,430 1020,439.365 "/>
+    <polygon style="fill: #00c800" points="1020,446.865 1015,436.865 1020,439.365 1025,436.865 "/>
+    <polygon style="fill: none; fill-opacity:0; stroke-width: 2; stroke: #00c800" points="1020,446.865 1015,436.865 1020,439.365 1025,436.865 "/>
+  </g>
+</svg>

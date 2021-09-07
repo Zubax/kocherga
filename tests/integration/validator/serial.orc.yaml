@@ -1,0 +1,39 @@
+#!/usr/bin/env -S yakut -v orchestrate
+
+uavcan:
+  serial:
+    iface: socket://localhost:50905
+    duplicate_service_transfers: true
+  diagnostic:
+    severity: 3
+
+$=:
+- ?=: rm -f *.rom *.json                  # Clean up the outputs from the previous run.
+-                                         # Do not proceed until the cleanup is done.
+- ?=: ncat --broker --listen -p 50905 -v  # Ignore error in case it is already launched externally.
+- $=:
+  - sleep 1
+  - # Wait for the broker to start and get ready.
+
+  - $=: yakut --verbose file-server --plug-and-play alloc.db --update-software $SOFTWARE_PACKAGE_DIR
+    uavcan.node.id: 32
+
+  - $=: yakut --format=json sub --with-metadata uavcan.node.Heartbeat.1.0    > heartbeats.json
+  - $=: yakut --format=json sub --with-metadata uavcan.diagnostic.Record.1.1 > diagnostics.json
+
+  - $=:
+    - sleep 1
+    - # Let the subscribers initialize to ensure we don't lose any diagnostic messages.
+    - ./bootloader
+    - # Wait for the bootloader to exit. It will only do that after it has successfully loaded and validated the app.
+    - exit 222  # A non-zero exit code will bring down the entire composition, which signifies the end of the test.
+    uavcan:
+      node:
+        hardware_version: [10, 30]
+        unique_id:        aaaaaaaaaaaaaaaa
+        certificate_of_authenticity:  this is a certificate
+    bootloader:
+      rom_file:     a.rom
+      rom_size:     1024
+      max_app_size: 512
+      linger:       false

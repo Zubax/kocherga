@@ -1,0 +1,30 @@
+---
+Checks: >-
+  boost-*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  google-*,
+  hicpp-*,
+  llvm-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -google-readability-todo,
+  -readability-avoid-const-params-in-decls,
+  -readability-function-cognitive-complexity,
+  -llvm-header-guard,
+  -google-runtime-references,
+  -misc-non-private-member-variables-in-classes,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cert-msc30-c,
+  -cert-msc50-cpp,
+  -*-easily-swappable-parameters,
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*'
+AnalyzeTemporaryDtors: false
+FormatStyle: file
+...
