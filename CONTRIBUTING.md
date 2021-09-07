@@ -66,6 +66,10 @@ The repository contains the spelling dictionaries for CLion located under `.idea
 
 Generate the CMake project, build all, and then build the target `test` (e.g., `make test`).
 
+Some of the tests are intended to be run manually due to lack of adequate automation solutions in the v0 ecosystem.
+Please navigate to `/tests/integration/validator/` for details.
+
 ## Releasing
 
-Simply create a new release on GitHub: <https://github.com/Zubax/kocherga/releases/new>
+1. Bump the version numbers (`KOCHERGA_VERSION_MAJOR`, `KOCHERGA_VERSION_MINOR`) in `kocherga.hpp`. Push the change.
+2. Create a new release on GitHub: <https://github.com/Zubax/kocherga/releases/new>

@@ -436,6 +436,8 @@ template <typename Callback>
 
 }  // namespace detail
 
+static constexpr NodeID MaxNodeID = 0xFFFEU;
+
 /// Bridges Kocherga/serial with the platform-specific serial port implementation.
 /// Implement this and pass a reference to SerialNode.
 class ISerialPort
@@ -468,8 +470,14 @@ public:
 
     /// Set up the local node-ID manually instead of running PnP allocation.
     /// If a manual update is triggered, this shall be done beforehand.
-    /// Do not assign the local node-ID more than once.
-    void setLocalNodeID(const NodeID node_id) noexcept { local_node_id_ = node_id; }
+    /// Do not assign the local node-ID more than once. Invalid values will be ignored.
+    void setLocalNodeID(const NodeID node_id) noexcept
+    {
+        if (node_id <= MaxNodeID)
+        {
+            local_node_id_ = node_id;
+        }
+    }
 
     /// Resets the state of the frame parser. Call it when the communication channel is reinitialized.
     void reset() noexcept { stream_parser_.reset(); }

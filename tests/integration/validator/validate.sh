@@ -23,3 +23,5 @@ yakut -v orchestrate "$SOFTWARE_PACKAGE_DIR/can.orc.yaml"
 result=$?
 [[ $result == 223 ]] || die "Unexpected exit code: $result"
 echo "Exit code $result is valid, test passed"
+
+echo "PLEASE TEST v0 MANUALLY! RUN THIS: $SOFTWARE_PACKAGE_DIR/manual_v0.orc.yaml"

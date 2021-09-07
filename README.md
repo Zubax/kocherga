@@ -1,6 +1,7 @@
 # Kochergá
 
-[![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg)](https://forum.zubax.com)
+[![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg&color=e00000)](https://forum.zubax.com)
+[![Forum](https://img.shields.io/discourse/https/forum.uavcan.org/users.svg&color=1700b3)](https://forum.uavcan.org)
 
 **Kochergá is a robust platform-agnostic [UAVCAN](https://uavcan.org) bootloader for deeply embedded systems.**
 
@@ -20,20 +21,21 @@ A standard-compliant implementation of the firmware update server is provided in
   control after a watchdog reset.
 
 - **Safety** -- Kochergá verifies the correctness of the application image with a 64-bit hash before every boot.
+  Kochergá's own codebase features extensive test coverage.
 
-### Supported transports
-
-- **UAVCAN/CAN** -- supports both v1 and v0, the protocol version is auto-detected at runtime.
-- **UAVCAN/serial**
+- **Multiple supported transports:**
+  - **UAVCAN/CAN** -- supports both v1 and the legacy v0, the protocol version is auto-detected at runtime.
+  - **UAVCAN/serial**
+  - More may appear in the future -- new transports are easy to add.
 
 ## Usage
 
 ### Integration
 
 The entire library is contained in the header file `kocherga.hpp`; protocol implementations are provided each in a
-separate header file named `kocherga_*.hpp`. Kocherga does not have any compilation units of its own.
+separate header file named `kocherga_*.hpp`. Kochergá does not have any compilation units of its own.
 
-To integrate Kocherga into your application, just include this repository as a git subtree/submodule, or simply
+To integrate Kochergá into your application, just include this repository as a git subtree/submodule, or simply
 copy-paste the required header files into your source tree.
 
 ### Application signature
@@ -84,7 +86,7 @@ the [Yakut CLI tool](https://github.com/UAVCAN/yakut#updating-node-software).
 
 The following diagram documents the state machine of the bootloader:
 
-![Kocherga State Machine Diagram](docs/state_machine.svg "Kocherga State Machine Diagram")
+![Kochergá State Machine Diagram](docs/state_machine.svg "Kochergá State Machine Diagram")
 
 The bootloader states are mapped onto UAVCAN node states as follows:
 
@@ -97,17 +99,15 @@ AppUpdateInProgress  |`SOFTWARE_UPDATE`| `NOMINAL`  | number of read requests, a
 
 ### API usage
 
-The following snippet explains how to integrate Kocherga into your system.
+The following snippet demonstrates how to integrate Kochergá into your bootloader executable.
 User-provided functions are shown in `SCREAMING_SNAKE_CASE()`.
 This is a stripped-down example; the full API documentation is available in the header files.
 
+#### ROM interface
+
+The ROM backend abstracts the specifics of reading and writing your ROM (usually this is the on-chip flash memory).
+
 ```c++
-#include <kocherga_serial.hpp>  // Pick the transports you need.
-#include <kocherga_can.hpp>     // In this example we are using UAVCAN/serial + UAVCAN/CAN.
-
-/// Maximum possible size of the application image for your platform.
-static constexpr std::size_t MaxAppSize = 1024 * 1024;
-
 class MyROMBackend : public kocherga::IROMBackend
 {
     auto write(const std::size_t offset, const std::byte* const data, const std::size_t size) override
@@ -126,7 +126,14 @@ class MyROMBackend : public kocherga::IROMBackend
         return READ_ROM(offset, out_data, size);  // Return the number of bytes read (may be less than size).
     }
 };
+```
 
+#### Media layer interfaces
+
+Transport implementations --- UAVCAN/CAN, UAVCAN/serial, etc., depending on which transports you need ---
+are interfaced with your hardware as follows.
+
+```c++
 class MySerialPort : public kocherga::serial::ISerialPort
 {
     auto receive() -> std::optional<std::uint8_t> override
@@ -140,7 +147,9 @@ class MySerialPort : public kocherga::serial::ISerialPort
 
     auto send(const std::uint8_t b) -> bool override { return SERIAL_WRITE_BYTE(b); }
 };
+```
 
+```c++
 class MyCANDriver : public kocherga::can::ICANDriver
 {
     auto configure(const Bitrate&                                  bitrate,
@@ -168,25 +177,101 @@ class MyCANDriver : public kocherga::can::ICANDriver
 
     auto pop(PayloadBuffer& payload_buffer) -> std::optional<std::pair<std::uint32_t, std::uint8_t>> override
     {
-        return CAN_POP(payload_buffer.data());
+        return CAN_POP(payload_buffer.data());  // The return value is optional(can_id, payload_size).
     }
 };
+```
+
+#### Passing arguments from the application
+
+When the application is commanded to upgrade itself, it needs to store relevant context into a struct,
+write this struct into a pre-defined memory location, and then reboot.
+The bootloader would check that location to see if there is a valid argument struct in it.
+Kochergá provides a convenient class for that --- `kocherga::VolatileStorage<>` ---
+which checks the presence and validity of the arguments with a strong 64-bit CRC.
+
+```c++
+/// The application may pass this structure when rebooting into the bootloader.
+/// Feel free to modify the contents to suit your system.
+/// It is a good idea to include an explicit version field here for future-proofing.
+struct ArgumentsFromApplication
+{
+    bool linger;        ///< Whether to boot immediately or to wait for commands.
+
+    std::uint16_t uavcan_serial_node_id;                    ///< Invalid if unknown.
+
+    std::pair<std::uint32_t, std::uint32_t> uavcan_can_bitrate;             ///< Zeros if unknown.
+    std::uint8_t                            uavcan_can_protocol_version;    ///< v0 or v1; 0xFF if unknown.
+    std::uint8_t                            uavcan_can_node_id;             ///< Invalid if unknown.
+
+    std::uint8_t                  trigger_node_index;       ///< 0 - serial, 1 - CAN, >1 - none.
+    std::uint16_t                 file_server_node_id;      ///< Invalid if unknown.
+    std::array<std::uint8_t, 256> remote_file_path;         ///< Null-terminated string.
+};
+static_assert(std::is_trivial_v<ArgumentsFromApplication>);
+```
+
+#### Running the bootloader
+
+```c++
+#include <kocherga_serial.hpp>  // Pick the transports you need.
+#include <kocherga_can.hpp>     // In this example we are using UAVCAN/serial + UAVCAN/CAN.
+
+/// Maximum possible size of the application image for your platform.
+static constexpr std::size_t MaxAppSize = 1024 * 1024;
 
 int main()
 {
+    // Check if the application has passed any arguments to the bootloader via shared RAM.
+    // The address where the arguments are stored obviously has to be shared with the application.
+    // If the application uses heap, then it might be a good idea to alias this area with the heap.
+    const std::optional<ArgumentsFromApplication> args =
+        kocherga::VolatileStorage<ArgumentsFromApplication>(reinterpret_cast<std::uint8_t*>(0x2000'4000U)).take();
+
+    // Initialize the bootloader core.
     MyROMBackend rom_backend;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
-    const bool linger = false;  // If true, the bootloader will wait instead of booting the app immediately.
-    kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, linger);
+    kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, args && args->linger);
+
     // Add a UAVCAN/serial node to the bootloader instance.
     MySerialPort serial_port;
     kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
+    if (args && (args->uavcan_serial_node_id <= kocherga::serial::MaxNodeID))
+    {
+        serial_node.setLocalNodeID(args->uavcan_serial_node_id);
+    }
     boot.addNode(&serial_node);
-    // Add a UAVCAN/CAN node likewise.
+
+    // Add a UAVCAN/CAN node to the bootloader instance.
+    std::optional<kocherga::ICANDriver::Bitrate> can_bitrate;
+    std::optional<std::uint8_t>                  uavcan_can_version;
+    std::optional<kocherga::NodeID>              uavcan_can_node_id;
+    if (args)
+    {
+        if (args->uavcan_can_bitrate.first > 0)
+        {
+            can_bitrate = ICANDriver::Bitrate{args.uavcan_can_bitrate.first, args.uavcan_can_bitrate.second};
+        }
+        uavcan_can_version = args->uavcan_can_protocol_version;     // Will be ignored if invalid.
+        uavcan_can_node_id = args->uavcan_can_node_id;              // Will be ignored if invalid.
+    }
     MyCANDriver can_driver;
-    kocherga::can::CANNode can_node(can_driver, system_info.unique_id);
+    kocherga::can::CANNode can_node(can_driver,
+                                    system_info.unique_id,
+                                    can_bitrate,
+                                    uavcan_can_version,
+                                    uavcan_can_node_id);
     boot.addNode(&can_node);
-    // Run the main loop.
+
+    // Trigger the update process internally if the required arguments are provided by the application.
+    if (args && (args->trigger_node_index < 2))
+    {
+        (void) boot.trigger(args->trigger_node_index,                   // Use serial or CAN?
+                            args->file_server_node_id,                  // Which node to download the file from?
+                            std::strlen(args->remote_file_path.data()), // Remote file path length.
+                            args->remote_file_path.data());
+    }
+
     while (true)
     {
         const auto uptime = GET_TIME_SINCE_BOOT();
@@ -210,8 +295,63 @@ int main()
 }
 ```
 
+#### Building a compliant application image
+
+Define the following application signature structure somewhere in your application:
+
+```c++
+struct AppDescriptor
+{
+    std::uint64_t               magic = 0x5E44'1514'6FC0'C4C7ULL;
+    std::array<std::uint8_t, 8> signature{{'A', 'P', 'D', 'e', 's', 'c', '0', '0'}};
+
+    std::uint64_t                               image_crc  = 0;     // Populated after build
+    std::uint32_t                               image_size = 0;     // Populated after build
+    [[maybe_unused]] std::array<std::byte, 4>   _reserved_a{};
+    std::uint8_t                                version_major = SOFTWARE_VERSION_MAJOR;
+    std::uint8_t                                version_minor = SOFTWARE_VERSION_MINOR;
+    std::uint8_t                                flags =
+#if RELEASE_BUILD
+        Flags::ReleaseBuild
+#else
+        0
+#endif
+    ;
+    [[maybe_unused]] std::array<std::byte, 1>   _reserved_b{};
+    std::uint32_t                               build_timestamp_utc = TIMESTAMP_UTC;
+    std::uint64_t                               vcs_revision_id     = GIT_HASH;
+    [[maybe_unused]] std::array<std::byte, 16>  _reserved_c{};
+
+    struct Flags
+    {
+        static constexpr std::uint8_t ReleaseBuild = 1U;
+        static constexpr std::uint8_t DirtyBuild   = 2U;
+    };
+};
+
+static const volatile AppDescriptor g_app_descriptor;
+// Optionally, use explicit placement near the beginning of the binary:
+//      __attribute__((used, section(".app_descriptor")));
+// and define the .app_descriptor section in the linker file.
+```
+
+Then modify your build script to invoke `kocherga_image.py` as explained earlier.
+
+#### Rebooting into the bootloader from the application
+
+If the application needs to pass arguments to the bootloader, it can be done with the help of
+`kocherga::VolatileStorage<>`.
+Ensure that the definition of `ArgumentsFromApplication` used by the application and by the bootloader use
+the same binary layout.
+
+Note that the application does not need to depend on the Kochergá library.
+It is recommended to copy-paste relevant pieces from Kochergá instead; specifically:
+
+- `kocherga::VolatileStorage<>`
+- `kocherga::detail::CRC64`
+
 ## Revisions
 
-### v1.0
+### v0.1
 
-Work in progress.
+The first revision to go public.

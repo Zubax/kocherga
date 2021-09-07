@@ -111,6 +111,8 @@ public:
     constexpr static std::array<std::uint8_t, 16> DLCToLength{{0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64}};
 };
 
+static constexpr std::uint8_t MaxNodeID = 127U;
+
 namespace detail
 {
 using kocherga::detail::BitsPerByte;
@@ -119,7 +121,6 @@ static constexpr std::uint8_t TailByteStartOfTransfer = 0b1000'0000;
 static constexpr std::uint8_t TailByteEndOfTransfer   = 0b0100'0000;
 static constexpr std::uint8_t TailByteToggleBit       = 0b0010'0000;
 
-static constexpr std::uint8_t MaxNodeID     = 127;
 static constexpr std::uint8_t MaxTransferID = 31;
 
 class CRC16CCITT
@@ -992,12 +993,15 @@ private:
                                    const std::size_t         payload_length,
                                    const std::uint8_t* const payload) -> bool override
     {
-        if (service_id == ServiceID::FileRead)
+        if ((server_node_id > 0) && (server_node_id <= MaxNodeID))
         {
-            return sendFileReadRequest(server_node_id,
-                                       static_cast<std::uint8_t>(transfer_id & MaxTransferID),
-                                       payload_length,
-                                       payload);
+            if (service_id == ServiceID::FileRead)
+            {
+                return sendFileReadRequest(server_node_id,
+                                           static_cast<std::uint8_t>(transfer_id & MaxTransferID),
+                                           payload_length,
+                                           payload);
+            }
         }
         return false;  // Don't know how to translate this request v1 --> v0.
     }
@@ -1565,17 +1569,19 @@ private:
                                    const std::uint8_t* const payload) -> bool override
     {
         static constexpr std::uint32_t CANIDMask = 0b110'11'0000000000'0000000'0000000UL;
-        //
-        const auto can_id = CANIDMask |                                           //
-                            (static_cast<std::uint32_t>(service_id) << 14U) |     //
-                            (static_cast<std::uint32_t>(server_node_id) << 7U) |  //
-                            local_node_id_;
-        if (send(can_id, transfer_id, payload_length, payload))
+        if (server_node_id <= MaxNodeID)
         {
-            pending_request_meta_ = PendingRequestMetadata{static_cast<std::uint8_t>(server_node_id),
-                                                           static_cast<PortID>(service_id),
-                                                           static_cast<std::uint8_t>(transfer_id & MaxTransferID)};
-            return true;
+            const auto can_id = CANIDMask |                                           //
+                                (static_cast<std::uint32_t>(service_id) << 14U) |     //
+                                (static_cast<std::uint32_t>(server_node_id) << 7U) |  //
+                                local_node_id_;
+            if (send(can_id, transfer_id, payload_length, payload))
+            {
+                pending_request_meta_ = PendingRequestMetadata{static_cast<std::uint8_t>(server_node_id),
+                                                               static_cast<PortID>(service_id),
+                                                               static_cast<std::uint8_t>(transfer_id & MaxTransferID)};
+                return true;
+            }
         }
         return false;
     }
@@ -2080,27 +2086,36 @@ public:
             const SystemInfo::UniqueID&               local_unique_id,
             const std::optional<ICANDriver::Bitrate>& can_bitrate    = {},
             const std::optional<std::uint8_t>         uavcan_version = {},
-            const std::optional<std::uint8_t>         local_node_id  = {})
+            const std::optional<NodeID>               local_node_id  = {})
     {
         if ((activity_ == nullptr) && can_bitrate &&     //
             uavcan_version && (*uavcan_version == 0) &&  //
-            local_node_id && (*local_node_id > 0) && (*local_node_id <= detail::MaxNodeID))
+            local_node_id && (*local_node_id > 0) && (*local_node_id <= MaxNodeID))
         {
             if (const auto bus_mode =
-                    driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>(*local_node_id)))
+                    driver.configure(*can_bitrate,
+                                     false,
+                                     detail::makeAcceptanceFilter<0>(static_cast<std::uint8_t>(*local_node_id))))
             {
                 (void) bus_mode;  // v0 doesn't care about mode because it only supports Classic CAN.
-                activity_ = activity_allocator_.construct<detail::V0MainActivity>(driver, *local_node_id);
+                activity_ =
+                    activity_allocator_.construct<detail::V0MainActivity>(driver,
+                                                                          static_cast<std::uint8_t>(*local_node_id));
             }
         }
         if ((activity_ == nullptr) && can_bitrate &&     //
             uavcan_version && (*uavcan_version == 1) &&  //
-            local_node_id && (*local_node_id <= detail::MaxNodeID))
+            local_node_id && (*local_node_id <= MaxNodeID))
         {
             if (const auto bus_mode =
-                    driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<1>(*local_node_id)))
+                    driver.configure(*can_bitrate,
+                                     false,
+                                     detail::makeAcceptanceFilter<1>(static_cast<std::uint8_t>(*local_node_id))))
             {
-                activity_ = activity_allocator_.construct<detail::V1MainActivity>(driver, *bus_mode, *local_node_id);
+                activity_ =
+                    activity_allocator_.construct<detail::V1MainActivity>(driver,
+                                                                          *bus_mode,
+                                                                          static_cast<std::uint8_t>(*local_node_id));
             }
         }
         if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 0))

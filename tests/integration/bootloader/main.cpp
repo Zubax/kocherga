@@ -257,11 +257,20 @@ auto main(const int argc, char* const argv[]) -> int
         const auto rom_file     = util::getEnvironmentVariable("BOOTLOADER__ROM_FILE");
         const auto rom_size     = std::stoul(util::getEnvironmentVariable("BOOTLOADER__ROM_SIZE"));
         const auto max_app_size = std::stoul(util::getEnvironmentVariable("BOOTLOADER__MAX_APP_SIZE"));
+        const auto boot_delay =
+            std::chrono::seconds(std::stoul(util::getEnvironmentVariableMaybe("BOOTLOADER__BOOT_DELAY").value_or("0")));
+        std::clog << "Bootloader configuration:"           //
+                  << " linger=" << linger                  //
+                  << " rom_file=" << rom_file              //
+                  << " rom_size=" << rom_size              //
+                  << " max_app_size=" << max_app_size      //
+                  << " boot_delay=" << boot_delay.count()  //
+                  << std::endl;
 
         util::FileROMBackend rom(rom_file, rom_size);
 
         const auto           system_info = getSystemInfo();
-        kocherga::Bootloader boot(rom, system_info, max_app_size, linger);
+        kocherga::Bootloader boot(rom, system_info, max_app_size, linger, boot_delay);
 
         // Configure the serial port node.
         auto serial_port = initSerialPort();

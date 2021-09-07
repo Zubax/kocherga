@@ -10,9 +10,10 @@ uavcan:
     certificate_of_authenticity:  this is a certificate
 bootloader:
   rom_file:     c.rom
-  rom_size:     1024
-  max_app_size: 512
+  rom_size:     10485760
+  max_app_size: 1048576
   linger:       true
+  boot_delay:   30
 
 
 $=:
