@@ -103,6 +103,8 @@ The following snippet demonstrates how to integrate Kochergá into your bootload
 User-provided functions are shown in `SCREAMING_SNAKE_CASE()`.
 This is a stripped-down example; the full API documentation is available in the header files.
 
+The integration test application available under `/tests/integration/bootloader/` may also be a good reference.
+
 #### ROM interface
 
 The ROM backend abstracts the specifics of reading and writing your ROM (usually this is the on-chip flash memory).
