@@ -1,7 +1,7 @@
 # Kochergá
 
-[![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg&color=e00000)](https://forum.zubax.com)
-[![Forum](https://img.shields.io/discourse/https/forum.uavcan.org/users.svg&color=1700b3)](https://forum.uavcan.org)
+[![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg?color=e00000)](https://forum.zubax.com)
+[![Forum](https://img.shields.io/discourse/https/forum.uavcan.org/users.svg?color=1700b3)](https://forum.uavcan.org)
 
 **Kochergá is a robust platform-agnostic [UAVCAN](https://uavcan.org) bootloader for deeply embedded systems.**
 
