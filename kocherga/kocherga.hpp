@@ -1226,7 +1226,7 @@ class VolatileStorage
 {
 public:
     /// The amount of memory required to store the data. This is the size of the container plus 8 bytes for the CRC.
-    static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;
+    static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;  // NOLINT
 
     explicit VolatileStorage(std::uint8_t* const location) : ptr_(location) {}
 
@@ -1257,8 +1257,6 @@ public:
     }
 
 protected:
-    static_assert(std::is_trivial_v<Container>, "Container shall be a trivial type.");
-
     static constexpr std::uint8_t EraseFillValue = 0xCA;
 
     std::uint8_t* const ptr_;
