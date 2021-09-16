@@ -226,13 +226,6 @@ public:
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// Internal use only.
-namespace detail
-{
-static constexpr auto BitsPerByte = 8U;
-
-static constexpr std::chrono::microseconds DefaultTransferIDTimeout{2'000'000};  ///< Default taken from Specification.
-
 /// This is used to verify integrity of the application and other data.
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to
@@ -278,7 +271,7 @@ public:
         for (auto it = std::rbegin(out); it != rend; ++it)
         {
             *it = static_cast<std::uint8_t>(x);
-            x >>= BitsPerByte;
+            x >>= 8U;
         }
         return out;
     }
@@ -296,6 +289,15 @@ private:
 
     std::uint64_t crc_ = Xor;
 };
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// Internal use only.
+namespace detail
+{
+static constexpr auto BitsPerByte = 8U;
+
+static constexpr std::chrono::microseconds DefaultTransferIDTimeout{2'000'000};  ///< Default taken from Specification.
 
 /// Detects the application in the ROM, verifies its integrity, and retrieves the information about it.
 class AppLocator final
@@ -1248,7 +1250,7 @@ class VolatileStorage
 {
 public:
     /// The amount of memory required to store the data. This is the size of the container plus 8 bytes for the CRC.
-    static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;  // NOLINT
+    static constexpr auto StorageSize = sizeof(Container) + CRC64::Size;  // NOLINT
 
     explicit VolatileStorage(std::uint8_t* const location) : ptr_(location) {}
 
@@ -1256,7 +1258,7 @@ public:
     /// Returns an empty option if no data is available (in that case the storage is not erased).
     [[nodiscard]] auto take() -> std::optional<Container>
     {
-        detail::CRC64 crc;
+        CRC64 crc;
         crc.update(ptr_, StorageSize);
         if (crc.isResidueCorrect())
         {
@@ -1272,10 +1274,10 @@ public:
     void store(const Container& data)
     {
         (void) std::memmove(ptr_, &data, sizeof(Container));
-        detail::CRC64 crc;
+        CRC64 crc;
         crc.update(ptr_, sizeof(Container));
         const auto crc_ptr = ptr_ + sizeof(Container);  // NOLINT NOSONAR pointer arithmetic
-        (void) std::memmove(crc_ptr, crc.getBytes().data(), detail::CRC64::Size);
+        (void) std::memmove(crc_ptr, crc.getBytes().data(), CRC64::Size);
     }
 
 protected:

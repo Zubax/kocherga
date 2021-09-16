@@ -353,7 +353,7 @@ Note that the application does not need to depend on the Kochergá library.
 It is recommended to copy-paste relevant pieces from Kochergá instead; specifically:
 
 - `kocherga::VolatileStorage<>`
-- `kocherga::detail::CRC64`
+- `kocherga::CRC64`
 
 ## Revisions
 

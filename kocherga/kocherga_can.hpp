@@ -170,7 +170,7 @@ private:
 
 inline auto makePseudoUniqueID(const SystemInfo::UniqueID& uid) -> std::uint64_t
 {
-    ::kocherga::detail::CRC64 crc;
+    CRC64 crc;
     crc.update(uid.data(), uid.size());
     return crc.get();
 }
