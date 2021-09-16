@@ -234,6 +234,9 @@ int main()
     MyROMBackend rom_backend;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
     kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, args && args->linger);
+    // It's a good idea to check if the app is valid and safe to boot before adding the nodes.
+    // This way you can skip the potentially slow or disturbing interface initialization on the happy path.
+    // You can do it by calling poll() here once.
 
     // Add a UAVCAN/serial node to the bootloader instance.
     MySerialPort serial_port;
