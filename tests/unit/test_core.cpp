@@ -71,6 +71,7 @@ TEST_CASE("Bootloader-fast-boot")
     REQUIRE(bl.addNode(&nodes.at(1)));
     REQUIRE(bl.addNode(&nodes.at(2)));
     REQUIRE(!bl.addNode(&nodes.at(2)));  // Double registration has no effect.
+    REQUIRE(bl.getNumberOfNodes() == 3);
 
     REQUIRE(bl.poll(500ms) == kocherga::Final::BootApp);
     REQUIRE(bl.getState() == kocherga::State::BootDelay);

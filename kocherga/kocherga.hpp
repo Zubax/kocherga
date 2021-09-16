@@ -550,6 +550,8 @@ public:
         return false;
     }
 
+    [[nodiscard]] auto getNumberOfNodes() const -> std::uint8_t { return num_nodes_; }
+
     [[nodiscard]] auto trigger(const INode* const        node,
                                const NodeID              file_server_node_id,
                                const std::size_t         app_image_file_path_length,
@@ -1019,6 +1021,9 @@ public:
     /// The return value is true on success, false if there are too many nodes already or this node is already
     /// registered (no effect in this case).
     [[nodiscard]] auto addNode(INode* const node) -> bool { return presentation_.addNode(node); }
+
+    /// The number of nodes added with addNode(). Zero by default (obviously).
+    [[nodiscard]] auto getNumberOfNodes() const -> std::uint8_t { return presentation_.getNumberOfNodes(); }
 
     /// Non-blocking periodic state update.
     /// The outer logic should invoke this method after any hardware event (for example, if WFE/WFI is used on an
