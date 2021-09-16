@@ -13,7 +13,7 @@
 #include <type_traits>
 
 #define KOCHERGA_VERSION_MAJOR 0  // NOLINT
-#define KOCHERGA_VERSION_MINOR 1  // NOLINT
+#define KOCHERGA_VERSION_MINOR 2  // NOLINT
 
 namespace kocherga
 {
@@ -306,17 +306,18 @@ public:
     {}
 
     /// Returns the AppInfo if the app is found and its integrity is intact. Otherwise, returns an empty option.
-    [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
+    /// If the allow_legacy parameter is set, legacy app descriptors will be accepted, too.
+    [[nodiscard]] auto identifyApplication(const bool allow_legacy = false) const -> std::optional<AppInfo>
     {
         for (std::size_t offset = 0; offset < max_app_size_; offset += AppDescriptor::MagicSize)
         {
             AppDescriptor desc{};
             if (sizeof(desc) == backend_.read(offset, reinterpret_cast<std::byte*>(&desc), sizeof(desc)))
             {
-                if (desc.isValid(max_app_size_) &&
-                    validateImageCRC(offset + AppDescriptor::CRCOffset,
-                                     static_cast<std::size_t>(desc.getAppInfo().image_size),
-                                     desc.getAppInfo().image_crc))
+                const bool match = desc.isValid(max_app_size_) || (allow_legacy && desc.isValidLegacy(max_app_size_));
+                if (match && validateImageCRC(offset + AppDescriptor::CRCOffset,
+                                              static_cast<std::size_t>(desc.getAppInfo().image_size),
+                                              desc.getAppInfo().image_crc))
                 {
                     return desc.getAppInfo();
                 }
@@ -341,6 +342,13 @@ private:
         {
             return (magic == ReferenceMagic) &&
                    std::equal(signature.begin(), signature.end(), ReferenceSignature.begin()) &&
+                   (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
+                   ((app_info.image_size % MagicSize) == 0);
+        }
+
+        [[nodiscard]] auto isValidLegacy(const std::size_t max_app_size) const -> bool
+        {
+            return std::equal(signature.begin(), signature.end(), ReferenceSignature.begin()) &&
                    (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
                    ((app_info.image_size % MagicSize) == 0);
         }
@@ -988,16 +996,23 @@ public:
     /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the update.
     /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
     /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
+    ///
+    /// If the allow_legacy_app_descriptors option is set, the bootloader will also accept legacy descriptors alongside
+    /// the new format. This option should be set only if the bootloader is introduced to a product that was using
+    /// the old app descriptor format in the past; refer to the PX4 Brickproof Bootloader for details. If you are not
+    /// sure, leave the default value.
     Bootloader(IROMBackend&               rom_backend,
                const SystemInfo&          system_info,
                const std::size_t          max_app_size,
                const bool                 linger,
-               const std::chrono::seconds boot_delay = std::chrono::seconds(0)) :
+               const std::chrono::seconds boot_delay                   = std::chrono::seconds(0),
+               const bool                 allow_legacy_app_descriptors = false) :
         max_app_size_(max_app_size),
         boot_delay_(boot_delay),
         backend_(rom_backend),
         presentation_(system_info, *this),
-        linger_(linger)
+        linger_(linger),
+        allow_legacy_app_descriptors_(allow_legacy_app_descriptors)
     {}
 
     /// Nodes shall be registered using this method after the instance is constructed.
@@ -1089,7 +1104,7 @@ private:
         {
             backend_.endWrite();
         }
-        app_info_ = detail::AppLocator(backend_, max_app_size_).identifyApplication();
+        app_info_ = detail::AppLocator(backend_, max_app_size_).identifyApplication(allow_legacy_app_descriptors_);
         final_.reset();
         if (app_info_)
         {
@@ -1172,6 +1187,7 @@ private:
     IROMBackend&      backend_;
     detail::Presenter presentation_;
     const bool        linger_;
+    const bool        allow_legacy_app_descriptors_;
 
     std::chrono::microseconds uptime_{};
     bool                      inited_ = false;
