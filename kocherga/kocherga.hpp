@@ -348,9 +348,10 @@ private:
 
         [[nodiscard]] auto isValidLegacy(const std::size_t max_app_size) const -> bool
         {
+            static constexpr auto SizeAlignmentRequirement = 4U;  ///< Relaxed requirement to enhance compatibility.
             return std::equal(signature.begin(), signature.end(), ReferenceSignature.begin()) &&
                    (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
-                   ((app_info.image_size % MagicSize) == 0);
+                   ((app_info.image_size % SizeAlignmentRequirement) == 0);
         }
 
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
