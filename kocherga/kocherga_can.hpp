@@ -18,6 +18,8 @@ static constexpr std::uint8_t MaxNodeID = 127U;
 static constexpr std::chrono::microseconds SendTimeout(1'000'000);
 
 /// Frames that are not extended data frames shall always be rejected.
+/// Config with id=mask=0 means that everything should be accepted (beware that some drivers treat this as a special
+/// case that means reject everything).
 struct CANAcceptanceFilterConfig
 {
     std::uint32_t extended_can_id = AllSet;

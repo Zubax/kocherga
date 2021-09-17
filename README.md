@@ -270,9 +270,9 @@ int main()
     boot.addNode(&serial_node);
 
     // Add a UAVCAN/CAN node to the bootloader instance.
-    std::optional<kocherga::ICANDriver::Bitrate> can_bitrate;
-    std::optional<std::uint8_t>                  uavcan_can_version;
-    std::optional<kocherga::NodeID>              uavcan_can_node_id;
+    std::optional<kocherga::can::ICANDriver::Bitrate> can_bitrate;
+    std::optional<std::uint8_t>                       uavcan_can_version;
+    std::optional<kocherga::NodeID>                   uavcan_can_node_id;
     if (args)
     {
         if (args->uavcan_can_bitrate.first > 0)
