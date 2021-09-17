@@ -169,6 +169,7 @@ class MyCANDriver final : public kocherga::can::ICANDriver
               const void* const   payload) -> bool override
     {
         const std::chrono::microseconds now = GET_TIME_SINCE_BOOT();
+        // You can use tx_queue_.size() to limit maximum depth of the queue.
         const bool ok = tx_queue_.push(now, force_classic_can, extended_can_id, payload_size, payload);
         pollTxQueue(now);
         return ok;
