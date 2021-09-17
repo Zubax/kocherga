@@ -18,8 +18,6 @@ static constexpr std::uint8_t MaxNodeID = 127U;
 static constexpr std::chrono::microseconds SendTimeout(1'000'000);
 
 /// Frames that are not extended data frames shall always be rejected.
-/// Config with id=mask=0 means that everything should be accepted (beware that some drivers treat this as a special
-/// case that means reject everything).
 struct CANAcceptanceFilterConfig
 {
     std::uint32_t extended_can_id = AllSet;
@@ -28,7 +26,9 @@ struct CANAcceptanceFilterConfig
     static constexpr std::uint32_t AllSet = (1ULL << 29U) - 1U;
 
     /// Constructs a filter that accepts all extended data frames.
-    [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {0, 0}; }
+    /// The mask=0 means that no bits matter. The ID is set to a non-zero value because some CAN drivers treat
+    /// the zero-zero configuration as "reject everything" rather than "accept everything".
+    [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {AllSet, 0}; }
 
     [[nodoscard]] auto operator==(const CANAcceptanceFilterConfig& cfg) const -> bool
     {
