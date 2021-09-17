@@ -200,6 +200,7 @@ class MyCANDriver final : public kocherga::can::ICANDriver
     }
 
     // Some CAN drivers come with built-in queue (e.g., SocketCAN), in which case this will not be needed.
+    // The recommended heap is https://github.com/pavel-kirienko/o1heap.
     kocherga::can::TxQueue tx_queue_(MY_MALLOC, MY_FREE);
 };
 ```

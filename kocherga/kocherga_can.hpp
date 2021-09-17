@@ -121,6 +121,9 @@ public:
 /// Systems that run on bare metal probably will.
 /// Assuming a constant-complexity heap, all methods are constant-complexity instead of push(),
 /// which is linear of the queue depth. The recommended heap is https://github.com/pavel-kirienko/o1heap.
+/// The template arguments are as follows:
+///     MemAllocate(std::size_t) -> void*   // nullptr if out of memory
+///     MemDeallocate(void*) -> void
 template <typename MemAllocate, typename MemDeallocate>
 class TxQueue final
 {
