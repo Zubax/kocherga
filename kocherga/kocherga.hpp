@@ -1144,11 +1144,11 @@ private:
         if (State::AppUpdateInProgress == state_)
         {
             backend_.endWrite();  // Cycle the state to re-init ROM if needed.
-            pending_log_ = {detail::dsdl::Diagnostic::Severity::Warning, "Ongoing update process restarted"};
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Warning, "Ongoing software update restarted"};
         }
         else
         {
-            pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "Update started"};
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "Software update started"};
         }
         state_              = State::AppUpdateInProgress;
         rom_offset_         = 0;
@@ -1162,7 +1162,8 @@ private:
     {
         if (!response)
         {
-            pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "File request timeout or remote error"};
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical,
+                            "Software image file request timeout or file server error"};
             reset(false);
         }
         else
@@ -1178,7 +1179,8 @@ private:
             {
                 if (ok)
                 {
-                    pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "File transfer completed"};
+                    pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice,
+                                    "Software image file transfer completed"};
                 }
                 else
                 {

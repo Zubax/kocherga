@@ -7,7 +7,7 @@
 
 Technical support is provided on the [UAVCAN Forum](https://forum.uavcan.org/).
 
-A standard-compliant implementation of the firmware update server is provided in
+A standard-compliant implementation of the software update server is provided in
 [Yakut](https://github.com/UAVCAN/yakut#updating-node-software).
 
 ## Features
