@@ -38,6 +38,9 @@ separate header file named `kocherga_*.hpp`. Kochergá does not have any compila
 To integrate Kochergá into your application, just include this repository as a git subtree/submodule, or simply
 copy-paste the required header files into your source tree.
 
+For reference, a typical implementation on an ARM Cortex M4 MCU supporting
+UAVCAN/serial (USB+UART) and UAVCAN/CAN (v1+v0) would set you back by about ~32K of flash.
+
 ### Application signature
 
 The bootloader looks for an instance of the `AppInfo` structure located in the ROM image of the application at every
