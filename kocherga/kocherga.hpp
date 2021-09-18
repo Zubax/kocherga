@@ -1177,12 +1177,7 @@ private:
             }
             else
             {
-                if (ok)
-                {
-                    pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice,
-                                    "Software image file transfer completed"};
-                }
-                else
+                if (!ok)
                 {
                     pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "ROM write failure"};
                 }

@@ -225,8 +225,7 @@ TEST_CASE("Bootloader-update-valid")
                                    0));
     (void) bl.poll(2'300ms);  // Results will appear on the SECOND poll.
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'400ms));
-    std::cout << nodes.at(0).popOutput(Node::Output::LogRecordMessage)->toString() << std::endl;
-    std::cout << nodes.at(1).popOutput(Node::Output::LogRecordMessage)->toString() << std::endl;
+    // Completed here.
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'500ms));  // All subsequent calls yield the same Final.
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'600ms));  // Yep.
@@ -487,9 +486,7 @@ TEST_CASE("Bootloader-trigger")
     (void) bl.poll(1'300ms);  // Results will appear on the SECOND poll.
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'400ms));
-    std::cout << nodes.at(0).popOutput(Node::Output::LogRecordMessage)->toString() << std::endl;
-    std::cout << nodes.at(1).popOutput(Node::Output::LogRecordMessage)->toString() << std::endl;
-    std::cout << nodes.at(2).popOutput(Node::Output::LogRecordMessage)->toString() << std::endl;
+    // Completed here.
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'500ms));  // All subsequent calls yield the same Final.
     REQUIRE(kocherga::Final::BootApp == *bl.poll(2'600ms));  // Yep.
 
