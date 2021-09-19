@@ -382,6 +382,13 @@ It is recommended to copy-paste relevant pieces from Kochergá instead; specific
 
 ## Revisions
 
+### v0.2
+
+- Add helper `kocherga::can::TxQueue`.
+- Promote `kocherga::CRC64` to public API.
+- Add optional support for legacy app descriptors to simplify integration into existing projects.
+- Minor doc and API enhancements.
+
 ### v0.1
 
 The first revision to go public.
