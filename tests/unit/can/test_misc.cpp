@@ -67,6 +67,100 @@ TEST_CASE("can::BlockAllocator")
     REQUIRE(counter == 0);
 }
 
+TEST_CASE("can::TxQueue")
+{
+    using std::chrono_literals::operator""us;
+    using kocherga::can::TxQueue;
+
+    constexpr auto DepthLimit = 4;
+    std::int64_t   depth      = 0;
+    const auto     alloc      = [&depth](const std::size_t sz) -> void* {
+        void* const out = (depth < DepthLimit) ? std::malloc(sz) : nullptr;
+        if (out != nullptr)
+        {
+            depth++;
+        }
+        return out;
+    };
+    const auto dealloc = [&depth](void* const ptr) {
+        if (ptr != nullptr)
+        {
+            depth--;
+            std::free(ptr);
+        }
+    };
+
+    std::optional<TxQueue<std::function<void*(std::size_t)>, std::function<void(void*)>>> txq;
+    txq.emplace(alloc, dealloc);
+
+    REQUIRE(txq->size() == 0);
+    REQUIRE(depth == 0);
+    REQUIRE(txq->peek() == nullptr);
+    txq->pop();  // No effect.
+    REQUIRE(txq->peek() == nullptr);
+    REQUIRE(depth == 0);
+
+    REQUIRE(txq->push(10us, true, 1234, 10, "0123456789"));
+    REQUIRE(depth == 1);
+    REQUIRE(txq->push(20us, false, 1233, 0, ""));
+    REQUIRE(depth == 2);
+    REQUIRE(txq->push(30us, true, 1235, 3, "abc"));
+    REQUIRE(depth == 3);
+    REQUIRE(txq->push(40us, false, 1234, 3, "def"));
+    REQUIRE(depth == 4);
+    REQUIRE(!txq->push(50us, true, 1234, 3, "ghi"));  // Out of memory
+    REQUIRE(!txq->push(50us, true, 1234, 3, "ghi"));  // Out of memory
+    REQUIRE(depth == 4);
+    REQUIRE(txq->size() == 4);
+
+    const auto* qi = txq->peek();
+    REQUIRE(qi);
+    REQUIRE(qi->timestamp == 20us);
+    REQUIRE(!qi->force_classic_can);
+    REQUIRE(qi->extended_can_id == 1233);
+    REQUIRE(qi->payload_size == 0);
+    txq->pop();
+    REQUIRE(depth == 3);
+    REQUIRE(txq->size() == 3);
+
+    qi = txq->peek();
+    REQUIRE(qi);
+    REQUIRE(qi->timestamp == 10us);
+    REQUIRE(qi->force_classic_can);
+    REQUIRE(qi->extended_can_id == 1234);
+    REQUIRE(qi->payload_size == 10);
+    REQUIRE(0 == std::memcmp(qi->payload, "0123456789", 10));
+    txq->pop();
+    REQUIRE(depth == 2);
+    REQUIRE(txq->size() == 2);
+
+    qi = txq->peek();
+    REQUIRE(qi);
+    REQUIRE(qi->timestamp == 40us);
+    REQUIRE(!qi->force_classic_can);
+    REQUIRE(qi->extended_can_id == 1234);
+    REQUIRE(qi->payload_size == 3);
+    REQUIRE(0 == std::memcmp(qi->payload, "def", 3));
+    txq->pop();
+    REQUIRE(depth == 1);
+    REQUIRE(txq->size() == 1);
+
+    qi = txq->peek();
+    REQUIRE(qi);
+    REQUIRE(qi->timestamp == 30us);
+    REQUIRE(qi->force_classic_can);
+    REQUIRE(qi->extended_can_id == 1235);
+    REQUIRE(qi->payload_size == 3);
+    REQUIRE(0 == std::memcmp(qi->payload, "abc", 3));
+    // no pop
+
+    // Destructor cleanup check.
+    REQUIRE(depth == 1);
+    REQUIRE(txq->size() == 1);
+    txq.reset();
+    REQUIRE(depth == 0);
+}
+
 TEST_CASE("can::parseFrame")
 {
     using kocherga::can::detail::parseFrame;

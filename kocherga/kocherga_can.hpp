@@ -12,6 +12,11 @@
 
 namespace kocherga::can
 {
+static constexpr std::uint8_t MaxNodeID = 127U;
+
+/// Outgoing frames should be canceled if they could not be emitted in this time.
+static constexpr std::chrono::microseconds SendTimeout(1'000'000);
+
 /// Frames that are not extended data frames shall always be rejected.
 struct CANAcceptanceFilterConfig
 {
@@ -21,7 +26,9 @@ struct CANAcceptanceFilterConfig
     static constexpr std::uint32_t AllSet = (1ULL << 29U) - 1U;
 
     /// Constructs a filter that accepts all extended data frames.
-    [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {0, 0}; }
+    /// The mask=0 means that no bits matter. The ID is set to a non-zero value because some CAN drivers treat
+    /// the zero-zero configuration as "reject everything" rather than "accept everything".
+    [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {AllSet, 0}; }
 
     [[nodoscard]] auto operator==(const CANAcceptanceFilterConfig& cfg) const -> bool
     {
@@ -111,7 +118,120 @@ public:
     constexpr static std::array<std::uint8_t, 16> DLCToLength{{0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64}};
 };
 
-static constexpr std::uint8_t MaxNodeID = 127U;
+/// This is an isolated component intended for use in embedded applications for queueing TX CAN frames.
+/// Systems that leverage higher-level CAN backends (like SocketCAN in Zephyr/NuttX/Linux) will not need this.
+/// Systems that run on bare metal probably will.
+/// Assuming a constant-complexity heap, all methods are constant-complexity instead of push(),
+/// which is linear of the queue depth. The recommended heap is https://github.com/pavel-kirienko/o1heap.
+/// The template arguments are as follows:
+///     MemAllocate(std::size_t) -> void*   // nullptr if out of memory
+///     MemDeallocate(void*) -> void
+template <typename MemAllocate, typename MemDeallocate>
+class TxQueue final
+{
+public:
+    struct Item
+    {
+        std::chrono::microseconds timestamp{};
+        bool                      force_classic_can{};
+        std::uint32_t             extended_can_id{};
+        std::size_t               payload_size{};
+        const std::uint8_t*       payload{};
+    };
+
+    TxQueue(const MemAllocate& alloc, const MemDeallocate& dealloc) : alloc_(alloc), dealloc_(dealloc) {}
+
+    ~TxQueue() { clear(); }
+
+    TxQueue(const TxQueue&) = delete;
+    TxQueue(TxQueue&&)      = delete;
+    auto operator=(const TxQueue&) -> TxQueue& = delete;
+    auto operator=(TxQueue&&) -> TxQueue& = delete;
+
+    /// The timestamp of the frame is the time when it is enqueued (created).
+    /// It is kept in the queue to allow the caller to determine how long each frame was waiting for.
+    /// When reading frames back using peek(), the caller should check if the frame has timed out by subtracting
+    /// its timestamp from the current time. The default timeout of one second is adequate.
+    /// Returns true on success, false on OOM.
+    [[nodiscard]] auto push(const std::chrono::microseconds timestamp,
+                            const bool                      force_classic_can,
+                            const std::uint32_t             extended_can_id,
+                            const std::size_t               payload_size,
+                            const void* const               payload) -> bool
+    {
+        if (void* const raw_ptr = alloc_(std::size_t(sizeof(ListItem) + payload_size)))
+        {
+            auto* const payload_storage = static_cast<std::uint8_t*>(raw_ptr) + sizeof(ListItem);
+            (void) std::memmove(payload_storage, payload, payload_size);
+            auto* const item        = new (raw_ptr) ListItem{};
+            item->timestamp         = timestamp;
+            item->force_classic_can = force_classic_can;
+            item->extended_can_id   = extended_can_id;
+            item->payload_size      = payload_size;
+            item->payload           = payload_storage;
+            ListItem* li            = list_;
+            if ((li == nullptr) || (li->extended_can_id > extended_can_id))
+            {
+                item->next = li;
+                list_      = item;
+            }
+            else
+            {
+                while ((li != nullptr) && (li->next != nullptr) && (li->next->extended_can_id <= extended_can_id))
+                {
+                    li = li->next;
+                }
+                item->next = li->next;
+                li->next   = item;
+            }
+            depth_++;
+            return true;
+        }
+        return false;
+    }
+
+    /// View the next frame to transmit (top of the queue). Call pop() after you're done with this frame.
+    /// Be sure to check the timestamp and discard the frame if it is already expired.
+    /// Returns nullptr if the queue is empty.
+    [[nodiscard]] auto peek() const -> const Item* { return list_; }
+
+    /// Remove the frame returned by peek() from the top of the queue. Invalidates the pointer returned by peek().
+    /// Has no effect if the queue is empty.
+    void pop()
+    {
+        if (list_ != nullptr)
+        {
+            auto* const d = list_;
+            list_         = list_->next;
+            dealloc_(d);
+            assert(depth_ > 0);
+            depth_--;
+        }
+    }
+
+    /// Remove all elements from the queue.
+    void clear()
+    {
+        while (list_ != nullptr)
+        {
+            pop();
+        }
+    }
+
+    /// Number of frames that are currently held in the queue.
+    [[nodiscard]] auto size() const -> std::size_t { return depth_; }
+
+private:
+    struct ListItem final : public Item
+    {
+        ListItem* next = nullptr;
+    };
+
+    MemAllocate   alloc_;
+    MemDeallocate dealloc_;
+    ListItem*     list_  = nullptr;
+    std::size_t   depth_ = 0;
+};
 
 namespace detail
 {
@@ -170,7 +290,7 @@ private:
 
 inline auto makePseudoUniqueID(const SystemInfo::UniqueID& uid) -> std::uint64_t
 {
-    ::kocherga::detail::CRC64 crc;
+    CRC64 crc;
     crc.update(uid.data(), uid.size());
     return crc.get();
 }

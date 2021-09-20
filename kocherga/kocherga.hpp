@@ -13,7 +13,7 @@
 #include <type_traits>
 
 #define KOCHERGA_VERSION_MAJOR 0  // NOLINT
-#define KOCHERGA_VERSION_MINOR 1  // NOLINT
+#define KOCHERGA_VERSION_MINOR 2  // NOLINT
 
 namespace kocherga
 {
@@ -226,13 +226,6 @@ public:
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// Internal use only.
-namespace detail
-{
-static constexpr auto BitsPerByte = 8U;
-
-static constexpr std::chrono::microseconds DefaultTransferIDTimeout{2'000'000};  ///< Default taken from Specification.
-
 /// This is used to verify integrity of the application and other data.
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to
@@ -278,7 +271,7 @@ public:
         for (auto it = std::rbegin(out); it != rend; ++it)
         {
             *it = static_cast<std::uint8_t>(x);
-            x >>= BitsPerByte;
+            x >>= 8U;
         }
         return out;
     }
@@ -297,6 +290,15 @@ private:
     std::uint64_t crc_ = Xor;
 };
 
+// --------------------------------------------------------------------------------------------------------------------
+
+/// Internal use only.
+namespace detail
+{
+static constexpr auto BitsPerByte = 8U;
+
+static constexpr std::chrono::microseconds DefaultTransferIDTimeout{2'000'000};  ///< Default taken from Specification.
+
 /// Detects the application in the ROM, verifies its integrity, and retrieves the information about it.
 class AppLocator final
 {
@@ -306,17 +308,18 @@ public:
     {}
 
     /// Returns the AppInfo if the app is found and its integrity is intact. Otherwise, returns an empty option.
-    [[nodiscard]] auto identifyApplication() const -> std::optional<AppInfo>
+    /// If the allow_legacy parameter is set, legacy app descriptors will be accepted, too.
+    [[nodiscard]] auto identifyApplication(const bool allow_legacy = false) const -> std::optional<AppInfo>
     {
         for (std::size_t offset = 0; offset < max_app_size_; offset += AppDescriptor::MagicSize)
         {
             AppDescriptor desc{};
             if (sizeof(desc) == backend_.read(offset, reinterpret_cast<std::byte*>(&desc), sizeof(desc)))
             {
-                if (desc.isValid(max_app_size_) &&
-                    validateImageCRC(offset + AppDescriptor::CRCOffset,
-                                     static_cast<std::size_t>(desc.getAppInfo().image_size),
-                                     desc.getAppInfo().image_crc))
+                const bool match = desc.isValid(max_app_size_) || (allow_legacy && desc.isValidLegacy(max_app_size_));
+                if (match && validateImageCRC(offset + AppDescriptor::CRCOffset,
+                                              static_cast<std::size_t>(desc.getAppInfo().image_size),
+                                              desc.getAppInfo().image_crc))
                 {
                     return desc.getAppInfo();
                 }
@@ -343,6 +346,14 @@ private:
                    std::equal(signature.begin(), signature.end(), ReferenceSignature.begin()) &&
                    (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
                    ((app_info.image_size % MagicSize) == 0);
+        }
+
+        [[nodiscard]] auto isValidLegacy(const std::size_t max_app_size) const -> bool
+        {
+            static constexpr auto SizeAlignmentRequirement = 4U;  ///< Relaxed requirement to enhance compatibility.
+            return std::equal(signature.begin(), signature.end(), ReferenceSignature.begin()) &&
+                   (app_info.image_size > 0) && (app_info.image_size <= max_app_size) &&
+                   ((app_info.image_size % SizeAlignmentRequirement) == 0);
         }
 
         [[nodiscard]] auto getAppInfo() const -> const AppInfo& { return app_info; }
@@ -541,6 +552,8 @@ public:
         }
         return false;
     }
+
+    [[nodiscard]] auto getNumberOfNodes() const -> std::uint8_t { return num_nodes_; }
 
     [[nodiscard]] auto trigger(const INode* const        node,
                                const NodeID              file_server_node_id,
@@ -988,22 +1001,32 @@ public:
     /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the update.
     /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
     /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
+    ///
+    /// If the allow_legacy_app_descriptors option is set, the bootloader will also accept legacy descriptors alongside
+    /// the new format. This option should be set only if the bootloader is introduced to a product that was using
+    /// the old app descriptor format in the past; refer to the PX4 Brickproof Bootloader for details. If you are not
+    /// sure, leave the default value.
     Bootloader(IROMBackend&               rom_backend,
                const SystemInfo&          system_info,
                const std::size_t          max_app_size,
                const bool                 linger,
-               const std::chrono::seconds boot_delay = std::chrono::seconds(0)) :
+               const std::chrono::seconds boot_delay                   = std::chrono::seconds(0),
+               const bool                 allow_legacy_app_descriptors = false) :
         max_app_size_(max_app_size),
         boot_delay_(boot_delay),
         backend_(rom_backend),
         presentation_(system_info, *this),
-        linger_(linger)
+        linger_(linger),
+        allow_legacy_app_descriptors_(allow_legacy_app_descriptors)
     {}
 
     /// Nodes shall be registered using this method after the instance is constructed.
     /// The return value is true on success, false if there are too many nodes already or this node is already
     /// registered (no effect in this case).
     [[nodiscard]] auto addNode(INode* const node) -> bool { return presentation_.addNode(node); }
+
+    /// The number of nodes added with addNode(). Zero by default (obviously).
+    [[nodiscard]] auto getNumberOfNodes() const -> std::uint8_t { return presentation_.getNumberOfNodes(); }
 
     /// Non-blocking periodic state update.
     /// The outer logic should invoke this method after any hardware event (for example, if WFE/WFI is used on an
@@ -1089,7 +1112,7 @@ private:
         {
             backend_.endWrite();
         }
-        app_info_ = detail::AppLocator(backend_, max_app_size_).identifyApplication();
+        app_info_ = detail::AppLocator(backend_, max_app_size_).identifyApplication(allow_legacy_app_descriptors_);
         final_.reset();
         if (app_info_)
         {
@@ -1121,11 +1144,11 @@ private:
         if (State::AppUpdateInProgress == state_)
         {
             backend_.endWrite();  // Cycle the state to re-init ROM if needed.
-            pending_log_ = {detail::dsdl::Diagnostic::Severity::Warning, "Ongoing update process restarted"};
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Warning, "Ongoing software update restarted"};
         }
         else
         {
-            pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "Update started"};
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "Software update started"};
         }
         state_              = State::AppUpdateInProgress;
         rom_offset_         = 0;
@@ -1139,7 +1162,8 @@ private:
     {
         if (!response)
         {
-            pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "File request timeout or remote error"};
+            pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical,
+                            "Software image file request timeout or file server error"};
             reset(false);
         }
         else
@@ -1153,11 +1177,7 @@ private:
             }
             else
             {
-                if (ok)
-                {
-                    pending_log_ = {detail::dsdl::Diagnostic::Severity::Notice, "File transfer completed"};
-                }
-                else
+                if (!ok)
                 {
                     pending_log_ = {detail::dsdl::Diagnostic::Severity::Critical, "ROM write failure"};
                 }
@@ -1172,6 +1192,7 @@ private:
     IROMBackend&      backend_;
     detail::Presenter presentation_;
     const bool        linger_;
+    const bool        allow_legacy_app_descriptors_;
 
     std::chrono::microseconds uptime_{};
     bool                      inited_ = false;
@@ -1226,7 +1247,7 @@ class VolatileStorage
 {
 public:
     /// The amount of memory required to store the data. This is the size of the container plus 8 bytes for the CRC.
-    static constexpr auto StorageSize = sizeof(Container) + detail::CRC64::Size;
+    static constexpr auto StorageSize = sizeof(Container) + CRC64::Size;  // NOLINT
 
     explicit VolatileStorage(std::uint8_t* const location) : ptr_(location) {}
 
@@ -1234,7 +1255,7 @@ public:
     /// Returns an empty option if no data is available (in that case the storage is not erased).
     [[nodiscard]] auto take() -> std::optional<Container>
     {
-        detail::CRC64 crc;
+        CRC64 crc;
         crc.update(ptr_, StorageSize);
         if (crc.isResidueCorrect())
         {
@@ -1250,15 +1271,13 @@ public:
     void store(const Container& data)
     {
         (void) std::memmove(ptr_, &data, sizeof(Container));
-        detail::CRC64 crc;
+        CRC64 crc;
         crc.update(ptr_, sizeof(Container));
         const auto crc_ptr = ptr_ + sizeof(Container);  // NOLINT NOSONAR pointer arithmetic
-        (void) std::memmove(crc_ptr, crc.getBytes().data(), detail::CRC64::Size);
+        (void) std::memmove(crc_ptr, crc.getBytes().data(), CRC64::Size);
     }
 
 protected:
-    static_assert(std::is_trivial_v<Container>, "Container shall be a trivial type.");
-
     static constexpr std::uint8_t EraseFillValue = 0xCA;
 
     std::uint8_t* const ptr_;

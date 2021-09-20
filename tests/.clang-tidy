@@ -31,6 +31,8 @@ Checks: >-
   -cert-msc50-cpp,
   -*-function-size,
   -*-easily-swappable-parameters,
+  -*-owning-memory,
+  -*-malloc,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 AnalyzeTemporaryDtors: false

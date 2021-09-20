@@ -64,3 +64,21 @@ TEST_CASE("AppLocator-bad-short")
     REQUIRE(!kocherga::detail::AppLocator(rom, 1024U).identifyApplication());
     REQUIRE(!kocherga::detail::AppLocator(rom, 10U).identifyApplication());
 }
+
+TEST_CASE("AppLocator-legacy")
+{
+    const util::FileROMBackend rom(util::getImagePath("com.zubax.telega-1-0.3.68620b82.application.bin"));
+
+    const kocherga::detail::AppLocator loc_ok(rom, 512UL * 1024U);
+
+    REQUIRE(!loc_ok.identifyApplication());
+    auto info = loc_ok.identifyApplication(true);
+    REQUIRE(info);
+    REQUIRE(info->image_size == 271'440U);
+    REQUIRE(info->image_crc == 0x9EA4'7D98'DCC7'B58AULL);
+    REQUIRE(info->version.at(0) == 0);
+    REQUIRE(info->version.at(1) == 3);
+
+    const kocherga::detail::AppLocator loc_too_small(rom, 128UL * 1024U);
+    REQUIRE(!loc_too_small.identifyApplication());
+}
