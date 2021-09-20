@@ -186,7 +186,7 @@ class MyCANDriver final : public kocherga::can::ICANDriver
 
     void pollTxQueue(const std::chrono::microseconds now)
     {
-        while (const auto* const item = tx_queue_.peek())       // Take the top frame from the prioritized queue.
+        if (const auto* const item = tx_queue_.peek())         // Take the top frame from the prioritized queue.
         {
             const bool expired = now > (item->timestamp + kocherga::can::SendTimeout);  // Drop expired frames.
             if (expired || CAN_PUSH(item->force_classic_can,   // force_classic_can means no DLE, no BRS.
@@ -196,16 +196,12 @@ class MyCANDriver final : public kocherga::can::ICANDriver
             {
                 tx_queue_.pop();    // Enqueued into the HW TX mailbox or expired -- remove from the SW queue.
             }
-            else
-            {
-                break;
-            }
         }
     }
 
     // Some CAN drivers come with built-in queue (e.g., SocketCAN), in which case this will not be needed.
     // The recommended heap is https://github.com/pavel-kirienko/o1heap.
-    kocherga::can::TxQueue tx_queue_(MY_MALLOC, MY_FREE);
+    kocherga::can::TxQueue<void*(*)(std::size_t), void(*)(void*)> tx_queue_(&MY_MALLOC, &MY_FREE);
 };
 ```
 
