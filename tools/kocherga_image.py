@@ -519,7 +519,16 @@ def _main() -> int:
             data = bytearray(f.read())
         offset = data.find(AppDescriptor.get_search_prefix(model.byte_order, uninitialized_only=True))
         if offset < 0:
-            _logger.fatal(f"Side-patching failure: an uninitialized app descriptor could not be found in {path!r}")
+            if args.lazy:
+                _logger.info(
+                    f"Side-patching of {path!r} is skipped because the file does not contain an "
+                    f"uninitialized app descriptor and --lazy mode is enabled."
+                )
+                continue
+            _logger.fatal(
+                f"Side-patching failure: an uninitialized app descriptor could not be found in {path!r}. "
+                f"If this is intentional, use --lazy to squelch this error."
+            )
             return 1
         _logger.info(f"Side-patching {path!r} at offset {offset} bytes")
         data[offset : offset + AppDescriptor.SIZE] = model.app_descriptor.pack(model.byte_order)
