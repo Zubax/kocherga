@@ -456,9 +456,10 @@ def _main() -> int:
 
     # Read the input file. All operations done in-memory.
     with open(args.firmware_image, "rb") as in_file:
-        model = ImageModel.construct_from_image(in_file.read(), uninitialized_only=True)
+        img = in_file.read()
+        model = ImageModel.construct_from_image(img, uninitialized_only=True)
         if not model:
-            existing_model = ImageModel.construct_from_image(in_file.read())
+            existing_model = ImageModel.construct_from_image(img)
             _logger.fatal(
                 f"An uninitialized app descriptor could not be found in {args.firmware_image!r}. "
                 f"Existing app descriptor: {existing_model.app_descriptor if existing_model else None!r}"
