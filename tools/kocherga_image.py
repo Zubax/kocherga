@@ -439,6 +439,12 @@ def _main() -> int:
         help="File(s) where the same descriptor will be copied into (e.g., ELF executables). "
         "Use multiple times to patch several files at once.",
     )
+    parser.add_argument(
+        "--lazy",
+        action="store_true",
+        help="Exit silently if the image does not contain empty app descriptors (i.e., already processed). "
+        "This option is helpful for integration with build systems.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -460,8 +466,15 @@ def _main() -> int:
         model = ImageModel.construct_from_image(img, uninitialized_only=True)
         if not model:
             existing_model = ImageModel.construct_from_image(img)
+            if existing_model and args.lazy:
+                _logger.warning(
+                    f"Image {args.firmware_image!r} does not require processing because it already contains a "
+                    f"valid app descriptor: {existing_model.app_descriptor!r}"
+                )
+                return 0
             _logger.fatal(
                 f"An uninitialized app descriptor could not be found in {args.firmware_image!r}. "
+                f"If this is intentional, use --lazy to squelch this error. "
                 f"Existing app descriptor: {existing_model.app_descriptor if existing_model else None!r}"
             )
             return 1
