@@ -459,6 +459,7 @@ def _main() -> int:
     if args.firmware_image == "self-test":
         _test()
         return 0
+    _logger.debug(f"CLI arguments: {args}")
 
     # Read the input file. All operations done in-memory.
     with open(args.firmware_image, "rb") as in_file:
@@ -467,7 +468,7 @@ def _main() -> int:
         if not model:
             existing_model = ImageModel.construct_from_image(img)
             if existing_model and args.lazy:
-                _logger.warning(
+                _logger.info(
                     f"Image {args.firmware_image!r} does not require processing because it already contains a "
                     f"valid app descriptor: {existing_model.app_descriptor!r}"
                 )
