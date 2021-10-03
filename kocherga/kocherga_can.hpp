@@ -30,7 +30,7 @@ struct CANAcceptanceFilterConfig
     /// the zero-zero configuration as "reject everything" rather than "accept everything".
     [[nodiscard]] static auto makePromiscuous() -> CANAcceptanceFilterConfig { return {AllSet, 0}; }
 
-    [[nodoscard]] auto operator==(const CANAcceptanceFilterConfig& cfg) const -> bool
+    [[nodiscard]] auto operator==(const CANAcceptanceFilterConfig& cfg) const -> bool
     {
         return (extended_can_id == cfg.extended_can_id) && (mask == cfg.mask);
     }
@@ -48,7 +48,7 @@ public:
         std::uint32_t arbitration{};
         std::uint32_t data{};  ///< This is ignored if only Classic CAN is supported.
 
-        [[nodoscard]] auto operator==(const Bitrate& rhs) const -> bool
+        [[nodiscard]] auto operator==(const Bitrate& rhs) const -> bool
         {
             return (data == rhs.data) && (arbitration == rhs.arbitration);
         }
@@ -951,7 +951,7 @@ public:
     virtual void               deallocate(const void* const ptr)         = 0;
 
     template <typename T, typename... Args>
-    [[nodoscard]] auto construct(Args&&... ag) -> T*
+    [[nodiscard]] auto construct(Args&&... ag) -> T*
     {
         if (void* const p = allocate(sizeof(T)))
         {
@@ -1619,7 +1619,7 @@ private:
     }
 
     template <std::size_t PayloadSize>
-    [[nodoscard]] auto send(const std::array<std::uint8_t, PayloadSize>& payload) -> bool
+    [[nodiscard]] auto send(const std::array<std::uint8_t, PayloadSize>& payload) -> bool
     {
         static_assert(PayloadSize <= 8);
         CRC16CCITT discriminator_crc;
@@ -2016,7 +2016,7 @@ private:
     }
 
     template <std::size_t PayloadSize>
-    [[nodoscard]] auto send(const bool                                   force_classic_can,
+    [[nodiscard]] auto send(const bool                                   force_classic_can,
                             const SubjectID                              sid,
                             const std::array<std::uint8_t, PayloadSize>& payload) -> bool
     {
