@@ -5,8 +5,6 @@
 #pragma once
 
 #include "kocherga.hpp"
-#include <cassert>
-#include <cstdlib>
 #include <variant>
 
 namespace kocherga::serial
@@ -103,7 +101,7 @@ private:
     [[nodiscard]] auto flush() -> bool
     {
         const auto sz = lookahead_.size();
-        assert(sz < std::numeric_limits<std::uint8_t>::max());
+        KOCHERGA_ASSERT(sz < std::numeric_limits<std::uint8_t>::max());
         if (!output(static_cast<std::uint8_t>(sz + 1U)))
         {
             return false;
@@ -115,7 +113,7 @@ private:
                 return false;
             }
         }
-        assert(lookahead_.size() == 0);
+        KOCHERGA_ASSERT(lookahead_.size() == 0);
         return true;
     }
 
@@ -184,7 +182,7 @@ public:
             return bt;
         }
         const auto old_code = code_;
-        assert(bt >= 1);
+        KOCHERGA_ASSERT(bt >= 1);
         copy_ = static_cast<std::uint8_t>(bt - 1);
         code_ = bt;
         if (old_code != Top)
@@ -292,7 +290,7 @@ public:
         }
         else
         {
-            assert(std::holds_alternative<COBSDecoder::Nothing>(dec));  // Stuff byte, skip silently.
+            KOCHERGA_ASSERT(std::holds_alternative<COBSDecoder::Nothing>(dec));  // Stuff byte, skip silently.
         }
         return out;
     }
@@ -512,7 +510,8 @@ private:
             using kocherga::detail::dsdl::PnPNodeIDAllocation;
             constexpr std::int64_t interval_usec =
                 std::chrono::duration_cast<std::chrono::microseconds>(PnPNodeIDAllocation::MaxRequestInterval).count();
-            const std::chrono::microseconds delay{(std::rand() * interval_usec) / RAND_MAX};  // NOSONAR rand() ok
+            const std::chrono::microseconds delay{(getRandomByte() * interval_usec) /
+                                                  std::numeric_limits<uint8_t>::max()};
             pnp_next_request_at_ = uptime + delay;
             std::array<std::uint8_t, PnPNodeIDAllocation::MessageSize_v2> buf{};
             std::uint8_t*                                                 ptr = buf.data();

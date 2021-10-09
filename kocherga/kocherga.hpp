@@ -15,6 +15,11 @@
 #define KOCHERGA_VERSION_MAJOR 0  // NOLINT NOSONAR
 #define KOCHERGA_VERSION_MINOR 2  // NOLINT NOSONAR
 
+#ifndef KOCHERGA_ASSERT
+#    include <cassert>
+#    define KOCHERGA_ASSERT(x) assert(x)
+#endif
+
 namespace kocherga
 {
 /// Semantic version number pair: major then minor.
@@ -223,6 +228,11 @@ public:
     auto operator=(const IROMBackend&) -> IROMBackend& = delete;
     auto operator=(IROMBackend&&) -> IROMBackend& = delete;
 };
+
+// --------------------------------------------------------------------------------------------------------------------
+
+/// This function is used in drivers to generate
+auto getRandomByte() -> uint8_t;
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -1022,6 +1032,8 @@ public:
     {}
 
     /// Nodes shall be registered using this method after the instance is constructed.
+    /// Lifetime of the nodes is managed outside of the Bootloader class.
+    /// Bootloader does NOT manage lifetimes of nodes.
     /// The return value is true on success, false if there are too many nodes already or this node is already
     /// registered (no effect in this case).
     [[nodiscard]] auto addNode(INode* const node) -> bool { return presentation_.addNode(node); }

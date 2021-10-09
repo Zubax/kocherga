@@ -109,9 +109,80 @@ This is a stripped-down example; the full API documentation is available in the 
 
 The integration test application available under `/tests/integration/bootloader/` may also be a good reference.
 
+#### Configuring Kochergá
+##### Using random number generation
+
+During normal operations through both serial and CAN interfaces,Kochergá needs a source 
+of random numbers.
+The following function specify this source, which you must configure yourself.
+You can use this implementation, based on `std::rand` function from C standard library.
+
+```c++
+#include <cstdlib>
+
+auto kocherga::getRandomByte() -> std::uint8_t {
+    return static_cast<std::uint8_t>(std::rand() * std::numeric_limits<std::uint8_t>::max() / RAND_MAX);
+}
+
+int main(){
+    std::srand(SOME_INITIALIZATION_FUNCTION());
+    // bootloader implementation below
+    return 0;
+}
+```
+
+An alternative is to use a generator from C++ standard library:
+
+```c++
+#include <random>
+
+auto kocherga::getRandomByte() -> std::uint8_t {
+    static std::mt19937 rd{SOME_INITIALIZATION_FUNCTION()};
+    return static_cast<std::uint8_t>(rd() * std::numeric_limits<std::uint8_t>::max() / std::mt19937::max());
+}
+```
+
+In both cases beware that you need to initialize the psudorandom sequence
+with `SOME_INITIALIZATION_FUNCTION()`. This function should retrieve a true
+random or unique value (such as number of seconds since epoch).
+Look for more information in the respectful documentation of both `srand` and `std::mt19937`.
+
+##### Providing custom assert macros
+
+Kochergá uses `assert` macro from stadard C library to check for it's invariants.
+If this is undesireable in your project, you can redefine the following macros.
+You can do this before including Kochergá or globally in your build system.
+
+```c++
+#define KOCHERGA_ASSERT(x) some_other_assert(x, ...);
+#include <kocherga.hpp>
+```
+
+You can disable all internal assertions like this:
+
+```c++
+#define KOCHERGA_ASSERT(x) (void)(x);
+#include <kocherga.hpp>
+```
+
+##### Using Kochergá without heap
+
+If your implementation of buffers is stack-only and you don't want to use global heap
+from C standard library, implement `operator delete` in your code something like this:
+
+```c++
+void operator delete(void*) noexcept { std::abort(); }
+```
+
+This is needed as Kochergá uses virtual destructors, code generation for which includes 
+an `operator delete` even if deleting an object through pointer to it's base class is 
+not used in your entire application.
+
 #### ROM interface
 
 The ROM backend abstracts the specifics of reading and writing your ROM (usually this is the on-chip flash memory).
+Usually this memory should NOT be the same memory as the bootloader. 
+Beware of that and design `WRITE_ROM` and `READ_ROM` functions accordingly.
 
 ```c++
 class MyROMBackend final : public kocherga::IROMBackend
