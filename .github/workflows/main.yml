@@ -21,7 +21,11 @@ jobs:
             cxx-compiler: clang++
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt update && sudo apt install gcc-multilib g++-multilib clang-tidy-12 ncat
+      - run: |
+          sudo apt update
+          sudo apt install gcc-multilib g++-multilib clang-tidy-12 ncat
+          sudo apt install "linux-*-extra-$(uname -r)"
+          python -m pip --disable-pip-version-check install yakut~=0.7
       - run: >
           cmake
           -B ${{ github.workspace }}/build
@@ -30,11 +34,9 @@ jobs:
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx-compiler }}
           tests
       - working-directory: ${{github.workspace}}/build
-        run: make VERBOSE=1
-      - working-directory: ${{github.workspace}}/build
         run: |
-          python -m pip --disable-pip-version-check install yakut~=0.7
           yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
+          make VERBOSE=1
           make test
       - uses: actions/upload-artifact@v2
         if: always()
@@ -59,7 +61,11 @@ jobs:
             cxx-compiler: clang++
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt update && sudo apt install gcc-multilib g++-multilib ncat
+      - run: |
+          sudo apt update
+          sudo apt install gcc-multilib g++-multilib ncat
+          sudo apt install "linux-*-extra-$(uname -r)"
+          python -m pip --disable-pip-version-check install yakut~=0.7
       - run: >
           cmake
           -B ${{ github.workspace }}/build
@@ -69,10 +75,8 @@ jobs:
           -DNO_STATIC_ANALYSIS=1
           tests
       - working-directory: ${{github.workspace}}/build
-        run: make VERBOSE=1
-      - working-directory: ${{github.workspace}}/build
         run: |
-          python -m pip --disable-pip-version-check install yakut~=0.7
+          make VERBOSE=1
           yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
           make test
       - uses: actions/upload-artifact@v2
@@ -124,7 +128,11 @@ jobs:
         fetch-depth: 0
 
     - name: Install Dependencies
-      run: sudo apt update && sudo apt install gcc-multilib g++-multilib
+      run: |
+        sudo apt update
+        sudo apt install gcc-multilib g++-multilib
+        sudo apt install "linux-*-extra-$(uname -r)"
+        python -m pip --disable-pip-version-check install yakut~=0.7
 
     - name: Set up JDK
       uses: actions/setup-java@v1
@@ -159,6 +167,7 @@ jobs:
       run: |
         cmake tests -DCMAKE_BUILD_TYPE=Debug -DNO_STATIC_ANALYSIS=1 -DCMAKE_C_FLAGS='-DNDEBUG=1'
         build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} make all
+        yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
         make test
         gcov --preserve-paths --long-file-names $(find CMakeFiles/test_cov.dir -name '*.gcno')
 
