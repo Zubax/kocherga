@@ -33,6 +33,7 @@ jobs:
         run: make VERBOSE=1
       - working-directory: ${{github.workspace}}/build
         run: |
+          python -m pip --disable-pip-version-check install yakut~=0.7
           yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
           make test
       - uses: actions/upload-artifact@v2
@@ -71,6 +72,7 @@ jobs:
         run: make VERBOSE=1
       - working-directory: ${{github.workspace}}/build
         run: |
+          python -m pip --disable-pip-version-check install yakut~=0.7
           yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
           make test
       - uses: actions/upload-artifact@v2
