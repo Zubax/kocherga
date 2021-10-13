@@ -2,6 +2,10 @@ name: Main Workflow
 
 on: [push, pull_request]
 
+env:
+  YAKUT_COMPILE_OUTPUT: "${{ github.workspace }}"
+  YAKUT_PATH:           "${{ github.workspace }}"
+
 jobs:
   debug:
     runs-on: ubuntu-latest
@@ -28,7 +32,9 @@ jobs:
       - working-directory: ${{github.workspace}}/build
         run: make VERBOSE=1
       - working-directory: ${{github.workspace}}/build
-        run: make test
+        run: |
+          yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
+          make test
       - uses: actions/upload-artifact@v2
         if: always()
         with:
@@ -64,7 +70,9 @@ jobs:
       - working-directory: ${{github.workspace}}/build
         run: make VERBOSE=1
       - working-directory: ${{github.workspace}}/build
-        run: make test
+        run: |
+          yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
+          make test
       - uses: actions/upload-artifact@v2
         if: always()
         with:
