@@ -21,7 +21,7 @@ jobs:
             cxx-compiler: clang++
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt update && sudo apt install gcc-multilib g++-multilib clang-tidy-12 clang-format-12
+      - run: sudo apt update && sudo apt install gcc-multilib g++-multilib clang-tidy-12 ncat
       - run: >
           cmake
           -B ${{ github.workspace }}/build
@@ -59,7 +59,7 @@ jobs:
             cxx-compiler: clang++
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt update && sudo apt install gcc-multilib g++-multilib
+      - run: sudo apt update && sudo apt install gcc-multilib g++-multilib ncat
       - run: >
           cmake
           -B ${{ github.workspace }}/build
