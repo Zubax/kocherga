@@ -30,12 +30,12 @@ jobs:
       - working-directory: ${{github.workspace}}/build
         run: make test
       - uses: actions/upload-artifact@v2
+        if: always()
         with:
           name: Logs and profiles
           path: |
             ${{github.workspace}}/**/*.log
-            ${{github.workspace}}/**/*.gcno
-            ${{github.workspace}}/**/*.gcda
+            ${{github.workspace}}/**/*.gc*
 
   optimizations:
     runs-on: ubuntu-latest
@@ -66,12 +66,12 @@ jobs:
       - working-directory: ${{github.workspace}}/build
         run: make test
       - uses: actions/upload-artifact@v2
+        if: always()
         with:
           name: Logs and profiles
           path: |
             ${{github.workspace}}/**/*.log
-            ${{github.workspace}}/**/*.gcno
-            ${{github.workspace}}/**/*.gcda
+            ${{github.workspace}}/**/*.gc*
 
   tools:
     runs-on: ubuntu-latest
