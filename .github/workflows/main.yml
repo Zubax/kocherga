@@ -169,7 +169,8 @@ jobs:
         build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} make all
         yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
         make test
-        gcov --preserve-paths --long-file-names $(find CMakeFiles/test_cov.dir -name '*.gcno')
+        gcov --preserve-paths --long-file-names $(find integration/CMakeFiles/bootloader.dir -name '*.gcno')
+        gcov --preserve-paths --long-file-names $(find unit/CMakeFiles/test_cov.dir          -name '*.gcno')
 
     - name: Run sonar-scanner
       run: >
