@@ -6,6 +6,9 @@ cmake_minimum_required(VERSION 3.19)
 enable_testing()
 
 project(kocherga CXX)
+
+set(CTEST_OUTPUT_ON_FAILURE ON)
+
 set(CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 

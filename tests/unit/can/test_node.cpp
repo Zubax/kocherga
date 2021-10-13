@@ -88,7 +88,7 @@ private:
             std::copy(f.payload.begin(), f.payload.end(), payload_buffer.begin());
             return {{f.extended_can_id, f.payload.size()}};
         }
-        const auto empty = std::pair<std::uint32_t, std::uint8_t>{0, 0};  // Suppress bogus warning from GCC.
+        const std::optional<std::pair<std::uint32_t, std::uint8_t>> empty{};  // Suppress bogus warning from GCC.
         return empty;
     }
 
