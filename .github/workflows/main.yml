@@ -176,7 +176,7 @@ jobs:
       run: >
         sonar-scanner
         --define sonar.projectName=kocherga
-        --define sonar.organization=Zubax
+        --define sonar.organization=zubax
         --define sonar.projectKey=Zubax_kocherga
         --define sonar.sources=kocherga
         --define sonar.cfamily.gcov.reportsPath=.
