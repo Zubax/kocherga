@@ -1,5 +1,6 @@
 # Kochergá
 
+[![CI](https://github.com/Zubax/kocherga/actions/workflows/main.yml/badge.svg)](https://github.com/Zubax/kocherga/actions/workflows/main.yml)
 [![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg?color=e00000)](https://forum.zubax.com)
 [![Forum](https://img.shields.io/discourse/https/forum.uavcan.org/users.svg?color=1700b3)](https://forum.uavcan.org)
 

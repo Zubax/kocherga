@@ -177,7 +177,7 @@ public:
         }
         const auto old_code = code_;
         assert(bt >= 1);
-        copy_ = bt - 1;
+        copy_ = static_cast<std::uint8_t>(bt - 1);
         code_ = bt;
         if (old_code != Top)
         {
