@@ -172,7 +172,7 @@ TEST_CASE("can::detail::BitrateDetectionActivity")
     REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000)));
     REQUIRE(driver.getConfig()->bitrate == Bitrate{1'000'000, 4'000'000});
     REQUIRE(driver.getConfig()->silent);
-    REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0, 0});
+    REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0x1FFFFFFF, 0});
     REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'200'000)));
     REQUIRE(driver.getConfig()->bitrate == Bitrate{500'000, 2'000'000});
     REQUIRE(!act->poll(reactor, std::chrono::microseconds(2'400'000)));
@@ -186,7 +186,7 @@ TEST_CASE("can::detail::BitrateDetectionActivity")
     REQUIRE(proto_ver_act);
     REQUIRE(driver.getConfig()->bitrate == Bitrate{1'000'000, 4'000'000});  // This is the detected bitrate.
     REQUIRE(driver.getConfig()->silent);
-    REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0, 0});
+    REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0x1FFFFFFF, 0});
     REQUIRE(dynamic_cast<ProtocolVersionDetectionActivity*>(proto_ver_act));
 }
 

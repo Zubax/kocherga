@@ -439,6 +439,12 @@ def _main() -> int:
         help="File(s) where the same descriptor will be copied into (e.g., ELF executables). "
         "Use multiple times to patch several files at once.",
     )
+    parser.add_argument(
+        "--lazy",
+        action="store_true",
+        help="Exit silently if the image does not contain empty app descriptors (i.e., already processed). "
+        "This option is helpful for integration with build systems.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -453,14 +459,23 @@ def _main() -> int:
     if args.firmware_image == "self-test":
         _test()
         return 0
+    _logger.debug(f"CLI arguments: {args}")
 
     # Read the input file. All operations done in-memory.
     with open(args.firmware_image, "rb") as in_file:
-        model = ImageModel.construct_from_image(in_file.read(), uninitialized_only=True)
+        img = in_file.read()
+        model = ImageModel.construct_from_image(img, uninitialized_only=True)
         if not model:
-            existing_model = ImageModel.construct_from_image(in_file.read())
+            existing_model = ImageModel.construct_from_image(img)
+            if existing_model and args.lazy:
+                _logger.info(
+                    f"Image {args.firmware_image!r} does not require processing because it already contains a "
+                    f"valid app descriptor: {existing_model.app_descriptor!r}"
+                )
+                return 0
             _logger.fatal(
                 f"An uninitialized app descriptor could not be found in {args.firmware_image!r}. "
+                f"If this is intentional, use --lazy to squelch this error. "
                 f"Existing app descriptor: {existing_model.app_descriptor if existing_model else None!r}"
             )
             return 1
@@ -504,7 +519,16 @@ def _main() -> int:
             data = bytearray(f.read())
         offset = data.find(AppDescriptor.get_search_prefix(model.byte_order, uninitialized_only=True))
         if offset < 0:
-            _logger.fatal(f"Side-patching failure: an uninitialized app descriptor could not be found in {path!r}")
+            if args.lazy:
+                _logger.info(
+                    f"Side-patching of {path!r} is skipped because the file does not contain an "
+                    f"uninitialized app descriptor and --lazy mode is enabled."
+                )
+                continue
+            _logger.fatal(
+                f"Side-patching failure: an uninitialized app descriptor could not be found in {path!r}. "
+                f"If this is intentional, use --lazy to squelch this error."
+            )
             return 1
         _logger.info(f"Side-patching {path!r} at offset {offset} bytes")
         data[offset : offset + AppDescriptor.SIZE] = model.app_descriptor.pack(model.byte_order)

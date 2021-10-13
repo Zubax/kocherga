@@ -30,4 +30,8 @@ echo
 $SCRIPT invalid.bin -vv && die "Expected failure"
 echo
 
+# This image is already processed.
+$SCRIPT demo-le-2.5.badc0ffee0ddf00d.ca47fd04aefc15b6.app.release.dirty.bin -vv && die "Expected failure"
+$SCRIPT demo-le-2.5.badc0ffee0ddf00d.ca47fd04aefc15b6.app.release.dirty.bin -vv --lazy || die "Expected success"
+
 rm ./*.app*.bin

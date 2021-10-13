@@ -7,7 +7,7 @@
 
 Technical support is provided on the [UAVCAN Forum](https://forum.uavcan.org/).
 
-A standard-compliant implementation of the firmware update server is provided in
+A standard-compliant implementation of the software update server is provided in
 [Yakut](https://github.com/UAVCAN/yakut#updating-node-software).
 
 ## Features
@@ -37,6 +37,9 @@ separate header file named `kocherga_*.hpp`. Kochergá does not have any compila
 
 To integrate Kochergá into your application, just include this repository as a git subtree/submodule, or simply
 copy-paste the required header files into your source tree.
+
+For reference, a typical implementation on an ARM Cortex M4 MCU supporting
+UAVCAN/serial (USB+UART) and UAVCAN/CAN (v1+v0) would set you back by about ~32K of flash.
 
 ### Application signature
 
@@ -110,7 +113,7 @@ The integration test application available under `/tests/integration/bootloader/
 The ROM backend abstracts the specifics of reading and writing your ROM (usually this is the on-chip flash memory).
 
 ```c++
-class MyROMBackend : public kocherga::IROMBackend
+class MyROMBackend final : public kocherga::IROMBackend
 {
     auto write(const std::size_t offset, const std::byte* const data, const std::size_t size) override
         -> std::optional<std::size_t>
@@ -136,7 +139,7 @@ Transport implementations --- UAVCAN/CAN, UAVCAN/serial, etc., depending on whic
 are interfaced with your hardware as follows.
 
 ```c++
-class MySerialPort : public kocherga::serial::ISerialPort
+class MySerialPort final : public kocherga::serial::ISerialPort
 {
     auto receive() -> std::optional<std::uint8_t> override
     {
@@ -152,12 +155,13 @@ class MySerialPort : public kocherga::serial::ISerialPort
 ```
 
 ```c++
-class MyCANDriver : public kocherga::can::ICANDriver
+class MyCANDriver final : public kocherga::can::ICANDriver
 {
     auto configure(const Bitrate&                                  bitrate,
                    const bool                                      silent,
                    const kocherga::can::CANAcceptanceFilterConfig& filter) -> std::optional<Mode> override
     {
+        tx_queue_.clear();
         CAN_CONFIGURE(bitrate, silent, filter);
         return Mode::FD;  // Or Mode::Classic if CAN FD is not supported by the CAN controller.
     }
@@ -167,20 +171,37 @@ class MyCANDriver : public kocherga::can::ICANDriver
               const std::uint8_t  payload_size,
               const void* const   payload) -> bool override
     {
-        if (force_classic_can)
-        {
-            return CAN_PUSH_CLASSIC(extended_can_id, payload_size, payload);  // No DLE, no BRS -- Classic only.
-        }
-        else
-        {
-            return CAN_PUSH_FD(extended_can_id, payload_size, payload);
-        }
+        const std::chrono::microseconds now = GET_TIME_SINCE_BOOT();
+        // You can use tx_queue_.size() to limit maximum depth of the queue.
+        const bool ok = tx_queue_.push(now, force_classic_can, extended_can_id, payload_size, payload);
+        pollTxQueue(now);
+        return ok;
     }
 
     auto pop(PayloadBuffer& payload_buffer) -> std::optional<std::pair<std::uint32_t, std::uint8_t>> override
     {
+        pollTxQueue();  // Check if the HW TX mailboxes are ready to accept the next frame from the SW queue.
         return CAN_POP(payload_buffer.data());  // The return value is optional(can_id, payload_size).
     }
+
+    void pollTxQueue(const std::chrono::microseconds now)
+    {
+        if (const auto* const item = tx_queue_.peek())         // Take the top frame from the prioritized queue.
+        {
+            const bool expired = now > (item->timestamp + kocherga::can::SendTimeout);  // Drop expired frames.
+            if (expired || CAN_PUSH(item->force_classic_can,   // force_classic_can means no DLE, no BRS.
+                                    item->extended_can_id,
+                                    item->payload_size,
+                                    item->payload))
+            {
+                tx_queue_.pop();    // Enqueued into the HW TX mailbox or expired -- remove from the SW queue.
+            }
+        }
+    }
+
+    // Some CAN drivers come with built-in queue (e.g., SocketCAN), in which case this will not be needed.
+    // The recommended heap is https://github.com/pavel-kirienko/o1heap.
+    kocherga::can::TxQueue<void*(*)(std::size_t), void(*)(void*)> tx_queue_(&MY_MALLOC, &MY_FREE);
 };
 ```
 
@@ -234,6 +255,9 @@ int main()
     MyROMBackend rom_backend;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
     kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, args && args->linger);
+    // It's a good idea to check if the app is valid and safe to boot before adding the nodes.
+    // This way you can skip the potentially slow or disturbing interface initialization on the happy path.
+    // You can do it by calling poll() here once.
 
     // Add a UAVCAN/serial node to the bootloader instance.
     MySerialPort serial_port;
@@ -245,9 +269,9 @@ int main()
     boot.addNode(&serial_node);
 
     // Add a UAVCAN/CAN node to the bootloader instance.
-    std::optional<kocherga::ICANDriver::Bitrate> can_bitrate;
-    std::optional<std::uint8_t>                  uavcan_can_version;
-    std::optional<kocherga::NodeID>              uavcan_can_node_id;
+    std::optional<kocherga::can::ICANDriver::Bitrate> can_bitrate;
+    std::optional<std::uint8_t>                       uavcan_can_version;
+    std::optional<kocherga::NodeID>                   uavcan_can_node_id;
     if (args)
     {
         if (args->uavcan_can_bitrate.first > 0)
@@ -350,9 +374,16 @@ Note that the application does not need to depend on the Kochergá library.
 It is recommended to copy-paste relevant pieces from Kochergá instead; specifically:
 
 - `kocherga::VolatileStorage<>`
-- `kocherga::detail::CRC64`
+- `kocherga::CRC64`
 
 ## Revisions
+
+### v0.2
+
+- Add helper `kocherga::can::TxQueue`.
+- Promote `kocherga::CRC64` to public API.
+- Add optional support for legacy app descriptors to simplify integration into existing projects.
+- Minor doc and API enhancements.
 
 ### v0.1
 

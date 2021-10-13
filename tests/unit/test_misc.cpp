@@ -11,8 +11,8 @@
 
 TEST_CASE("CRC")
 {
-    kocherga::detail::CRC64 crc;
-    const char*             val = "12345";
+    kocherga::CRC64 crc;
+    const char*     val = "12345";
     crc.update(reinterpret_cast<const std::uint8_t*>(val), 5);  // NOSONAR NOLINT reinterpret_cast
     crc.update(nullptr, 0);
     val = "6789";
