@@ -130,7 +130,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install gcc-multilib g++-multilib
+        sudo apt install gcc-multilib g++-multilib ncat
         sudo apt install "linux-*-extra-$(uname -r)"
         python -m pip --disable-pip-version-check install yakut~=0.7
 
