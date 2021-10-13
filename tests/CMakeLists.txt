@@ -7,10 +7,9 @@ enable_testing()
 
 project(kocherga CXX)
 
-set(CTEST_OUTPUT_ON_FAILURE ON)
-
 set(CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
+list(APPEND CMAKE_CTEST_ARGUMENTS "--output-on-failure")
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
