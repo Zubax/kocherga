@@ -184,7 +184,6 @@ jobs:
         --define sonar.cfamily.cache.enabled=false
         --define sonar.cfamily.threads=1
         --define sonar.cfamily.build-wrapper-output=.
-        --define sonar.branch.name="${GITHUB_REF##*/}"
         --define sonar.host.url="https://sonarcloud.io"
 
     - uses: actions/upload-artifact@v2
