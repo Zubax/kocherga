@@ -398,11 +398,11 @@ TEST_CASE("can::parseFrameV0")
     }
 }
 
-TEST_CASE("can::SimplifiedTransferReassembler")
+TEST_CASE("can::BasicTransferReasm")
 {
-    using kocherga::can::detail::SimplifiedTransferReassembler;
-    using kocherga::can::detail::SimplifiedMessageTransferReassembler;
-    using kocherga::can::detail::SimplifiedServiceTransferReassembler;
+    using kocherga::can::detail::BasicTransferReasm;
+    using kocherga::can::detail::BasicMessageTransferReasm;
+    using kocherga::can::detail::BasicServiceTransferReasm;
     using kocherga::can::detail::MessageFrameModel;
     using kocherga::can::detail::ServiceFrameModel;
     using Buf = std::vector<std::uint8_t>;
@@ -459,7 +459,7 @@ TEST_CASE("can::SimplifiedTransferReassembler")
     //  >>> crc.new([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]).value_as_bytes
     // Messages.
     {
-        SimplifiedMessageTransferReassembler<10> rm;
+        BasicMessageTransferReasm<10> rm;
         // Anon
         REQUIRE(check_result(rm.update(mk_msg({}, 0, {true, true, true}, {1, 2, 3})), {1, 2, 3}));
         REQUIRE(check_result(rm.update(mk_msg({}, 0, {true, true, true}, {4})), {4}));
@@ -485,7 +485,7 @@ TEST_CASE("can::SimplifiedTransferReassembler")
 
     // Services.
     {
-        SimplifiedServiceTransferReassembler<8> rs(9);
+        BasicServiceTransferReasm<8> rs(9);
         // Valid accepted
         REQUIRE(check_result(rs.update(mk_srv(123, 9, true, 5, {true, true, true}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
                              {0, 1, 2, 3, 4, 5, 6, 7}));
@@ -503,11 +503,11 @@ TEST_CASE("can::SimplifiedTransferReassembler")
     }
 }
 
-TEST_CASE("can::SimplifiedTransferReassemblerV0")
+TEST_CASE("can::BasicTransferReasmV0")
 {
-    using kocherga::can::detail::SimplifiedTransferReassemblerV0;
-    using kocherga::can::detail::SimplifiedMessageTransferReassemblerV0;
-    using kocherga::can::detail::SimplifiedServiceTransferReassemblerV0;
+    using kocherga::can::detail::BasicTransferReasmV0;
+    using kocherga::can::detail::BasicMessageTransferReasmV0;
+    using kocherga::can::detail::BasicServiceTransferReasmV0;
     using kocherga::can::detail::MessageFrameModel;
     using kocherga::can::detail::ServiceFrameModel;
     using Buf = std::vector<std::uint8_t>;
@@ -559,7 +559,7 @@ TEST_CASE("can::SimplifiedTransferReassemblerV0")
     };
     // Messages.
     {
-        SimplifiedMessageTransferReassemblerV0<17> rm(0x0B2A812620A11D40ULL);
+        BasicMessageTransferReasmV0<17> rm(0x0B2A812620A11D40ULL);
         // Anon
         REQUIRE(check_result(rm.update(msg({}, 0, {true, true, false}, {1, 2, 3})), {1, 2, 3}));
         REQUIRE(check_result(rm.update(msg({}, 0, {true, true, false}, {4})), {4}));
@@ -584,7 +584,7 @@ TEST_CASE("can::SimplifiedTransferReassemblerV0")
     }
     // Services.
     {
-        SimplifiedServiceTransferReassemblerV0<100> rs(0xEE468A8121C46A9EULL, 9);
+        BasicServiceTransferReasmV0<100> rs(0xEE468A8121C46A9EULL, 9);
         // Valid accepted
         REQUIRE(check_result(rs.update(srv(123, 9, true, 5, {true, true, false}, {0, 1, 2, 3, 4, 5, 6, 7, 8})),  //
                              {0, 1, 2, 3, 4, 5, 6, 7, 8}));
@@ -773,7 +773,7 @@ TEST_CASE("can::transmitV0")
 TEST_CASE("CAN transfer roundtrip")
 {
     using kocherga::can::detail::MessageFrameModel;
-    using kocherga::can::detail::SimplifiedMessageTransferReassembler;
+    using kocherga::can::detail::BasicMessageTransferReasm;
     using kocherga::can::detail::transmit;
     using kocherga::can::detail::parseFrame;
     using Buf = std::vector<std::uint8_t>;
@@ -795,10 +795,10 @@ TEST_CASE("CAN transfer roundtrip")
     }
 
     // Run the send/receive roundtrip loop
-    std::vector<Buf>                             reassembled_transfers;
-    SimplifiedMessageTransferReassembler<0xFFFF> reassembler;
-    constexpr std::uint32_t                      extended_can_id = 0;
-    std::uint8_t                                 transfer_id     = 0;
+    std::vector<Buf>                  reassembled_transfers;
+    BasicMessageTransferReasm<0xFFFF> reassembler;
+    constexpr std::uint32_t           extended_can_id = 0;
+    std::uint8_t                      transfer_id     = 0;
     for (const auto& in : original_transfers)
     {
         std::cout << "transfer=[";

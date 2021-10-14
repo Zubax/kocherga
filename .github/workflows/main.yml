@@ -1,0 +1,199 @@
+name: Main Workflow
+
+on: [push, pull_request]
+
+env:
+  YAKUT_COMPILE_OUTPUT: "${{ github.workspace }}"
+  YAKUT_PATH:           "${{ github.workspace }}"
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: ['clang', 'gcc']
+        include:
+          - toolchain: gcc
+            c-compiler: gcc
+            cxx-compiler: g++
+          - toolchain: clang
+            c-compiler: clang
+            cxx-compiler: clang++
+    steps:
+      - uses: actions/checkout@v2
+      - run: |
+          sudo apt update
+          sudo apt install gcc-multilib g++-multilib clang-tidy-12 ncat
+          sudo apt install "linux-*-extra-$(uname -r)"
+          python -m pip --disable-pip-version-check install yakut~=0.7
+      - run: >
+          cmake
+          -B ${{ github.workspace }}/build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=${{ matrix.c-compiler }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx-compiler }}
+          tests
+      - working-directory: ${{github.workspace}}/build
+        run: |
+          yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
+          make VERBOSE=1 -j2
+          make test
+      - uses: actions/upload-artifact@v2
+        if: always()
+        with:
+          name: ${{github.job}}
+          path: |
+            ${{github.workspace}}/**/*
+
+  optimizations:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: ['clang', 'gcc']
+        build_type: [Release, MinSizeRel]
+        include:
+          - toolchain: gcc
+            c-compiler: gcc
+            cxx-compiler: g++
+          - toolchain: clang
+            c-compiler: clang
+            cxx-compiler: clang++
+    steps:
+      - uses: actions/checkout@v2
+      - run: |
+          sudo apt update
+          sudo apt install gcc-multilib g++-multilib ncat
+          sudo apt install "linux-*-extra-$(uname -r)"
+          python -m pip --disable-pip-version-check install yakut~=0.7
+      - run: >
+          cmake
+          -B ${{ github.workspace }}/build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_C_COMPILER=${{ matrix.c-compiler }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx-compiler }}
+          -DNO_STATIC_ANALYSIS=1
+          tests
+      - working-directory: ${{github.workspace}}/build
+        run: |
+          make VERBOSE=1 -j2
+          yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
+          make test
+      - uses: actions/upload-artifact@v2
+        if: always()
+        with:
+          name: ${{github.job}}
+          path: |
+            ${{github.workspace}}/**/*
+
+  tools:
+    runs-on: ubuntu-latest
+    env:
+      python-version: 3.9
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ env.python-version }}
+          architecture: x64
+      - run: ./tests/tools/test.sh
+
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: DoozyX/clang-format-lint-action@v0.12
+        with:
+          source: ./kocherga ./tests
+          exclude: ./tests/3rd_party
+          extensions: cpp,hpp
+          clangFormatVersion: 12
+      - run: |
+          pip install black
+          black --check ./tools/
+
+  sonarcloud:
+    runs-on: ubuntu-latest
+    env:
+      SONAR_SCANNER_VERSION: 4.6.1.2450
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - run: |
+        echo "GITHUB_REF:       '$GITHUB_REF'"
+        echo "GITHUB_HEAD_REF:  '$GITHUB_HEAD_REF'"
+        echo "GITHUB_BASE_REF:  '$GITHUB_BASE_REF'"
+
+    - name: Install Dependencies
+      run: |
+        sudo apt update
+        sudo apt install gcc-multilib g++-multilib ncat
+        sudo apt install "linux-*-extra-$(uname -r)"
+        python -m pip --disable-pip-version-check install yakut~=0.7
+
+    - name: Set up JDK
+      uses: actions/setup-java@v1
+      with:
+        java-version: 11
+
+    - name: Cache SonarCloud packages
+      uses: actions/cache@v1
+      with:
+        path: ~/.sonar/cache
+        key: ${{ runner.os }}-sonar
+        restore-keys: ${{ runner.os }}-sonar
+
+    - name: Download and set up sonar-scanner
+      env:
+        SONAR_SCANNER_DOWNLOAD_URL: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${{ env.SONAR_SCANNER_VERSION }}-linux.zip
+      run: |
+        mkdir -p $HOME/.sonar
+        curl -sSLo $HOME/.sonar/sonar-scanner.zip ${{ env.SONAR_SCANNER_DOWNLOAD_URL }}
+        unzip -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+        echo "$HOME/.sonar/sonar-scanner-${{ env.SONAR_SCANNER_VERSION }}-linux/bin" >> $GITHUB_PATH
+
+    - name: Download and set up build-wrapper
+      env:
+        BUILD_WRAPPER_DOWNLOAD_URL: https://sonarcloud.io/static/cpp/build-wrapper-linux-x86.zip
+      run: |
+        curl -sSLo $HOME/.sonar/build-wrapper-linux-x86.zip ${{ env.BUILD_WRAPPER_DOWNLOAD_URL }}
+        unzip -o $HOME/.sonar/build-wrapper-linux-x86.zip -d $HOME/.sonar/
+        echo "$HOME/.sonar/build-wrapper-linux-x86" >> $GITHUB_PATH
+
+    - name: Build and test
+      run: |
+        cmake tests -DCMAKE_BUILD_TYPE=Debug -DNO_STATIC_ANALYSIS=1 -DCMAKE_CXX_FLAGS='-DNDEBUG=1'
+        build-wrapper-linux-x86-64 --out-dir . make all VERBOSE=1
+        yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
+        make test
+        gcov --preserve-paths --long-file-names $(find integration/CMakeFiles/bootloader.dir -name '*.gcno')
+        gcov --preserve-paths --long-file-names $(find unit/CMakeFiles/test_cov.dir          -name '*.gcno')
+
+    # https://community.sonarsource.com/t/analyzing-a-header-only-c-library/51468
+    - name: Run sonar-scanner
+      run: >
+        sonar-scanner
+        --define sonar.host.url="https://sonarcloud.io"
+        --define sonar.projectName=kocherga
+        --define sonar.organization=zubax
+        --define sonar.projectKey=Zubax_kocherga
+        --define sonar.sources=kocherga,tests/unit,tests/integration
+        --define sonar.issue.ignore.allfile=a1,a2
+        --define sonar.issue.ignore.allfile.a1.fileRegexp='^#include.*catch\.hpp[>"]$'
+        --define sonar.issue.ignore.allfile.a2.fileRegexp='^auto main\([^)]*\) -> int$'
+        --define sonar.coverage.exclusions="tests/**/*"
+        --define sonar.cpd.exclusions="tests/**/*"
+        --define sonar.cfamily.gcov.reportsPath=.
+        --define sonar.cfamily.cache.enabled=false
+        --define sonar.cfamily.threads=2
+        --define sonar.cfamily.build-wrapper-output=.
+        $([ -z "$GITHUB_BASE_REF" ] && echo "--define sonar.branch.name=${GITHUB_REF##*/}" || true)
+
+    - uses: actions/upload-artifact@v2
+      if: always()
+      with:
+        name: ${{github.job}}
+        path: ${{github.workspace}}/**/*

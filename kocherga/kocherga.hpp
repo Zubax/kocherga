@@ -12,8 +12,8 @@
 #include <optional>
 #include <type_traits>
 
-#define KOCHERGA_VERSION_MAJOR 0  // NOLINT
-#define KOCHERGA_VERSION_MINOR 2  // NOLINT
+#define KOCHERGA_VERSION_MAJOR 0  // NOLINT NOSONAR
+#define KOCHERGA_VERSION_MINOR 2  // NOLINT NOSONAR
 
 namespace kocherga
 {
@@ -538,7 +538,7 @@ public:
 
     [[nodiscard]] auto addNode(INode* const node) -> bool
     {
-        for (const auto* n : nodes_)
+        for (const auto* const n : nodes_)
         {
             if (n == node)
             {
@@ -547,7 +547,8 @@ public:
         }
         if (num_nodes_ < nodes_.size())
         {
-            nodes_.at(num_nodes_++) = node;
+            nodes_.at(num_nodes_) = node;
+            num_nodes_++;
             return true;
         }
         return false;
@@ -662,10 +663,10 @@ public:
     void publishLogRecord(const dsdl::Diagnostic::Severity severity, const char* const text)
     {
         std::array<std::uint8_t, dsdl::Diagnostic::RecordSize> buf{};
-        buf[7]                   = static_cast<std::uint8_t>(severity);
-        std::uint8_t text_length = 0;
-        const char*  ch          = text;
-        auto* const  buf_end     = std::end(buf);
+        buf[7]                        = static_cast<std::uint8_t>(severity);
+        std::uint8_t      text_length = 0;
+        const char*       ch          = text;
+        const auto* const buf_end     = std::end(buf);
         for (auto it = std::begin(buf) + 9; it != buf_end; ++it)  // NOLINT
         {
             if ('\0' == *ch)
@@ -781,7 +782,7 @@ private:
                 *ptr++ = 0;
             }
         }
-        for (auto uid : system_info_.unique_id)
+        for (const auto uid : system_info_.unique_id)
         {
             *ptr++ = uid;
         }

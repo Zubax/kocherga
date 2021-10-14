@@ -13,7 +13,7 @@ namespace kocherga::serial
 {
 namespace detail
 {
-using kocherga::detail::BitsPerByte;
+using kocherga::detail::BitsPerByte;  // NOSONAR
 
 constexpr std::uint8_t FrameDelimiter = 0x00;  ///< Zeros cannot occur inside frames thanks to COBS encoding.
 
@@ -75,7 +75,7 @@ public:
     {
         if (byte_count_ == 0)
         {
-            if (!output(FrameDelimiter))
+            if (!output(FrameDelimiter))  // NOSONAR merging this if with the outer one impedes comprehension.
             {
                 return false;
             }
@@ -123,14 +123,20 @@ private:
     {
     public:
         /// Check size() before calling, otherwise the write pointer will wrap around to the beginning of the buffer.
-        [[nodiscard]] auto push(const std::uint8_t val) { buf_.at(in_++) = val; }
+        [[nodiscard]] auto push(const std::uint8_t val)
+        {
+            buf_.at(in_) = val;
+            in_++;
+        }
 
         /// Returns empty if empty, meaning that the current state is PUSHING.
         [[nodiscard]] auto pop() -> std::optional<std::uint8_t>
         {
             if (out_ < in_)
             {
-                return buf_.at(out_++);
+                const auto pos = out_;
+                out_++;
+                return buf_.at(pos);
             }
             out_ = 0;
             in_  = 0;
@@ -171,13 +177,15 @@ public:
             copy_ = 0;
             return Delimiter{};
         }
-        if (copy_-- != 0)
+        const auto old_copy = copy_;
+        copy_--;
+        if (old_copy != 0)
         {
             return bt;
         }
         const auto old_code = code_;
         assert(bt >= 1);
-        copy_ = bt - 1;
+        copy_ = static_cast<std::uint8_t>(bt - 1);
         code_ = bt;
         if (old_code != Top)
         {
@@ -387,11 +395,11 @@ template <typename Callback>
 {
     COBSEncoder<const Callback&> encoder(send_byte);
     CRC32C                       crc;
-    const auto                   out = [&crc, &encoder](const std::uint8_t b) -> bool {
+    const auto                   out = [&crc, &encoder](const std::uint8_t b) {
         crc.update(b);
         return encoder.push(b);
     };
-    const auto out2 = [&out](const std::uint16_t bb) -> bool {
+    const auto out2 = [&out](const std::uint16_t bb) {
         return out(static_cast<std::uint8_t>(bb)) && out(static_cast<std::uint8_t>(bb >> BitsPerByte));
     };
     bool ok = out(FrameFormatVersion) && out(tr.meta.priority) &&  //
@@ -548,10 +556,10 @@ private:
                 // Full-fledged implementations are obviously immune to this because they keep separate state per
                 // session specifier, which does come with certain complexity (e.g., see libserard).
                 const auto [last_meta, last_ts] = last_received_request_meta_;
-                const bool duplicate            =                                          //
-                    (last_ts + ::kocherga::detail::DefaultTransferIDTimeout >= uptime) &&  //
-                    (last_meta.data_spec == tr.meta.data_spec) &&                          //
-                    (last_meta.source == tr.meta.source) &&                                //
+                const bool duplicate            =                                            //
+                    ((last_ts + ::kocherga::detail::DefaultTransferIDTimeout) >= uptime) &&  //
+                    (last_meta.data_spec == tr.meta.data_spec) &&                            //
+                    (last_meta.source == tr.meta.source) &&                                  //
                     (last_meta.transfer_id == tr.meta.transfer_id);
                 if (!duplicate)
                 {
@@ -568,7 +576,7 @@ private:
                                          static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
                                                              detail::Transfer::Metadata::DataSpecResponseFlag);
                         meta.transfer_id = tr.meta.transfer_id;
-                        for (auto i = 0U; i < service_transfer_multiplication_factor_; i++)
+                        for (auto i = 0U; i < service_multiplication_factor_; i++)
                         {
                             (void) transmit({meta, *size, buf.data()});
                         }
@@ -611,7 +619,7 @@ private:
             meta.data_spec   = static_cast<PortID>(service_id) | detail::Transfer::Metadata::DataSpecServiceFlag;
             meta.transfer_id = transfer_id;
             bool transmit_ok = false;  // Optimistic aggregation: one successful transmission is considered a success.
-            for (auto i = 0U; i < service_transfer_multiplication_factor_; i++)
+            for (auto i = 0U; i < service_multiplication_factor_; i++)
             {
                 transmit_ok = transmit({meta, payload_length, payload}) || transmit_ok;
             }
@@ -680,7 +688,7 @@ private:
     std::uint64_t             pnp_transfer_id_ = 0;
 
     /// Controls deterministic data loss mitigation for outgoing service transfers. Messages are never duplicated.
-    const std::uint8_t service_transfer_multiplication_factor_ = 1;
+    const std::uint8_t service_multiplication_factor_ = 1;
 };
 
 }  // namespace kocherga::serial

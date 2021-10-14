@@ -88,7 +88,8 @@ private:
             std::copy(f.payload.begin(), f.payload.end(), payload_buffer.begin());
             return {{f.extended_can_id, f.payload.size()}};
         }
-        return {};
+        const std::optional<std::pair<std::uint32_t, std::uint8_t>> empty{};  // Suppress bogus warning from GCC.
+        return empty;
     }
 
     std::optional<Mode>   mode_;
@@ -159,7 +160,7 @@ TEST_CASE("can::detail::BitrateDetectionActivity")
 {
     using kocherga::can::detail::IActivity;
     using kocherga::can::detail::BitrateDetectionActivity;
-    using kocherga::can::detail::ProtocolVersionDetectionActivity;
+    using kocherga::can::detail::VersionDetectionActivity;
     Allocator                  alloc;
     CANDriverMock              driver;
     ReactorMock                reactor;
@@ -187,13 +188,13 @@ TEST_CASE("can::detail::BitrateDetectionActivity")
     REQUIRE(driver.getConfig()->bitrate == Bitrate{1'000'000, 4'000'000});  // This is the detected bitrate.
     REQUIRE(driver.getConfig()->silent);
     REQUIRE(driver.getConfig()->filter == CANAcceptanceFilterConfig{0x1FFFFFFF, 0});
-    REQUIRE(dynamic_cast<ProtocolVersionDetectionActivity*>(proto_ver_act));
+    REQUIRE(dynamic_cast<VersionDetectionActivity*>(proto_ver_act));
 }
 
-TEST_CASE("can::detail::ProtocolVersionDetectionActivity")
+TEST_CASE("can::detail::VersionDetectionActivity")
 {
     using kocherga::can::detail::IActivity;
-    using kocherga::can::detail::ProtocolVersionDetectionActivity;
+    using kocherga::can::detail::VersionDetectionActivity;
     using kocherga::can::detail::V0NodeIDAllocationActivity;
     using kocherga::can::detail::V1NodeIDAllocationActivity;
     Allocator                  alloc;
@@ -205,7 +206,7 @@ TEST_CASE("can::detail::ProtocolVersionDetectionActivity")
     // Detect v1 if both v0 and v1 are present at the same time.
     {
         REQUIRE(driver.configure(br, true, CANAcceptanceFilterConfig::makePromiscuous()));
-        act = std::make_shared<ProtocolVersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
+        act = std::make_shared<VersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000)));
         // No matter how long we wait, if there are no valid frames, the protocol version detection will never end.
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000'000)));
@@ -235,7 +236,7 @@ TEST_CASE("can::detail::ProtocolVersionDetectionActivity")
     // Detect v0 if only v0 is present.
     {
         REQUIRE(driver.configure(br, true, CANAcceptanceFilterConfig::makePromiscuous()));
-        act = std::make_shared<ProtocolVersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
+        act = std::make_shared<VersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000'000)));
         driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // UAVCAN/CAN v0
@@ -801,9 +802,9 @@ TEST_CASE("can::CANNode v0")
     using kocherga::SubjectID;
     using kocherga::ServiceID;
     using kocherga::can::CANNode;
-    using kocherga::can::detail::SimplifiedTransferReassemblerV0;
-    using kocherga::can::detail::SimplifiedMessageTransferReassemblerV0;
-    using kocherga::can::detail::SimplifiedServiceTransferReassemblerV0;
+    using kocherga::can::detail::BasicTransferReasmV0;
+    using kocherga::can::detail::BasicMessageTransferReasmV0;
+    using kocherga::can::detail::BasicServiceTransferReasmV0;
     using kocherga::can::detail::MessageFrameModel;
     using kocherga::can::detail::ServiceFrameModel;
     using std::chrono_literals::operator""us;
@@ -899,14 +900,14 @@ TEST_CASE("can::CANNode v0")
         }
     };
 
-    std::unordered_map<PortID, std::shared_ptr<SimplifiedMessageTransferReassemblerV0<1024>>> ra_msg;
-    ra_msg[341]   = std::make_shared<SimplifiedMessageTransferReassemblerV0<1024>>(0x0F0868D0C1A7C6F1ULL);
-    ra_msg[16383] = std::make_shared<SimplifiedMessageTransferReassemblerV0<1024>>(0XD654A48E0C049D75ULL);
-    std::unordered_map<PortID, std::shared_ptr<SimplifiedServiceTransferReassemblerV0<1024>>> ra_req;
-    ra_req[48] = std::make_shared<SimplifiedServiceTransferReassemblerV0<1024>>(0x8DCDCA939F33F678ULL, 42);
-    std::unordered_map<PortID, std::shared_ptr<SimplifiedServiceTransferReassemblerV0<1024>>> ra_res;
-    ra_res[1]  = std::make_shared<SimplifiedServiceTransferReassemblerV0<1024>>(0xEE468A8121C46A9EULL, 42);
-    ra_res[40] = std::make_shared<SimplifiedServiceTransferReassemblerV0<1024>>(0xB7D725DF72724126ULL, 42);
+    std::unordered_map<PortID, std::shared_ptr<BasicMessageTransferReasmV0<1024>>> ra_msg;
+    ra_msg[341]   = std::make_shared<BasicMessageTransferReasmV0<1024>>(0x0F0868D0C1A7C6F1ULL);
+    ra_msg[16383] = std::make_shared<BasicMessageTransferReasmV0<1024>>(0XD654A48E0C049D75ULL);
+    std::unordered_map<PortID, std::shared_ptr<BasicServiceTransferReasmV0<1024>>> ra_req;
+    ra_req[48] = std::make_shared<BasicServiceTransferReasmV0<1024>>(0x8DCDCA939F33F678ULL, 42);
+    std::unordered_map<PortID, std::shared_ptr<BasicServiceTransferReasmV0<1024>>> ra_res;
+    ra_res[1]  = std::make_shared<BasicServiceTransferReasmV0<1024>>(0xEE468A8121C46A9EULL, 42);
+    ra_res[40] = std::make_shared<BasicServiceTransferReasmV0<1024>>(0xB7D725DF72724126ULL, 42);
 
     using SignatureTransferPair = std::pair<std::uint64_t, std::shared_ptr<Transfer>>;
     // At the network layer, we are dealing with v0-translated transfers, not v1.

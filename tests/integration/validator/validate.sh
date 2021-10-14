@@ -10,8 +10,6 @@ function die()
 
 export SOFTWARE_PACKAGE_DIR=$(dirname "$0")
 
-python -m pip --disable-pip-version-check install yakut~=0.6 || die "Failed to install Yakut"
-
 echo "TESTING: UAVCAN/serial"
 yakut -v orchestrate "$SOFTWARE_PACKAGE_DIR/serial.orc.yaml"
 result=$?
