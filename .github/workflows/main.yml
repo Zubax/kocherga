@@ -36,7 +36,7 @@ jobs:
       - working-directory: ${{github.workspace}}/build
         run: |
           yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
-          make VERBOSE=1
+          make VERBOSE=1 -j2
           make test
       - uses: actions/upload-artifact@v2
         if: always()
@@ -75,7 +75,7 @@ jobs:
           tests
       - working-directory: ${{github.workspace}}/build
         run: |
-          make VERBOSE=1
+          make VERBOSE=1 -j2
           yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
           make test
       - uses: actions/upload-artifact@v2
