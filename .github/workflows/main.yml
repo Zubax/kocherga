@@ -1,6 +1,6 @@
 name: Main Workflow
 
-on: [push]
+on: [push, pull_request]
 
 env:
   YAKUT_COMPILE_OUTPUT: "${{ github.workspace }}"
@@ -164,7 +164,8 @@ jobs:
         build-wrapper-linux-x86-64 --out-dir . make all VERBOSE=1
         yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
         make test
-        gcov --preserve-paths --long-file-names $(find . -name '*.gcno')
+        gcov --preserve-paths --long-file-names $(find integration/CMakeFiles/bootloader.dir -name '*.gcno')
+        gcov --preserve-paths --long-file-names $(find unit/CMakeFiles/test_cov.dir          -name '*.gcno')
 
     # https://community.sonarsource.com/t/analyzing-a-header-only-c-library/51468
     - name: Run sonar-scanner
@@ -185,7 +186,6 @@ jobs:
         --define sonar.cfamily.build-wrapper-output=.
         --define sonar.branch.name="${GITHUB_REF##*/}"
         --define sonar.host.url="https://sonarcloud.io"
-        --define sonar.login=${{ secrets.SONAR_TOKEN }}
 
     - uses: actions/upload-artifact@v2
       if: always()
