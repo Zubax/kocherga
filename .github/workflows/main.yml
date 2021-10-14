@@ -176,8 +176,11 @@ jobs:
         --define sonar.organization=zubax
         --define sonar.projectKey=Zubax_kocherga
         --define sonar.sources=kocherga,tests/unit,tests/integration
-        --define sonar.issue.ignore.allfile='^#include.*catch\.hpp[>"]$'
+        --define sonar.issue.ignore.allfile=a1,a2
+        --define sonar.issue.ignore.allfile.a1.fileRegexp='^#include.*catch\.hpp[>"]$'
+        --define sonar.issue.ignore.allfile.a2.fileRegexp='^auto main\([^)]*\) -> int$'
         --define sonar.coverage.exclusions="tests/**/*"
+        --define sonar.cpd.exclusions="tests/**/*"
         --define sonar.cfamily.gcov.reportsPath=.
         --define sonar.cfamily.cache.enabled=false
         --define sonar.cfamily.threads=1
