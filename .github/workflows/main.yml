@@ -122,6 +122,11 @@ jobs:
       with:
         fetch-depth: 0
 
+    - run: |
+        echo "GITHUB_REF:       '$GITHUB_REF'"
+        echo "GITHUB_HEAD_REF:  '$GITHUB_HEAD_REF'"
+        echo "GITHUB_BASE_REF:  '$GITHUB_BASE_REF'"
+
     - name: Install Dependencies
       run: |
         sudo apt update
@@ -171,6 +176,7 @@ jobs:
     - name: Run sonar-scanner
       run: >
         sonar-scanner
+        --define sonar.host.url="https://sonarcloud.io"
         --define sonar.projectName=kocherga
         --define sonar.organization=zubax
         --define sonar.projectKey=Zubax_kocherga
@@ -184,8 +190,7 @@ jobs:
         --define sonar.cfamily.cache.enabled=false
         --define sonar.cfamily.threads=2
         --define sonar.cfamily.build-wrapper-output=.
-        --define sonar.branch.name="$GITHUB_REF"
-        --define sonar.host.url="https://sonarcloud.io"
+        $([ -z "$GITHUB_BASE_REF" ] && echo "--define sonar.branch.name=${GITHUB_REF##*/}" || true)
 
     - uses: actions/upload-artifact@v2
       if: always()
