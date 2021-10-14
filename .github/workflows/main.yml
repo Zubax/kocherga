@@ -176,6 +176,7 @@ jobs:
         --define sonar.organization=zubax
         --define sonar.projectKey=Zubax_kocherga
         --define sonar.sources=kocherga,tests/unit,tests/integration
+        --define sonar.inclusions=kocherga/**/*.hpp,tests/unit/**/*.?pp,tests/integration/**/*.?pp
         --define sonar.issue.ignore.allfile=a1,a2
         --define sonar.issue.ignore.allfile.a1.fileRegexp='^#include.*catch\.hpp[>"]$'
         --define sonar.issue.ignore.allfile.a2.fileRegexp='^auto main\([^)]*\) -> int$'
