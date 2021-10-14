@@ -1,6 +1,6 @@
 name: Main Workflow
 
-on: [push, pull_request]
+on: [push]
 
 env:
   YAKUT_COMPILE_OUTPUT: "${{ github.workspace }}"
@@ -112,7 +112,6 @@ jobs:
           black --check ./tools/
 
   sonarcloud:
-    if: github.base_ref
     runs-on: ubuntu-latest
     env:
       SONAR_SCANNER_VERSION: 4.6.1.2450
