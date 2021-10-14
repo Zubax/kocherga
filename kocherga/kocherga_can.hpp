@@ -159,7 +159,7 @@ public:
                             const std::size_t               payload_size,
                             const void* const               payload) -> bool
     {
-        if (void* const raw_ptr = alloc_(std::size_t(sizeof(ListItem) + payload_size)))
+        if (void* const raw_ptr = alloc_(static_cast<std::size_t>(sizeof(ListItem) + payload_size)))
         {
             auto* const payload_storage = static_cast<std::uint8_t*>(raw_ptr) + sizeof(ListItem);
             (void) std::memmove(payload_storage, payload, payload_size);
@@ -222,7 +222,7 @@ public:
     [[nodiscard]] auto size() const -> std::size_t { return depth_; }
 
 private:
-    struct ListItem final : public Item
+    struct ListItem final : Item
     {
         ListItem* next = nullptr;
     };
@@ -235,7 +235,7 @@ private:
 
 namespace detail
 {
-using kocherga::detail::BitsPerByte;
+using kocherga::detail::BitsPerByte;  // NOSONAR
 
 static constexpr std::uint8_t TailByteStartOfTransfer = 0b1000'0000;
 static constexpr std::uint8_t TailByteEndOfTransfer   = 0b0100'0000;
@@ -267,7 +267,8 @@ public:
         const auto* p = ptr;
         for (std::size_t s = 0; s < size; s++)
         {
-            update(*p++);
+            update(*p);
+            p++;
         }
     }
 
@@ -345,13 +346,13 @@ struct FrameModel
     const std::uint8_t* payload      = nullptr;
 };
 
-struct MessageFrameModel : public FrameModel
+struct MessageFrameModel : FrameModel
 {
     PortID                      subject_id = std::numeric_limits<PortID>::max();
     std::optional<std::uint8_t> source_node_id;
 };
 
-struct ServiceFrameModel : public FrameModel
+struct ServiceFrameModel : FrameModel
 {
     PortID       service_id           = std::numeric_limits<PortID>::max();
     std::uint8_t source_node_id       = std::numeric_limits<std::uint8_t>::max();
@@ -386,11 +387,11 @@ struct ServiceFrameModel : public FrameModel
     {
         return {};  // UAVCAN v0
     }
-    if ((!start_of_transfer || !end_of_transfer) && (out_payload_size == 0))
+    if (((!start_of_transfer) || (!end_of_transfer)) && (out_payload_size == 0))
     {
         return {};  // Multi-frame transfer frames require payload.
     }
-    if (!end_of_transfer && (out_payload_size < 7))
+    if ((!end_of_transfer) && (out_payload_size < 7))
     {
         return {};  // Non-last frame of a multi-frame transfer cannot have less than 7 bytes of payload.
     }
@@ -517,13 +518,13 @@ struct ServiceFrameModel : public FrameModel
 /// The main limitation is that this reassembler does not support interleaved transfers, which is OK for the bootloader.
 /// The user of this class is responsible for checking the port-ID.
 template <std::size_t Extent>
-class SimplifiedTransferReassembler
+class BasicTransferReasm
 {
 public:
     using Result = std::pair<std::size_t, const std::uint8_t*>;
 
 protected:
-    SimplifiedTransferReassembler() = default;
+    BasicTransferReasm() = default;
 
     /// The payload pointer in the result remains valid until the next update.
     [[nodiscard]] auto updateImpl(const FrameModel& frame, const std::uint8_t source) -> std::optional<Result>
@@ -538,7 +539,7 @@ protected:
         }
         else
         {
-            const bool match = (state_) &&                             //
+            const bool match = state_ &&                               //
                                (source == source_node_id_) &&          //
                                (frame.transfer_id == transfer_id_) &&  //
                                (frame.toggle == !state_->toggle);
@@ -555,22 +556,22 @@ protected:
         state_->received_payload_size += frame.payload_size;
         if (frame.end_of_transfer)
         {
-            const TransferState final = *state_;
+            const TransferState fin = *state_;
             state_.reset();
             if (frame.start_of_transfer)  // This is a single-frame transfer.
             {
-                return Result{final.stored_payload_size, payload_.data()};
+                return Result{fin.stored_payload_size, payload_.data()};
             }
-            if ((final.received_payload_size >= CRC16CCITT::Size) && final.crc.isResidueCorrect())
+            if ((fin.received_payload_size >= CRC16CCITT::Size) && fin.crc.isResidueCorrect())
             {
-                return Result{std::min(final.stored_payload_size, final.received_payload_size - CRC16CCITT::Size),
+                return Result{std::min(fin.stored_payload_size, fin.received_payload_size - CRC16CCITT::Size),
                               payload_.data()};
             }
         }
         return {};
     }
 
-    std::array<std::uint8_t, Extent> payload_{};
+    std::array<std::uint8_t, Extent> payload_{};  // NOSONAR
 
 private:
     void start(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
@@ -595,10 +596,10 @@ private:
 
 /// The user of this class is responsible for checking the subject-ID on the received frames.
 template <std::size_t Extent>
-class SimplifiedMessageTransferReassembler : public SimplifiedTransferReassembler<Extent>
+class BasicMessageTransferReasm : public BasicTransferReasm<Extent>
 {
 public:
-    using typename SimplifiedTransferReassembler<Extent>::Result;
+    using typename BasicTransferReasm<Extent>::Result;
 
     /// The payload pointer in the result remains valid until the next update.
     [[nodiscard]] auto update(const MessageFrameModel& frame) -> std::optional<Result>
@@ -609,28 +610,28 @@ public:
             std::copy_n(frame.payload, sz, payload_.data());
             return Result{sz, payload_.data()};
         }
-        return SimplifiedTransferReassembler<Extent>::updateImpl(frame, *frame.source_node_id);
+        return BasicTransferReasm<Extent>::updateImpl(frame, *frame.source_node_id);
     }
 
 private:
-    using SimplifiedTransferReassembler<Extent>::payload_;
+    using BasicTransferReasm<Extent>::payload_;
 };
 
 /// The user of this class is responsible for checking the service-ID and request/response flag on the received frames.
 template <std::size_t Extent>
-class SimplifiedServiceTransferReassembler : public SimplifiedTransferReassembler<Extent>
+class BasicServiceTransferReasm : public BasicTransferReasm<Extent>
 {
 public:
-    using typename SimplifiedTransferReassembler<Extent>::Result;
+    using typename BasicTransferReasm<Extent>::Result;
 
-    explicit SimplifiedServiceTransferReassembler(const std::uint8_t local_node_id) : local_node_id_(local_node_id) {}
+    explicit BasicServiceTransferReasm(const std::uint8_t local_node_id) : local_node_id_(local_node_id) {}
 
     /// The payload pointer in the result remains valid until the next update.
     [[nodiscard]] auto update(const ServiceFrameModel& frame) -> std::optional<Result>
     {
         if (local_node_id_ == frame.destination_node_id)
         {
-            return SimplifiedTransferReassembler<Extent>::updateImpl(frame, frame.source_node_id);
+            return BasicTransferReasm<Extent>::updateImpl(frame, frame.source_node_id);
         }
         return {};
     }
@@ -642,13 +643,13 @@ private:
 /// This is like the above but for the legacy v0 protocol.
 /// Unlike the v1 implementation, this one does not implement implicit payload truncation as it is not defined for v0.
 template <std::size_t MaxPayloadSize>
-class SimplifiedTransferReassemblerV0
+class BasicTransferReasmV0
 {
 public:
     using Result = std::pair<std::size_t, const std::uint8_t*>;
 
 protected:
-    explicit SimplifiedTransferReassemblerV0(const std::uint64_t signature) : signature_(signature) {}
+    explicit BasicTransferReasmV0(const std::uint64_t signature) : signature_(signature) {}
 
     /// The payload pointer in the result remains valid until the next update.
     [[nodiscard]] auto updateImpl(const FrameModel& frame, const std::uint8_t source) -> std::optional<Result>
@@ -663,7 +664,7 @@ protected:
         }
         else
         {
-            if (!((state_) && (source == source_node_id_) && (frame.transfer_id == transfer_id_) &&
+            if (!(state_ && (source == source_node_id_) && (frame.transfer_id == transfer_id_) &&
                   (frame.toggle == !state_->toggle)))
             {
                 return {};
@@ -679,30 +680,30 @@ protected:
         state_->payload_size += frame.payload_size;
         if (frame.end_of_transfer)
         {
-            const TransferState final = *state_;
+            const TransferState fin = *state_;
             state_.reset();
             if (frame.start_of_transfer)  // This is a single-frame transfer.
             {
-                return Result{final.payload_size, buffer_.data()};
+                return Result{fin.payload_size, buffer_.data()};
             }
-            if (final.payload_size >= CRC16CCITT::Size)
+            if (fin.payload_size >= CRC16CCITT::Size)
             {
                 CRC16CCITT crc;
                 for (auto i = 0U; i < 8U; i++)
                 {
                     crc.update(static_cast<std::uint8_t>((signature_ >> (i * 8U)) & 0xFFU));
                 }
-                crc.update(final.payload_size - CRC16CCITT::Size, buffer_.begin() + CRC16CCITT::Size);
+                crc.update(fin.payload_size - CRC16CCITT::Size, buffer_.begin() + CRC16CCITT::Size);
                 if ((buffer_.at(0) == (crc.get() & 0xFFU)) && (buffer_.at(1) == (crc.get() >> 8U)))
                 {
-                    return Result{final.payload_size - CRC16CCITT::Size, buffer_.begin() + CRC16CCITT::Size};
+                    return Result{fin.payload_size - CRC16CCITT::Size, buffer_.begin() + CRC16CCITT::Size};
                 }
             }
         }
         return {};
     }
 
-    std::array<std::uint8_t, MaxPayloadSize + CRC16CCITT::Size> buffer_{};
+    std::array<std::uint8_t, MaxPayloadSize + CRC16CCITT::Size> buffer_{};  // NOSONAR
 
 private:
     void start(const std::uint8_t source_node_id, const std::uint8_t transfer_id)
@@ -727,14 +728,14 @@ private:
 
 /// The user of this class is responsible for checking the subject-ID on the received frames.
 template <std::size_t MaxPayloadSize>
-class SimplifiedMessageTransferReassemblerV0 : public SimplifiedTransferReassemblerV0<MaxPayloadSize>
+class BasicMessageTransferReasmV0 : public BasicTransferReasmV0<MaxPayloadSize>
 {
-    using Base = SimplifiedTransferReassemblerV0<MaxPayloadSize>;
+    using Base = BasicTransferReasmV0<MaxPayloadSize>;
 
 public:
     using typename Base::Result;
 
-    explicit SimplifiedMessageTransferReassemblerV0(const std::uint64_t signature) : Base(signature) {}
+    explicit BasicMessageTransferReasmV0(const std::uint64_t signature) : Base(signature) {}
 
     /// The payload pointer in the result remains valid until the next update.
     [[nodiscard]] auto update(const MessageFrameModel& frame) -> std::optional<Result>
@@ -754,14 +755,14 @@ private:
 
 /// The user of this class is responsible for checking the service-ID and request/response flag on the received frames.
 template <std::size_t MaxPayloadSize>
-class SimplifiedServiceTransferReassemblerV0 : public SimplifiedTransferReassemblerV0<MaxPayloadSize>
+class BasicServiceTransferReasmV0 : public BasicTransferReasmV0<MaxPayloadSize>
 {
-    using Base = SimplifiedTransferReassemblerV0<MaxPayloadSize>;
+    using Base = BasicTransferReasmV0<MaxPayloadSize>;
 
 public:
     using typename Base::Result;
 
-    SimplifiedServiceTransferReassemblerV0(const std::uint64_t signature, const std::uint8_t local_node_id) :
+    BasicServiceTransferReasmV0(const std::uint64_t signature, const std::uint8_t local_node_id) :
         Base(signature), local_node_id_(local_node_id)
     {}
 
@@ -851,7 +852,7 @@ template <typename Callback>
             crc.update(0);
             *dst++ = 0;
         }
-        for (auto x : crc.getBytes())
+        for (const auto x : crc.getBytes())
         {
             *dst++ = x;
         }
@@ -965,7 +966,7 @@ public:
     {
         if (obj != nullptr)
         {
-            obj->~T();
+            obj->~T();  // NOSONAR
             deallocate(obj);
         }
     }
@@ -1044,7 +1045,10 @@ public:
     }
 
     // See kocherga::INode
-    virtual void cancelRequest() {}
+    virtual void cancelRequest()
+    {
+        // Default implementation has nothing to cancel.
+    }
 
     // See kocherga::INode
     [[nodiscard]] virtual auto publishMessage(const SubjectID           subject_id,
@@ -1115,6 +1119,7 @@ private:
     {
         if ((server_node_id > 0) && (server_node_id <= MaxNodeID))
         {
+            assert((payload != nullptr) || (payload_length == 0));
             if (service_id == ServiceID::FileRead)
             {
                 return sendFileReadRequest(server_node_id,
@@ -1177,7 +1182,7 @@ private:
             {
                 if (const auto req = rx_req_begin_fw_upd_.update(frame))
                 {
-                    processBeginFirmwareUpdateRequest(reactor, frame, req->first, req->second);
+                    processFirmwareUpdateRequest(reactor, frame, req->first, req->second);
                 }
             }
         }
@@ -1246,10 +1251,10 @@ private:
         }
     }
 
-    void processBeginFirmwareUpdateRequest(IReactor&                 reactor,
-                                           const ServiceFrameModel&  frame,
-                                           const std::size_t         request_size,
-                                           const std::uint8_t* const request_data)
+    void processFirmwareUpdateRequest(IReactor&                 reactor,
+                                      const ServiceFrameModel&  frame,
+                                      const std::size_t         request_size,
+                                      const std::uint8_t* const request_data)
     {
         assert(frame.destination_node_id == local_node_id_);
         assert(frame.request_not_response);
@@ -1386,8 +1391,7 @@ private:
     {
         // This lambda is allocated on the stack, so that the closures do not require heap allocation.
         return detail::transmitV0(
-            [this, extended_can_id](const std::size_t         frame_payload_size,
-                                    const std::uint8_t* const frame_payload) -> bool {
+            [this, extended_can_id](const std::size_t frame_payload_size, const std::uint8_t* const frame_payload) {
                 assert(frame_payload_size <= std::numeric_limits<std::uint8_t>::max());
                 return driver_.push(true,  // Force Classic CAN mode.
                                     extended_can_id,
@@ -1427,9 +1431,9 @@ private:
 
     std::array<std::uint8_t, 7> last_node_status_{};
 
-    SimplifiedServiceTransferReassemblerV0<0>   rx_req_get_node_info_{GetNodeInfoSignature, local_node_id_};
-    SimplifiedServiceTransferReassemblerV0<200> rx_req_begin_fw_upd_{BeginFirmwareUpdateSignature, local_node_id_};
-    SimplifiedServiceTransferReassemblerV0<300> rx_res_file_read_{FileReadSignature, local_node_id_};
+    BasicServiceTransferReasmV0<0>   rx_req_get_node_info_{GetNodeInfoSignature, local_node_id_};
+    BasicServiceTransferReasmV0<200> rx_req_begin_fw_upd_{BeginFirmwareUpdateSignature, local_node_id_};
+    BasicServiceTransferReasmV0<300> rx_res_file_read_{FileReadSignature, local_node_id_};
 };
 
 /// The following example shows the CAN exchange dump collected from a real network using the old UAVCAN v0 GUI Tool.
@@ -1645,7 +1649,7 @@ private:
 
     std::uint8_t tx_transfer_id_ = 0;
 
-    SimplifiedMessageTransferReassemblerV0<19> rx_{0x0B2A812620A11D40ULL};
+    BasicMessageTransferReasmV0<19> rx_{0x0B2A812620A11D40ULL};
 };
 
 class V1MainActivity : public IActivity
@@ -1814,8 +1818,7 @@ private:
     {
         // This lambda is allocated on the stack, so that the closures do not require heap allocation.
         return detail::transmit(
-            [this, extended_can_id](const std::size_t         frame_payload_size,
-                                    const std::uint8_t* const frame_payload) -> bool {
+            [this, extended_can_id](const std::size_t frame_payload_size, const std::uint8_t* const frame_payload) {
                 assert(frame_payload_size <= std::numeric_limits<std::uint8_t>::max());
                 return driver_.push(false,
                                     extended_can_id,
@@ -1839,9 +1842,9 @@ private:
     const ICANDriver::Mode bus_mode_;
     const std::uint8_t     local_node_id_;
 
-    SimplifiedServiceTransferReassembler<300> rx_file_read_response_;
-    SimplifiedServiceTransferReassembler<0>   rx_get_info_request_;
-    SimplifiedServiceTransferReassembler<300> rx_execute_command_request_;
+    BasicServiceTransferReasm<300> rx_file_read_response_;
+    BasicServiceTransferReasm<0>   rx_get_info_request_;
+    BasicServiceTransferReasm<300> rx_execute_command_request_;
 
     std::optional<PendingRequestMetadata> pending_request_meta_;
 };
@@ -1935,7 +1938,7 @@ private:
         std::uint64_t received_pseudo_uid = 0;
         for (auto i = 0U; i < 6; i++)
         {
-            received_pseudo_uid |= std::uint64_t(body[i]) << (8U * i);
+            received_pseudo_uid |= static_cast<std::uint64_t>(body[i]) << (8U * i);
         }
         if (pseudo_uid_ != received_pseudo_uid)
         {
@@ -1945,7 +1948,8 @@ private:
         {
             return nullptr;  // Unexpected array length
         }
-        const auto allocated_node_id = static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[8] << 8U) | body[7]);
+        const auto allocated_node_id =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[8]) << 8U) | body[7]);
         if (allocated_node_id > MaxNodeID)
         {
             return nullptr;  // Invalid for CAN
@@ -1959,7 +1963,8 @@ private:
         {
             return nullptr;
         }
-        const auto allocated_node_id = static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[1] << 8U) | body[0]);
+        const auto allocated_node_id =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(static_cast<std::uint16_t>(body[1]) << 8U) | body[0]);
         if ((allocated_node_id <= MaxNodeID) && (0 == std::memcmp(&body[2], local_uid_.data(), local_uid_.size())))
         {
             return constructSuccessor(static_cast<uint8_t>(allocated_node_id));
@@ -2052,21 +2057,21 @@ private:
     const ICANDriver::Bitrate  bitrate_;
     const ICANDriver::Mode     bus_mode_;
 
-    SimplifiedMessageTransferReassembler<9>  rx_v1_;
-    SimplifiedMessageTransferReassembler<18> rx_v2_;
+    BasicMessageTransferReasm<9>  rx_v1_;
+    BasicMessageTransferReasm<18> rx_v2_;
 
     std::chrono::microseconds deadline_{getNextPeriod()};
     std::uint8_t              tx_transfer_id_ = 0;
     bool                      version_toggle_ = false;
 };
 
-class ProtocolVersionDetectionActivity : public IActivity
+class VersionDetectionActivity : public IActivity
 {
 public:
-    ProtocolVersionDetectionActivity(IAllocator&                 allocator,
-                                     ICANDriver&                 driver,
-                                     const SystemInfo::UniqueID& local_uid,
-                                     const ICANDriver::Bitrate&  bitrate) :
+    VersionDetectionActivity(IAllocator&                 allocator,
+                             ICANDriver&                 driver,
+                             const SystemInfo::UniqueID& local_uid,
+                             const ICANDriver::Bitrate&  bitrate) :
         allocator_(allocator), driver_(driver), local_uid_(local_uid), bitrate_(bitrate)
     {}
 
@@ -2083,13 +2088,13 @@ public:
             const auto [can_id, payload_size] = *frame;
             if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
             {
-                if (const auto uavcan_version = tryDetectProtocolVersionFromFrame(can_id, buf.at(payload_size - 1U)))
+                if (const auto uavcan_version = tryDetectVersionFromFrame(can_id, buf.at(payload_size - 1U)))
                 {
                     if (!highest_version_seen_)
                     {
                         deadline_ = uptime + ListeningPeriod;
                     }
-                    if (!highest_version_seen_ || (*highest_version_seen_ < *uavcan_version))
+                    if ((!highest_version_seen_) || (*highest_version_seen_ < *uavcan_version))
                     {
                         highest_version_seen_ = uavcan_version;
                         assert(highest_version_seen_);
@@ -2101,8 +2106,7 @@ public:
     }
 
 private:
-    [[nodiscard]] static auto tryDetectProtocolVersionFromFrame(const std::uint32_t can_id,
-                                                                const std::uint8_t  tail_byte)
+    [[nodiscard]] static auto tryDetectVersionFromFrame(const std::uint32_t can_id, const std::uint8_t tail_byte)
         -> std::optional<std::uint8_t>
     {
         // CAN ID is not validated at the moment. This may be improved in the future to avoid misdetection if there
@@ -2121,12 +2125,9 @@ private:
 
     [[nodiscard]] auto constructSuccessor(const std::uint8_t detected_protocol_version) -> IActivity*
     {
-        if (0 == detected_protocol_version)
+        if ((0 == detected_protocol_version) && (driver_.configure(bitrate_, false, makeAcceptanceFilter<0>({}))))
         {
-            if (driver_.configure(bitrate_, false, makeAcceptanceFilter<0>({})))
-            {
-                return allocator_.construct<V0NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
-            }
+            return allocator_.construct<V0NodeIDAllocationActivity>(allocator_, driver_, local_uid_, bitrate_);
         }
         if (1 == detected_protocol_version)
         {
@@ -2168,11 +2169,12 @@ private:
         if (bus_mode_ && driver_.pop(buf))
         {
             const auto bitrate = ICANDriver::StandardBitrates.at(setting_index_ % ICANDriver::StandardBitrates.size());
-            return allocator_.construct<ProtocolVersionDetectionActivity>(allocator_, driver_, local_uid_, bitrate);
+            return allocator_.construct<VersionDetectionActivity>(allocator_, driver_, local_uid_, bitrate);
         }
-        if (!bus_mode_ || (uptime > next_try_at_))
+        if ((!bus_mode_) || (uptime > next_try_at_))
         {
-            const auto br = ICANDriver::StandardBitrates.at((++setting_index_) % ICANDriver::StandardBitrates.size());
+            setting_index_++;
+            const auto br = ICANDriver::StandardBitrates.at(setting_index_ % ICANDriver::StandardBitrates.size());
             bus_mode_     = driver_.configure(br, true, CANAcceptanceFilterConfig::makePromiscuous());
             next_try_at_  = uptime + ListeningPeriod;
         }
@@ -2266,10 +2268,10 @@ public:
                     driver.configure(*can_bitrate, true, CANAcceptanceFilterConfig::makePromiscuous()))
             {
                 (void) bus_mode;  // The protocol version detection task doesn't care about the bus mode.
-                activity_ = activity_allocator_.construct<detail::ProtocolVersionDetectionActivity>(activity_allocator_,
-                                                                                                    driver,
-                                                                                                    local_unique_id,
-                                                                                                    *can_bitrate);
+                activity_ = activity_allocator_.construct<detail::VersionDetectionActivity>(activity_allocator_,
+                                                                                            driver,
+                                                                                            local_unique_id,
+                                                                                            *can_bitrate);
             }
         }
         if (activity_ == nullptr)
