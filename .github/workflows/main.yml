@@ -171,6 +171,7 @@ jobs:
         gcov --preserve-paths --long-file-names $(find integration/CMakeFiles/bootloader.dir -name '*.gcno')
         gcov --preserve-paths --long-file-names $(find unit/CMakeFiles/test_cov.dir          -name '*.gcno')
 
+    # https://community.sonarsource.com/t/analyzing-a-header-only-c-library/51468
     - name: Run sonar-scanner
       run: >
         sonar-scanner

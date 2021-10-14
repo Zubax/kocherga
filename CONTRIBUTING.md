@@ -56,8 +56,11 @@ To reformat the sources, generate the project and build the target `format`; e.g
 
 SonarQube is a cloud solution so its use is delegated to the CI/CD pipeline.
 If you need access, please get in touch with the maintainers.
+
 If you have access, you can run the `sonar-scanner` agent locally for testing and debugging purposes;
 please refer to the CI configs for details.
+You may need to manually `--define sonar.branch.name` as explained in
+<https://sonarcloud.io/documentation/enriching/branch-setup/>.
 
 ### IDE
 
