@@ -178,8 +178,7 @@ jobs:
         --define sonar.projectName=kocherga
         --define sonar.organization=zubax
         --define sonar.projectKey=Zubax_kocherga
-        --define sonar.sources=kocherga,tests/integration,tests/unit,tests/util
-        --define sonar.inclusions=kocherga
+        --define sonar.sources=kocherga,tests/unit/empty_translation_unit.cpp
         --define sonar.cfamily.gcov.reportsPath=.
         --define sonar.cfamily.cache.enabled=false
         --define sonar.cfamily.threads=1

@@ -45,3 +45,10 @@ gen_test("test_x32" "${test_sources}" "" "-m32" "-m32")
 if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
     gen_test("test_cov" "${test_sources}" "" "-g -O0 --coverage" "--coverage")
 endif ()
+
+# Dummy static library to appease SonarCloud scanner. Simply compile the headers as a static library.
+add_library(dummy STATIC empty_translation_unit.cpp)
+file(GLOB_RECURSE library_headers ${library_dir}/*.h*)
+foreach(inc IN LISTS library_headers)
+    target_compile_options(dummy PRIVATE -include${inc})
+endforeach()
