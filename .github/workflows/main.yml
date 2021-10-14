@@ -164,8 +164,7 @@ jobs:
         build-wrapper-linux-x86-64 --out-dir . make all VERBOSE=1
         yakut compile https://github.com/UAVCAN/public_regulated_data_types/archive/refs/heads/master.zip
         make test
-        gcov --preserve-paths --long-file-names $(find integration/CMakeFiles/bootloader.dir -name '*.gcno')
-        gcov --preserve-paths --long-file-names $(find unit/CMakeFiles/test_cov.dir          -name '*.gcno')
+        gcov --preserve-paths --long-file-names $(find . -name '*.gcno')
 
     # https://community.sonarsource.com/t/analyzing-a-header-only-c-library/51468
     - name: Run sonar-scanner
@@ -175,7 +174,6 @@ jobs:
         --define sonar.organization=zubax
         --define sonar.projectKey=Zubax_kocherga
         --define sonar.sources=kocherga,tests/unit,tests/integration
-        --define sonar.inclusions=kocherga/**/*.hpp,tests/unit/**/*.?pp,tests/integration/**/*.?pp
         --define sonar.issue.ignore.allfile=a1,a2
         --define sonar.issue.ignore.allfile.a1.fileRegexp='^#include.*catch\.hpp[>"]$'
         --define sonar.issue.ignore.allfile.a2.fileRegexp='^auto main\([^)]*\) -> int$'
