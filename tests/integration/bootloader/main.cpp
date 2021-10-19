@@ -248,6 +248,11 @@ auto getSystemInfo() -> kocherga::SystemInfo
 
 }  // namespace
 
+auto kocherga::getRandomByte() -> std::uint8_t
+{
+    return util::getRandomInteger<std::uint8_t>();
+}
+
 auto main(const int argc, char* const argv[]) -> int
 {
     (void) argc;
