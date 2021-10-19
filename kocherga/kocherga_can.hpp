@@ -1009,7 +1009,8 @@ public:
                 return;
             }
         }
-        KOCHERGA_ASSERT(false);
+        KOCHERGA_ASSERT(false);  // NOLINT NOSONAR
+        // This assert is needed and cannot be replaced with static_assert
     }
 
 private:
@@ -1201,8 +1202,9 @@ private:
                 }
                 else
                 {
-                    KOCHERGA_ASSERT(
-                        false);  // This means that we've sent a request for which there is no response listener.
+                    KOCHERGA_ASSERT(false);  // NOLINT NOSONAR
+                    // This assert is needed and cannot be replaced with static_assert
+                    // This means that we've sent a request for which there is no response listener.
                 }
             }
         }
@@ -1773,8 +1775,9 @@ private:
                 }
                 else
                 {
-                    KOCHERGA_ASSERT(
-                        false);  // This means that we've sent a request for which there is no response listener.
+                    KOCHERGA_ASSERT(false);  // NOLINT NOSONAR
+                    // This assert is needed and cannot be replaced with static_assert
+                    // This means that we've sent a request for which there is no response listener.
                 }
             }
         }

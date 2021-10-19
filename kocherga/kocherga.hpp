@@ -17,7 +17,9 @@
 
 #ifndef KOCHERGA_ASSERT
 #    include <cassert>
-#    define KOCHERGA_ASSERT(x) assert(x)
+#    define KOCHERGA_ASSERT(x) assert(x)  // NOLINT NOSONAR
+// This assert is a global configuration point and, sadly,
+// the macro is the most efficient way.
 #endif
 
 namespace kocherga

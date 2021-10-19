@@ -279,3 +279,8 @@ inline auto getRandomInteger() -> std::enable_if_t<std::is_unsigned_v<T>, T>
 }
 
 }  // namespace util
+
+inline auto kocherga::getRandomByte() -> std::uint8_t
+{
+    return util::getRandomInteger<std::uint8_t>();
+}
