@@ -99,3 +99,8 @@ TEST_CASE("util::FileROMBackend")
     REQUIRE(7 == back.getReadCount());
     REQUIRE(5 == back.getWriteCount());
 }
+
+auto kocherga::getRandomByte() -> std::uint8_t
+{
+    return util::getRandomInteger<std::uint8_t>();
+}
