@@ -110,22 +110,24 @@ This is a stripped-down example; the full API documentation is available in the 
 The integration test application available under `/tests/integration/bootloader/` may also be a good reference.
 
 #### Configuring Kochergá
-##### Using random number generation
 
-During normal operations through both serial and CAN interfaces,Kochergá needs a source 
-of random numbers.
-The following function specify this source, which you must configure yourself.
-You can use this implementation, based on `std::rand` function from C standard library.
+##### Random number generation
+
+Kochergá needs a source of random numbers regardless of the transport used.
+You need to provide a definition of `kocherga::getRandomByte() -> std::uint8_t` for the library to build successfully.
+You can use this implementation based on `std::rand()`:
 
 ```c++
 #include <cstdlib>
 
-auto kocherga::getRandomByte() -> std::uint8_t {
+auto kocherga::getRandomByte() -> std::uint8_t
+{
     return static_cast<std::uint8_t>(std::rand() * std::numeric_limits<std::uint8_t>::max() / RAND_MAX);
 }
 
-int main(){
-    std::srand(SOME_INITIALIZATION_FUNCTION());
+int main()
+{
+    std::srand(GET_ENTROPY());
     // bootloader implementation below
     return 0;
 }
@@ -136,20 +138,20 @@ An alternative is to use a generator from C++ standard library:
 ```c++
 #include <random>
 
-auto kocherga::getRandomByte() -> std::uint8_t {
-    static std::mt19937 rd{SOME_INITIALIZATION_FUNCTION()};
+auto kocherga::getRandomByte() -> std::uint8_t
+{
+    static std::mt19937 rd{GET_ENTROPY()};
     return static_cast<std::uint8_t>(rd() * std::numeric_limits<std::uint8_t>::max() / std::mt19937::max());
 }
 ```
 
-In both cases beware that you need to initialize the psudorandom sequence
-with `SOME_INITIALIZATION_FUNCTION()`. This function should retrieve a true
-random or unique value (such as number of seconds since epoch).
-Look for more information in the respectful documentation of both `srand` and `std::mt19937`.
+In both cases beware that you need to initialize the psudorandom sequence with `GET_ENTROPY()`.
+This function should retrieve a sufficiently random or unique value (such as the number of seconds since epoch).
+Look for more information in the respective documentation of both `std::srand` and `std::mt19937`.
 
 ##### Providing custom assert macros
 
-Kochergá uses `assert` macro from stadard C library to check for it's invariants.
+Kochergá uses the `assert` macro from the stadard C library to check its invariants.
 If this is undesireable in your project, you can redefine the following macros.
 You can do this before including Kochergá or globally in your build system.
 
@@ -165,24 +167,23 @@ You can disable all internal assertions like this:
 #include <kocherga.hpp>
 ```
 
-##### Using Kochergá without heap
+##### Compatibility with environments with missing operator delete
 
-If your implementation of buffers is stack-only and you don't want to use global heap
-from C standard library, implement `operator delete` in your code something like this:
+Kocherga does not require heap but some toolchains may refuse to link the code if operator delete is not available.
+If your environment does not define `operator delete`, you can provide a custom definition in your code like this:
 
 ```c++
 void operator delete(void*) noexcept { std::abort(); }
 ```
 
-This is needed as Kochergá uses virtual destructors, code generation for which includes 
-an `operator delete` even if deleting an object through pointer to it's base class is 
+This is needed as Kochergá uses virtual destructors, code generation for which includes
+an `operator delete` even if deleting an object through pointer to its base class is
 not used in your entire application.
 
 #### ROM interface
 
 The ROM backend abstracts the specifics of reading and writing your ROM (usually this is the on-chip flash memory).
-Usually this memory should NOT be the same memory as the bootloader. 
-Beware of that and design `WRITE_ROM` and `READ_ROM` functions accordingly.
+Be sure to avoid overwriting the bootloader while modifying the ROM.
 
 ```c++
 class MyROMBackend final : public kocherga::IROMBackend
