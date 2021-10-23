@@ -24,6 +24,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-attributes")
 include_directories(${library_dir})
 include_directories(../util)
 include_directories(SYSTEM ../3rd_party)
+add_definitions(-DCATCH_CONFIG_ENABLE_ALL_STRINGMAKERS=1)
 
 # Test targets
 function(gen_test name files compile_definitions compile_flags link_flags)

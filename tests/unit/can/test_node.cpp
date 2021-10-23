@@ -363,7 +363,6 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         REQUIRE(!driver.popTx());
         REQUIRE(2 == act.getStage());
         const auto deadline_e = act.getDeadline();
-        std::cout << "deadline_e=" << deadline_e.count() << " deadline_d=" << deadline_d.count() << std::endl;
         REQUIRE(deadline_e >= deadline_d + 0us);
         REQUIRE(deadline_e <= deadline_d + 400'000us);
         REQUIRE(!act.poll(reactor, deadline_e));
