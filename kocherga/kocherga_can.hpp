@@ -6,8 +6,6 @@
 
 #include "kocherga.hpp"
 #include <algorithm>
-#include <cassert>
-#include <cstdlib>
 #include <variant>
 
 namespace kocherga::can
@@ -204,7 +202,7 @@ public:
             auto* const d = list_;
             list_         = list_->next;
             dealloc_(d);
-            assert(depth_ > 0);
+            KOCHERGA_ASSERT(depth_ > 0);
             depth_--;
         }
     }
@@ -367,7 +365,7 @@ struct ServiceFrameModel : FrameModel
                                      const void* const   payload)
     -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
 {
-    assert(payload != nullptr);
+    KOCHERGA_ASSERT(payload != nullptr);
     if (0 != (extended_can_id & (1ULL << 23U)))  // Reserved bit.
     {
         return {};
@@ -451,7 +449,7 @@ struct ServiceFrameModel : FrameModel
                                        const void* const   payload)
     -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
 {
-    assert(payload != nullptr);
+    KOCHERGA_ASSERT(payload != nullptr);
     if ((payload_size < 1) || (payload_size > 8))  // Legacy UAVCAN v0 is compatible only with Classic CAN.
     {                                              // This is because the low granularity of DLC in CAN FD breaks TAO.
         return {};
@@ -801,7 +799,7 @@ template <typename Callback>
         return false;
     }
     const std::size_t mtu = transport_layer_mtu - 1U;
-    assert((mtu >= 7U) && (mtu <= 63U));
+    KOCHERGA_ASSERT((mtu >= 7U) && (mtu <= 63U));
 
     // SINGLE-FRAME TRANSFER
     if (payload_length <= mtu)
@@ -809,7 +807,7 @@ template <typename Callback>
         std::copy_n(payload, payload_length, buf.begin());
         const auto dlc = ICANDriver::LengthToDLC.at(payload_length + 1);
         const auto len = ICANDriver::DLCToLength.at(dlc);
-        assert(len > 0);
+        KOCHERGA_ASSERT(len > 0);
         buf.at(len - 1U) = static_cast<std::uint8_t>(static_cast<std::uint32_t>(TailByteStartOfTransfer) |
                                                      TailByteEndOfTransfer | TailByteToggleBit | transfer_id);
         return push_frame(len, buf.data());
@@ -844,9 +842,9 @@ template <typename Callback>
         auto*      dst = buf.begin() + remaining;
         const auto dlc = ICANDriver::LengthToDLC.at(remaining + CRC16CCITT::Size + 1U);
         const auto len = ICANDriver::DLCToLength.at(dlc);
-        assert(len >= (remaining + CRC16CCITT::Size + 1U));
+        KOCHERGA_ASSERT(len >= (remaining + CRC16CCITT::Size + 1U));
         const auto padding = len - remaining - CRC16CCITT::Size - 1U;
-        assert(padding < 16);
+        KOCHERGA_ASSERT(padding < 16);
         for (auto i = 0U; i < padding; i++)
         {
             crc.update(0);
@@ -862,7 +860,7 @@ template <typename Callback>
     // Padding is not needed but one extra frame is required to contain (part of) the CRC.
     const auto  crc_bytes    = crc.getBytes();
     const auto* crc_bytes_it = crc_bytes.begin();
-    assert(mtu >= remaining);
+    KOCHERGA_ASSERT(mtu >= remaining);
     for (auto i = remaining; i < mtu; i++)
     {
         buf.at(i) = *crc_bytes_it++;
@@ -876,7 +874,7 @@ template <typename Callback>
     auto* buf_it = std::copy(crc_bytes_it, crc_bytes.end(), buf.begin());
     *buf_it++    = static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U) | TailByteEndOfTransfer);
     const auto size = buf_it - buf.begin();
-    assert((size >= 2) && (size <= static_cast<std::int32_t>(CRC16CCITT::Size + 1U)));
+    KOCHERGA_ASSERT((size >= 2) && (size <= static_cast<std::int32_t>(CRC16CCITT::Size + 1U)));
     return push_frame(static_cast<std::uint8_t>(size), buf.data());
 }
 
@@ -938,7 +936,7 @@ template <typename Callback>
         remaining -= MTU;
     }
     // Last frame
-    assert(remaining <= MTU);
+    KOCHERGA_ASSERT(remaining <= MTU);
     std::copy_n(ptr, remaining, buf.begin());
     buf.at(remaining) =
         static_cast<std::uint8_t>(transfer_id | (toggle ? TailByteToggleBit : 0U) | TailByteEndOfTransfer);
@@ -1011,7 +1009,8 @@ public:
                 return;
             }
         }
-        assert(false);
+        KOCHERGA_ASSERT(false);  // NOLINT NOSONAR
+        // This assert is needed and cannot be replaced with static_assert
     }
 
 private:
@@ -1086,7 +1085,7 @@ public:
     V0MainActivity(ICANDriver& driver, const std::uint8_t local_node_id) :
         driver_(driver), local_node_id_(local_node_id)
     {
-        assert((local_node_id_ > 0) && (local_node_id_ <= MaxNodeID));
+        KOCHERGA_ASSERT((local_node_id_ > 0) && (local_node_id_ <= MaxNodeID));
     }
 
     auto poll(IReactor& reactor, const std::chrono::microseconds uptime) -> IActivity* override
@@ -1119,7 +1118,7 @@ private:
     {
         if ((server_node_id > 0) && (server_node_id <= MaxNodeID))
         {
-            assert((payload != nullptr) || (payload_length == 0));
+            KOCHERGA_ASSERT((payload != nullptr) || (payload_length == 0));
             if (service_id == ServiceID::FileRead)
             {
                 return sendFileReadRequest(server_node_id,
@@ -1203,7 +1202,9 @@ private:
                 }
                 else
                 {
-                    assert(false);  // This means that we've sent a request for which there is no response listener.
+                    KOCHERGA_ASSERT(false);  // NOLINT NOSONAR
+                    // This assert is needed and cannot be replaced with static_assert
+                    // This means that we've sent a request for which there is no response listener.
                 }
             }
         }
@@ -1214,8 +1215,8 @@ private:
                                    const std::size_t         request_size,
                                    const std::uint8_t* const request_data)
     {
-        assert(frame.destination_node_id == local_node_id_);
-        assert(frame.request_not_response);
+        KOCHERGA_ASSERT(frame.destination_node_id == local_node_id_);
+        KOCHERGA_ASSERT(frame.request_not_response);
         (void) request_size;  // No data is needed.
         std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
         if (const auto response_size = reactor.processRequest(static_cast<PortID>(ServiceID::NodeGetInfo),
@@ -1240,7 +1241,7 @@ private:
             ptr += 17U;                                               // Skip UID and CoA
             const auto name_len = std::min<std::size_t>(response_data.at(30), 80);
             (void) std::memcpy(ptr, response_data.begin() + 31, name_len);
-            assert(buf.back() == 0xAAU);  // Check the canary.
+            KOCHERGA_ASSERT(buf.back() == 0xAAU);  // Check the canary.
             (void) sendResponse(GetNodeInfoSignature,
                                 frame.priority,
                                 frame.service_id,
@@ -1256,8 +1257,8 @@ private:
                                       const std::size_t         request_size,
                                       const std::uint8_t* const request_data)
     {
-        assert(frame.destination_node_id == local_node_id_);
-        assert(frame.request_not_response);
+        KOCHERGA_ASSERT(frame.destination_node_id == local_node_id_);
+        KOCHERGA_ASSERT(frame.request_not_response);
         std::array<std::uint8_t, 210> scratchpad{};
         scratchpad.back() = 0xAA;  // Canary
         // Translate the request v0 --> v1, store into the scratchpad.
@@ -1268,7 +1269,7 @@ private:
             const auto path_len = static_cast<std::uint8_t>(request_size - 1U);
             scratchpad.at(2)    = path_len;
             (void) std::memcpy(scratchpad.begin() + 3U, request_data + 1U, path_len);
-            assert(scratchpad.back() == 0xAA);
+            KOCHERGA_ASSERT(scratchpad.back() == 0xAA);
             std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
             if (const auto response_size = reactor.processRequest(static_cast<PortID>(ServiceID::NodeExecuteCommand),
                                                                   frame.source_node_id,
@@ -1306,7 +1307,7 @@ private:
                 buf.at(2) = static_cast<std::uint8_t>(len >> 0U);
                 buf.at(3) = static_cast<std::uint8_t>(len >> 8U);
                 (void) std::memcpy(buf.begin() + 4, response_data + 2U, len);
-                assert(buf.back() == 0xAA);
+                KOCHERGA_ASSERT(buf.back() == 0xAA);
                 reactor.processResponse(len + 4U, buf.data());
             }
         }
@@ -1325,7 +1326,7 @@ private:
             (void) std::memcpy(buf.data(), payload, 5U);
             const auto path_len = payload[5];
             (void) std::memcpy(buf.data() + 5U, payload + 6U, path_len);
-            assert(buf.back() == 0xAA);
+            KOCHERGA_ASSERT(buf.back() == 0xAA);
             static constexpr std::uint32_t CANIDMask       = 0b11110'00000000'1'0000000'1'0000000ULL;
             const std::uint32_t            extended_can_id = CANIDMask |
                                                   (static_cast<std::uint32_t>(ServiceTypeID::FileRead) << 16U) |
@@ -1488,7 +1489,7 @@ public:
         else  // First call -- initialize the scheduler
         {
             reset(uptime);
-            assert(deadline_);
+            KOCHERGA_ASSERT(deadline_);
         }
         return nullptr;
     }
@@ -1549,7 +1550,7 @@ private:
         {
             return nullptr;
         }
-        assert(node_id <= MaxNodeID);
+        KOCHERGA_ASSERT(node_id <= MaxNodeID);
         // Allocation done, full match.
         if (const auto bus_mode = driver_.configure(bitrate_, false, makeAcceptanceFilter<0>(node_id)))
         {
@@ -1614,11 +1615,11 @@ private:
     void schedule(const std::chrono::microseconds now, const DelayRange range)
     {
         const auto delta      = std::abs(range.first.count() - range.second.count());
-        const auto randomized = (std::rand() * delta) / RAND_MAX;  // NOSONAR rand() ok
-        assert((0 <= randomized) && (randomized <= delta));
+        const auto randomized = (getRandomByte() * delta) / std::numeric_limits<uint8_t>::max();
+        KOCHERGA_ASSERT((0 <= randomized) && (randomized <= delta));
         const auto delay = std::max(std::chrono::microseconds(1), range.first) + std::chrono::microseconds(randomized);
-        assert(range.first <= delay);
-        assert(range.second >= delay);
+        KOCHERGA_ASSERT(range.first <= delay);
+        KOCHERGA_ASSERT(range.second >= delay);
         deadline_ = now + delay;
     }
 
@@ -1774,7 +1775,9 @@ private:
                 }
                 else
                 {
-                    assert(false);  // This means that we've sent a request for which there is no response listener.
+                    KOCHERGA_ASSERT(false);  // NOLINT NOSONAR
+                    // This assert is needed and cannot be replaced with static_assert
+                    // This means that we've sent a request for which there is no response listener.
                 }
             }
         }
@@ -1785,8 +1788,8 @@ private:
                                const std::size_t         request_size,
                                const std::uint8_t* const request_data)
     {
-        assert(frame.destination_node_id == local_node_id_);
-        assert(frame.request_not_response);
+        KOCHERGA_ASSERT(frame.destination_node_id == local_node_id_);
+        KOCHERGA_ASSERT(frame.request_not_response);
         std::array<std::uint8_t, MaxSerializedRepresentationSize> response_data{};
         if (const auto response_size = reactor.processRequest(frame.service_id,
                                                               frame.source_node_id,
@@ -1818,8 +1821,9 @@ private:
     {
         // This lambda is allocated on the stack, so that the closures do not require heap allocation.
         return detail::transmit(
-            [this, extended_can_id](const std::size_t frame_payload_size, const std::uint8_t* const frame_payload) {
-                assert(frame_payload_size <= std::numeric_limits<std::uint8_t>::max());
+            [this, extended_can_id](const std::size_t         frame_payload_size,
+                                    const std::uint8_t* const frame_payload) -> bool {
+                KOCHERGA_ASSERT(frame_payload_size <= std::numeric_limits<std::uint8_t>::max());
                 return driver_.push(false,
                                     extended_can_id,
                                     static_cast<std::uint8_t>(frame_payload_size),
@@ -2011,7 +2015,7 @@ private:
 
     void publishRequestV2()
     {
-        assert(bus_mode_ != ICANDriver::Mode::Classic);
+        KOCHERGA_ASSERT(bus_mode_ != ICANDriver::Mode::Classic);
         std::array<std::uint8_t, 20> buf{};
         buf.at(0) = std::numeric_limits<std::uint8_t>::max();
         buf.at(1) = std::numeric_limits<std::uint8_t>::max();
@@ -2045,8 +2049,8 @@ private:
 
     static auto getNextPeriod() -> std::chrono::microseconds
     {
-        const auto randomized = (std::rand() * MaxPeriod.count()) / RAND_MAX;  // NOSONAR rand() ok
-        assert((0 <= randomized) && (randomized <= MaxPeriod.count()));
+        const auto randomized = (getRandomByte() * MaxPeriod.count()) / std::numeric_limits<uint8_t>::max();
+        KOCHERGA_ASSERT((0 <= randomized) && (randomized <= MaxPeriod.count()));
         return std::max(std::chrono::microseconds(1), std::chrono::microseconds(randomized));
     }
 
@@ -2097,7 +2101,7 @@ public:
                     if ((!highest_version_seen_) || (*highest_version_seen_ < *uavcan_version))
                     {
                         highest_version_seen_ = uavcan_version;
-                        assert(highest_version_seen_);
+                        KOCHERGA_ASSERT(highest_version_seen_);
                     }
                 }
             }
@@ -2280,14 +2284,14 @@ public:
                                                                                         driver,
                                                                                         local_unique_id);
         }
-        assert(activity_ != nullptr);
+        KOCHERGA_ASSERT(activity_ != nullptr);
     }
 
 private:
     void poll(IReactor& reactor, const std::chrono::microseconds uptime) override
     {
-        assert(activity_ != nullptr);
-        assert(uptime.count() >= 0);
+        KOCHERGA_ASSERT(activity_ != nullptr);
+        KOCHERGA_ASSERT(uptime.count() >= 0);
         if (detail::IActivity* const new_activity = activity_->poll(reactor, uptime))
         {
             activity_allocator_.destroy(activity_);
@@ -2301,7 +2305,7 @@ private:
                                    const std::size_t         payload_length,
                                    const std::uint8_t* const payload) -> bool override
     {
-        assert(activity_ != nullptr);
+        KOCHERGA_ASSERT(activity_ != nullptr);
         return activity_->sendRequest(service_id, server_node_id, transfer_id, payload_length, payload);
     }
 
@@ -2312,7 +2316,7 @@ private:
                                       const std::size_t         payload_length,
                                       const std::uint8_t* const payload) -> bool override
     {
-        assert(activity_ != nullptr);
+        KOCHERGA_ASSERT(activity_ != nullptr);
         return activity_->publishMessage(subject_id, transfer_id, payload_length, payload);
     }
 
