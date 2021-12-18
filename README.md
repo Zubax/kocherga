@@ -292,8 +292,6 @@ which checks the presence and validity of the arguments with a strong 64-bit CRC
 /// It is a good idea to include an explicit version field here for future-proofing.
 struct ArgumentsFromApplication
 {
-    bool linger;        ///< Whether to boot immediately or to wait for commands.
-
     std::uint16_t uavcan_serial_node_id;                    ///< Invalid if unknown.
 
     std::pair<std::uint32_t, std::uint32_t> uavcan_can_bitrate;             ///< Zeros if unknown.
@@ -321,13 +319,13 @@ int main()
     // Check if the application has passed any arguments to the bootloader via shared RAM.
     // The address where the arguments are stored obviously has to be shared with the application.
     // If the application uses heap, then it might be a good idea to alias this area with the heap.
-    const std::optional<ArgumentsFromApplication> args =
+    std::optional<ArgumentsFromApplication> args =
         kocherga::VolatileStorage<ArgumentsFromApplication>(reinterpret_cast<std::uint8_t*>(0x2000'4000U)).take();
 
     // Initialize the bootloader core.
     MyROMBackend rom_backend;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
-    kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, args && args->linger);
+    kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, bool(args));
     // It's a good idea to check if the app is valid and safe to boot before adding the nodes.
     // This way you can skip the potentially slow or disturbing interface initialization on the happy path.
     // You can do it by calling poll() here once.
@@ -362,15 +360,6 @@ int main()
                                     uavcan_can_node_id);
     boot.addNode(&can_node);
 
-    // Trigger the update process internally if the required arguments are provided by the application.
-    if (args && (args->trigger_node_index < 2))
-    {
-        (void) boot.trigger(args->trigger_node_index,                   // Use serial or CAN?
-                            args->file_server_node_id,                  // Which node to download the file from?
-                            std::strlen(args->remote_file_path.data()), // Remote file path length.
-                            args->remote_file_path.data());
-    }
-
     while (true)
     {
         const auto uptime = GET_TIME_SINCE_BOOT();
@@ -385,6 +374,16 @@ int main()
                 RESTART_THE_BOOTLOADER();
             }
             assert(false);
+        }
+        // Trigger the update process internally if the required arguments are provided by the application.
+        // The trigger method cannot be called before the first poll().
+        if (args && (args->trigger_node_index < 2))
+        {
+            (void) boot.trigger(args->trigger_node_index,                   // Use serial or CAN?
+                                args->file_server_node_id,                  // Which node to download the file from?
+                                std::strlen(args->remote_file_path.data()), // Remote file path length.
+                                args->remote_file_path.data());
+            args.reset();
         }
         // Sleep until the next hardware event (like reception of CAN frame or UART byte) but no longer than
         // 1 second. A fixed sleep is also acceptable but the resulting polling interval should be adequate
