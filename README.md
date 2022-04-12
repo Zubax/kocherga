@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/Zubax/kocherga/actions/workflows/main.yml/badge.svg)](https://github.com/Zubax/kocherga/actions/workflows/main.yml)
 [![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg?color=e00000)](https://forum.zubax.com)
-[![Forum](https://img.shields.io/discourse/https/forum.uavcan.org/users.svg?color=1700b3)](https://forum.uavcan.org)
+[![Forum](https://img.shields.io/discourse/https/forum.opencyphal.org/users.svg?color=1700b3)](https://forum.opencyphal.org)
 
-**Kochergá is a robust platform-agnostic [UAVCAN](https://uavcan.org) bootloader for deeply embedded systems.**
+**Kochergá is a robust platform-agnostic [Cyphal](https://opencyphal.org) bootloader for deeply embedded systems.**
 
-Technical support is provided on the [UAVCAN Forum](https://forum.uavcan.org/).
+Technical support is provided on the [OpenCyphal Forum](https://forum.opencyphal.org/).
 
 A standard-compliant implementation of the software update server is provided in
-[Yakut](https://github.com/UAVCAN/yakut#updating-node-software).
+[Yakut](https://github.com/OpenCyphal/yakut#updating-node-software).
 
 ## Features
 
@@ -25,8 +25,8 @@ A standard-compliant implementation of the software update server is provided in
   Kochergá's own codebase features extensive test coverage.
 
 - **Multiple supported transports:**
-  - **UAVCAN/CAN** -- supports both v1 and the legacy v0, the protocol version is auto-detected at runtime.
-  - **UAVCAN/serial**
+  - **Cyphal/CAN** + **DroneCAN** -- the protocol version is auto-detected at runtime.
+  - **Cyphal/serial**
   - More may appear in the future -- new transports are easy to add.
 
 ## Usage
@@ -40,7 +40,7 @@ To integrate Kochergá into your application, just include this repository as a 
 copy-paste the required header files into your source tree.
 
 For reference, a typical implementation on an ARM Cortex M4 MCU supporting
-UAVCAN/serial (USB+UART) and UAVCAN/CAN (v1+v0) would set you back by about ~32K of flash.
+Cyphal/serial (USB+UART), Cyphal/CAN, and DroneCAN (autodetection) would set you back by about ~32K of flash.
 
 ### Application signature
 
@@ -84,7 +84,7 @@ kocherga_image.py application-name-goes-here.bin
 ```
 
 The output will be stored in a file whose name follows the pattern expected by the firmware update server implemented in
-the [Yakut CLI tool](https://github.com/UAVCAN/yakut#updating-node-software).
+the [Yakut CLI tool](https://github.com/OpenCyphal/yakut#updating-node-software).
 
 ### State machine
 
@@ -92,7 +92,7 @@ The following diagram documents the state machine of the bootloader:
 
 ![Kochergá State Machine Diagram](docs/state_machine.svg "Kochergá State Machine Diagram")
 
-The bootloader states are mapped onto UAVCAN node states as follows:
+The bootloader states are mapped onto Cyphal node states as follows:
 
 Bootloader state     | Node mode       | Node health| Vendor-specific status code
 ---------------------|-----------------|------------|-------------------------------
@@ -208,7 +208,7 @@ class MyROMBackend final : public kocherga::IROMBackend
 
 #### Media layer interfaces
 
-Transport implementations --- UAVCAN/CAN, UAVCAN/serial, etc., depending on which transports you need ---
+Transport implementations --- Cyphal/CAN, Cyphal/serial, etc., depending on which transports you need ---
 are interfaced with your hardware as follows.
 
 ```c++
@@ -292,11 +292,11 @@ which checks the presence and validity of the arguments with a strong 64-bit CRC
 /// It is a good idea to include an explicit version field here for future-proofing.
 struct ArgumentsFromApplication
 {
-    std::uint16_t uavcan_serial_node_id;                    ///< Invalid if unknown.
+    std::uint16_t cyphal_serial_node_id;                    ///< Invalid if unknown.
 
-    std::pair<std::uint32_t, std::uint32_t> uavcan_can_bitrate;             ///< Zeros if unknown.
-    std::uint8_t                            uavcan_can_protocol_version;    ///< v0 or v1; 0xFF if unknown.
-    std::uint8_t                            uavcan_can_node_id;             ///< Invalid if unknown.
+    std::pair<std::uint32_t, std::uint32_t> cyphal_can_bitrate;         ///< Zeros if unknown.
+    std::uint8_t                            cyphal_can_not_dronecan;    ///< 0xFF-unknown; 0-DroneCAN; 1-Cyphal/CAN.
+    std::uint8_t                            cyphal_can_node_id;         ///< Invalid if unknown.
 
     std::uint8_t                  trigger_node_index;       ///< 0 - serial, 1 - CAN, >1 - none.
     std::uint16_t                 file_server_node_id;      ///< Invalid if unknown.
@@ -309,7 +309,7 @@ static_assert(std::is_trivial_v<ArgumentsFromApplication>);
 
 ```c++
 #include <kocherga_serial.hpp>  // Pick the transports you need.
-#include <kocherga_can.hpp>     // In this example we are using UAVCAN/serial + UAVCAN/CAN.
+#include <kocherga_can.hpp>     // In this example we are using Cyphal/serial + Cyphal/CAN.
 
 /// Maximum possible size of the application image for your platform.
 static constexpr std::size_t MaxAppSize = 1024 * 1024;
@@ -330,34 +330,34 @@ int main()
     // This way you can skip the potentially slow or disturbing interface initialization on the happy path.
     // You can do it by calling poll() here once.
 
-    // Add a UAVCAN/serial node to the bootloader instance.
+    // Add a Cyphal/serial node to the bootloader instance.
     MySerialPort serial_port;
     kocherga::serial::SerialNode serial_node(serial_port, system_info.unique_id);
-    if (args && (args->uavcan_serial_node_id <= kocherga::serial::MaxNodeID))
+    if (args && (args->cyphal_serial_node_id <= kocherga::serial::MaxNodeID))
     {
-        serial_node.setLocalNodeID(args->uavcan_serial_node_id);
+        serial_node.setLocalNodeID(args->cyphal_serial_node_id);
     }
     boot.addNode(&serial_node);
 
-    // Add a UAVCAN/CAN node to the bootloader instance.
+    // Add a Cyphal/CAN node to the bootloader instance.
     std::optional<kocherga::can::ICANDriver::Bitrate> can_bitrate;
-    std::optional<std::uint8_t>                       uavcan_can_version;
-    std::optional<kocherga::NodeID>                   uavcan_can_node_id;
+    std::optional<std::uint8_t>                       cyphal_can_not_dronecan;
+    std::optional<kocherga::NodeID>                   cyphal_can_node_id;
     if (args)
     {
-        if (args->uavcan_can_bitrate.first > 0)
+        if (args->cyphal_can_bitrate.first > 0)
         {
-            can_bitrate = ICANDriver::Bitrate{args.uavcan_can_bitrate.first, args.uavcan_can_bitrate.second};
+            can_bitrate = ICANDriver::Bitrate{args.cyphal_can_bitrate.first, args.cyphal_can_bitrate.second};
         }
-        uavcan_can_version = args->uavcan_can_protocol_version;     // Will be ignored if invalid.
-        uavcan_can_node_id = args->uavcan_can_node_id;              // Will be ignored if invalid.
+        cyphal_can_not_dronecan = args->cyphal_can_not_dronecan;// Will be ignored if invalid.
+        cyphal_can_node_id = args->cyphal_can_node_id;          // Will be ignored if invalid.
     }
     MyCANDriver can_driver;
     kocherga::can::CANNode can_node(can_driver,
                                     system_info.unique_id,
                                     can_bitrate,
-                                    uavcan_can_version,
-                                    uavcan_can_node_id);
+                                    cyphal_can_not_dronecan,
+                                    cyphal_can_node_id);
     boot.addNode(&can_node);
 
     while (true)
