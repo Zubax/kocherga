@@ -450,6 +450,10 @@ It is recommended to copy-paste relevant pieces from Kochergá instead; specific
 
 ## Revisions
 
+### v1.0
+
+The first stable revision is virtually identical to v0.2.
+
 ### v0.2
 
 - Add helper `kocherga::can::TxQueue`.
