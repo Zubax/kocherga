@@ -26,11 +26,10 @@
 # Redesigned for Kocherga by Pavel Kirienko <pavel.kirienko@zubax.com>.
 
 """
-This script is a part of the Kocherga project. Kocherga is a compact, portable, MIT-licensed multi-transport UAVCAN
-bootloader for deeply embedded systems. It is designed to be compatible with any UAVCAN transport, such as UAVCAN/CAN,
-UAVCAN/serial, and so on. The UAVCAN/CAN transport in particular is designed to support the experimental version of
-the protocol labeled UAVCAN v0, which is now obsolete and supported here only to ease the migration of legacy systems
-to the stable version of the protocol.
+This script is a part of the Kocherga project. Kocherga is a compact, portable, MIT-licensed multi-transport Cyphal
+bootloader for deeply embedded systems. It is designed to be compatible with any Cyphal transport, such as Cyphal/CAN,
+Cyphal/serial, and so on. The Cyphal/CAN transport in particular is designed to support the old version of the
+protocol labeled DroneCAN (formerly known as UAVCAN v0).
 
 Kocherga requires that the application image (i.e., firmware image -- in this documentation, the terms 'application'
 and 'firmware' are used interchangeably) contains a particular data structure called "application descriptor".
@@ -373,7 +372,7 @@ class CRCComputer:
         for b in data:
             val = (table[b ^ (val >> 56)] ^ (val << 8)) & mask
         self._crc = val ^ mask
-        assert 0 <= self._crc < 2 ** 64
+        assert 0 <= self._crc < 2**64
         return self
 
     @property
@@ -590,41 +589,41 @@ def _test() -> None:
     assert (
         AppDescriptor.MAGIC.to_bytes(8, "little")
         + b"APDesc00"
-        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "little")
-        + 0xAABBCCDD .to_bytes(4, "little")
+        + 0xDEADBEEF_0DDC0FFE.to_bytes(8, "little")
+        + 0xAABBCCDD.to_bytes(4, "little")
         + bytes(4)
         + bytes([42, 95])
         + bytes([2])
         + bytes(1)
         + (1234567890).to_bytes(4, "little")
-        + 0x1122334455667788 .to_bytes(8, "little")
+        + 0x1122334455667788.to_bytes(8, "little")
         + bytes(16)
     ) == desc.pack("little")
     assert (
         AppDescriptor.MAGIC.to_bytes(8, "big")
         + b"APDesc00"
-        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "big")
-        + 0xAABBCCDD .to_bytes(4, "big")
+        + 0xDEADBEEF_0DDC0FFE.to_bytes(8, "big")
+        + 0xAABBCCDD.to_bytes(4, "big")
         + bytes(4)
         + bytes([42, 95])
         + bytes([2])
         + bytes(1)
         + (1234567890).to_bytes(4, "big")
-        + 0x1122334455667788 .to_bytes(8, "big")
+        + 0x1122334455667788.to_bytes(8, "big")
         + bytes(16)
     ) == desc.pack("big")
 
     desc = AppDescriptor.unpack_from(
         AppDescriptor.MAGIC.to_bytes(8, "little")
         + b"APDesc00"
-        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "little")
-        + 0xAABBCCDD .to_bytes(4, "little")
+        + 0xDEADBEEF_0DDC0FFE.to_bytes(8, "little")
+        + 0xAABBCCDD.to_bytes(4, "little")
         + bytes(4)
         + bytes([42, 95])
         + bytes([2])
         + bytes(1)
         + (1234567890).to_bytes(4, "little")
-        + 0x1122334455667788 .to_bytes(8, "little")
+        + 0x1122334455667788.to_bytes(8, "little")
         + bytes(16),
         "little",
     )
@@ -639,14 +638,14 @@ def _test() -> None:
     desc = AppDescriptor.unpack_from(
         AppDescriptor.MAGIC.to_bytes(8, "big")
         + b"APDesc00"
-        + 0xDEADBEEF_0DDC0FFE .to_bytes(8, "big")
-        + 0xAABBCCDD .to_bytes(4, "big")
+        + 0xDEADBEEF_0DDC0FFE.to_bytes(8, "big")
+        + 0xAABBCCDD.to_bytes(4, "big")
         + bytes(4)
         + bytes([42, 95])
         + bytes([2])
         + bytes(1)
         + (1234567890).to_bytes(4, "big")
-        + 0x1122334455667788 .to_bytes(8, "big")
+        + 0x1122334455667788.to_bytes(8, "big")
         + bytes(16),
         "big",
     )
@@ -679,7 +678,7 @@ def _test() -> None:
         + bytes([2])
         + bytes(1)
         + (1234567890).to_bytes(4, "big")
-        + 0x1122334455667788 .to_bytes(8, "big")
+        + 0x1122334455667788.to_bytes(8, "big")
         + bytes(16)
         + b"AFTER MODEL",
         uninitialized_only=True,
@@ -698,7 +697,7 @@ def _test() -> None:
             + bytes([2])
             + bytes(1)
             + (1234567890).to_bytes(4, "big")
-            + 0x1122334455667788 .to_bytes(8, "big")
+            + 0x1122334455667788.to_bytes(8, "big")
             + bytes(16)
             + b"AFTER MODEL"
             + ImageModel.PADDING_BYTE * 5
@@ -737,7 +736,7 @@ def _test() -> None:
         + bytes([2])
         + bytes(1)
         + (1234567890).to_bytes(4, "big")
-        + 0x1122334455667788 .to_bytes(8, "big")
+        + 0x1122334455667788.to_bytes(8, "big")
         + bytes(16)
         + b"AFTER MODEL"
         + ImageModel.PADDING_BYTE * 5
@@ -762,7 +761,7 @@ def _test() -> None:
             + bytes([3])
             + bytes(1)
             + (1234567890).to_bytes(4, "big")
-            + 0x1122334455667788 .to_bytes(8, "big")
+            + 0x1122334455667788.to_bytes(8, "big")
             + bytes(16)
             + b"AFTER MODEL"
             + ImageModel.PADDING_BYTE * 5
@@ -780,7 +779,7 @@ def _test() -> None:
         + bytes([3])
         + bytes(1)
         + (1234567890).to_bytes(4, "big")
-        + 0x1122334455667788 .to_bytes(8, "big")
+        + 0x1122334455667788.to_bytes(8, "big")
         + bytes(16)
         + b"AFTER MODEL"
         + ImageModel.PADDING_BYTE * 5

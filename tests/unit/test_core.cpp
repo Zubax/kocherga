@@ -176,7 +176,7 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(ai.isDirtyBuild());
 
     // REQUEST UPDATE
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
+    // list(b''.join(pycyphal.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
     //    uavcan.node.ExecuteCommand_1_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE,
     //    'good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin'))))
     nodes.at(1).pushInput(Node::Input::ExecuteCommandRequest,
@@ -197,7 +197,7 @@ TEST_CASE("Bootloader-update-valid")
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(nodes.at(1).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
+    // list(b''.join(pycyphal.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
     //      uavcan.file.Path_2_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
     const auto received = *nodes.at(1).popOutput(Node::Output::FileReadRequest);
     const auto reference =
@@ -269,7 +269,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     REQUIRE(ai.isDirtyBuild());
 
     // REQUEST UPDATE
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
+    // list(b''.join(pycyphal.dsdl.serialize(uavcan.node.ExecuteCommand_1_1.Request(
     //    uavcan.node.ExecuteCommand_1_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE, 'bad-le-crc-x3.bin'))))
     nodes.at(0).pushInput(Node::Input::ExecuteCommandRequest,
                           Transfer(111,
@@ -286,7 +286,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     // FIRST READ REQUEST
     REQUIRE(!bl.poll(2'200ms));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
+    // list(b''.join(pycyphal.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
     //      uavcan.file.Path_2_0('bad-le-crc-x3.bin')))))
     auto received = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
     auto reference =
@@ -457,7 +457,7 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(nodes.at(2).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
     REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
-    // list(b''.join(pyuavcan.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
+    // list(b''.join(pycyphal.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
     //      uavcan.file.Path_2_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
     const auto received = *nodes.at(2).popOutput(Node::Output::FileReadRequest);
     const auto reference =

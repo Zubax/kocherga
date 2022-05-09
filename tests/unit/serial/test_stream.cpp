@@ -97,14 +97,14 @@ TEST_CASE("serial::transmit")
     using Buf = std::vector<std::uint8_t>;
 
     // The reference dump has been obtained as follows:
-    // import pyuavcan.serial
-    // tr = pyuavcan.transport.serial.SerialTransport('loop://', local_node_id=1234, baudrate=115200)
-    // pm = pyuavcan.transport.PayloadMetadata(1024)
-    // ds = pyuavcan.transport.MessageDataSpecifier(2345)
-    // pub = tr.get_output_session(pyuavcan.transport.OutputSessionSpecifier(ds, None), pm)
+    // import pycyphal.serial
+    // tr = pycyphal.transport.serial.SerialTransport('loop://', local_node_id=1234, baudrate=115200)
+    // pm = pycyphal.transport.PayloadMetadata(1024)
+    // ds = pycyphal.transport.MessageDataSpecifier(2345)
+    // pub = tr.get_output_session(pycyphal.transport.OutputSessionSpecifier(ds, None), pm)
     // caps = []
     // tr.begin_capture(caps.append)
-    // pub.send(pyuavcan.transport.Transfer(pyuavcan.transport.Timestamp.now(), pyuavcan.transport.Priority.LOW,
+    // pub.send(pycyphal.transport.Transfer(pycyphal.transport.Timestamp.now(), pycyphal.transport.Priority.LOW,
     //                                      1111, fragmented_payload=[]),
     //          tr.loop.time() + 1.0)
     // print(caps)
@@ -378,7 +378,7 @@ TEST_CASE("serial::StreamParser basic")
     };
 
     // VALID MESSAGE
-    // crc = lambda x: pyuavcan.transport.commons.crc.CRC32C.new(x).value_as_bytes
+    // crc = lambda x: pycyphal.transport.commons.crc.CRC32C.new(x).value_as_bytes
     // ', '.join(f'0x{x:02x}' for x in cobs.cobs.encode(bytes(hdr) + crc(hdr) + bytes(payload) + crc(bytes(payload))))
     {
         const Buf chunk{
@@ -391,7 +391,7 @@ TEST_CASE("serial::StreamParser basic")
             0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
             0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
-            0xad, 0x13, 0xce, 0xc6,                          // Header CRC computed with the help of PyUAVCAN
+            0xad, 0x13, 0xce, 0xc6,                          // Header CRC computed with the help of PyCyphal
             0x01, 0x02, 0x03, 0x04, 0x05,                    // Payload 1 2 3 4 5
             0xab, 0x8f, 0x51, 0x53,                          // Payload CRC
         };
@@ -601,7 +601,7 @@ TEST_CASE("serial::StreamParser error")
         REQUIRE(!tr);
     }
 
-    // UAVCAN/serial transfers cannot be multi-frame
+    // Cyphal/serial transfers cannot be multi-frame
     {
         const Buf header{
             0x00,                                            // Version

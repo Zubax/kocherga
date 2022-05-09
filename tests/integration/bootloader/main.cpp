@@ -281,7 +281,7 @@ auto main(const int argc, char* const argv[]) -> int
         auto serial_port = initSerialPort();
         if (serial_port)
         {
-            std::clog << "Using UAVCAN/serial" << std::endl;
+            std::clog << "Using Cyphal/serial" << std::endl;
             (void) boot.addNode(new kocherga::serial::SerialNode(*serial_port, system_info.unique_id));  // NOLINT owner
         }
 
@@ -289,7 +289,7 @@ auto main(const int argc, char* const argv[]) -> int
         auto can_driver = initCANDriver();
         if (can_driver)
         {
-            std::clog << "Using UAVCAN/CAN" << std::endl;
+            std::clog << "Using Cyphal/CAN" << std::endl;
             (void) boot.addNode(new kocherga::can::CANNode(*can_driver, system_info.unique_id));  // NOLINT owner
         }
 

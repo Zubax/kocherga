@@ -1,5 +1,5 @@
 #!/usr/bin/env -S yakut -v orchestrate
-# This composition is mostly intended for manual testing due to lack of adequate automation tools for UAVCAN v0.
+# This composition is mostly intended for manual testing due to lack of adequate automation tools for DroneCAN.
 
 uavcan:
   can:
@@ -22,5 +22,5 @@ $=:
   -
   - ?=: sudo ip link add dev vcan0 type vcan && sudo ip link set vcan0 mtu 72 && sudo ip link set up vcan0
   -
-  - uavcan_gui_tool   # Start the tool for manual testing.
+  - dronecan_gui_tool   # Start the tool for manual testing.
   - ./bootloader

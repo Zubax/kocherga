@@ -296,7 +296,7 @@ inline auto makePseudoUniqueID(const SystemInfo::UniqueID& uid) -> std::uint64_t
 
 /// If the local-ID is provided, the filter will match only on service transfers addressed to the local node.
 /// If the local-ID is not provided, the filter will match on PnP allocation response messages only.
-template <std::uint8_t UAVCANVersion>
+template <std::uint8_t Version>
 [[nodiscard]] auto makeAcceptanceFilter(const std::optional<std::uint8_t> local_node_id) -> CANAcceptanceFilterConfig;
 template <>
 [[nodiscard]] inline auto makeAcceptanceFilter<0>(const std::optional<std::uint8_t> local_node_id)
@@ -383,7 +383,7 @@ struct ServiceFrameModel : FrameModel
     const std::uint8_t transfer_id       = (tail & MaxTransferID);
     if (start_of_transfer && (!toggle))
     {
-        return {};  // UAVCAN v0
+        return {};  // DroneCAN
     }
     if (((!start_of_transfer) || (!end_of_transfer)) && (out_payload_size == 0))
     {
@@ -450,7 +450,7 @@ struct ServiceFrameModel : FrameModel
     -> std::optional<std::variant<MessageFrameModel, ServiceFrameModel>>
 {
     KOCHERGA_ASSERT(payload != nullptr);
-    if ((payload_size < 1) || (payload_size > 8))  // Legacy UAVCAN v0 is compatible only with Classic CAN.
+    if ((payload_size < 1) || (payload_size > 8))  // Legacy is compatible only with Classic CAN.
     {                                              // This is because the low granularity of DLC in CAN FD breaks TAO.
         return {};
     }
@@ -462,7 +462,7 @@ struct ServiceFrameModel : FrameModel
     const std::uint8_t transfer_id       = (tail & MaxTransferID);
     if (start_of_transfer && toggle)
     {
-        return {};  // UAVCAN v1
+        return {};  // Cyphal
     }
     const auto priority       = static_cast<std::uint8_t>((extended_can_id >> 24U) & 31U);
     const auto source_node_id = static_cast<std::uint8_t>(extended_can_id & 0x7FU);
@@ -671,7 +671,7 @@ protected:
         }
         if (frame.payload_size > (buffer_.size() - state_->payload_size))
         {
-            state_.reset();  // Too much payload -- UAVCAN v0 does not define payload truncation.
+            state_.reset();  // Too much payload -- DroneCAN does not define payload truncation.
             return {};
         }
         std::copy_n(frame.payload, frame.payload_size, buffer_.begin() + state_->payload_size);
@@ -778,7 +778,7 @@ private:
     const std::uint8_t local_node_id_;
 };
 
-/// Send one UAVCAN/CAN v1 transfer. The push_frame callback is invoked per each transmitted frame; its type should be:
+/// Send one Cyphal/CAN transfer. The push_frame callback is invoked per each transmitted frame; its type should be:
 ///     (std::size_t, const std::uint8_t*) -> bool
 /// The return value is true on success, false otherwise.
 /// The callback shall not be an std::function<> or std::bind<> to avoid heap allocation.
@@ -1070,7 +1070,7 @@ public:
     auto operator=(IActivity&&) -> IActivity& = delete;
 };
 
-/// The v0 main activity is a simplified translation layer between UAVCAN/CAN v1 and UAVCAN v0.
+/// The v0 main activity is a simplified translation layer between Cyphal/CAN and DroneCAN.
 /// The following ports are supported:
 ///
 ///     Service                 RX                  TX
@@ -1437,7 +1437,7 @@ private:
     BasicServiceTransferReasmV0<300> rx_res_file_read_{FileReadSignature, local_node_id_};
 };
 
-/// The following example shows the CAN exchange dump collected from a real network using the old UAVCAN v0 GUI Tool.
+/// The following example shows the CAN exchange dump collected from a real network using the old GUI Tool.
 ///
 /// Unique-ID of the allocatee: 35 FF D5 05 50 59 31 34 61 41 23 43 00 00 00 00
 /// Preferred node-ID:          0       (any, no preference)
@@ -2090,17 +2090,17 @@ public:
         while (const auto frame = driver_.pop(buf))
         {
             const auto [can_id, payload_size] = *frame;
-            if (payload_size > 0)  // UAVCAN frames are guaranteed to contain the tail byte always.
+            if (payload_size > 0)  // Cyphal frames are guaranteed to contain the tail byte always.
             {
-                if (const auto uavcan_version = tryDetectVersionFromFrame(can_id, buf.at(payload_size - 1U)))
+                if (const auto version = tryDetectVersionFromFrame(can_id, buf.at(payload_size - 1U)))
                 {
                     if (!highest_version_seen_)
                     {
                         deadline_ = uptime + ListeningPeriod;
                     }
-                    if ((!highest_version_seen_) || (*highest_version_seen_ < *uavcan_version))
+                    if ((!highest_version_seen_) || (*highest_version_seen_ < *version))
                     {
-                        highest_version_seen_ = uavcan_version;
+                        highest_version_seen_ = version;
                         KOCHERGA_ASSERT(highest_version_seen_);
                     }
                 }
@@ -2114,7 +2114,7 @@ private:
         -> std::optional<std::uint8_t>
     {
         // CAN ID is not validated at the moment. This may be improved in the future to avoid misdetection if there
-        // are other protocols besides UAVCAN on the same network.
+        // are other protocols besides Cyphal on the same network.
         (void) can_id;
         if ((tail_byte & TailByteStartOfTransfer) != 0)
         {
@@ -2200,22 +2200,23 @@ private:
 
 }  // namespace detail
 
-/// Kocherga node implementing the UAVCAN/CAN v1 transport along with UAVCAN v0 with automatic version detection.
+/// Kocherga node implementing the Cyphal/CAN transport along with DroneCAN with automatic version detection.
 class CANNode : public kocherga::INode
 {
 public:
     /// The local UID shall be the same that is passed to the bootloader. It is used for PnP node-ID allocation.
+    /// The protocol version is 0 for DroneCAN (derived from legacy UAVCAN v0) and 1 for Cyphal/CAN.
     /// By default, this implementation will auto-detect the parameters of the network and do a PnP node-ID allocation.
     /// The application can opt-out of autoconfiguration by providing the required data to the constructor.
     /// Unknown parameters shall be set to empty options.
     CANNode(ICANDriver&                               driver,
             const SystemInfo::UniqueID&               local_unique_id,
-            const std::optional<ICANDriver::Bitrate>& can_bitrate    = {},
-            const std::optional<std::uint8_t>         uavcan_version = {},
-            const std::optional<NodeID>               local_node_id  = {})
+            const std::optional<ICANDriver::Bitrate>& can_bitrate      = {},
+            const std::optional<std::uint8_t>         protocol_version = {},
+            const std::optional<NodeID>               local_node_id    = {})
     {
-        if ((activity_ == nullptr) && can_bitrate &&     //
-            uavcan_version && (*uavcan_version == 0) &&  //
+        if ((activity_ == nullptr) && can_bitrate &&         //
+            protocol_version && (*protocol_version == 0) &&  //
             local_node_id && (*local_node_id > 0) && (*local_node_id <= MaxNodeID))
         {
             if (const auto bus_mode =
@@ -2229,8 +2230,8 @@ public:
                                                                           static_cast<std::uint8_t>(*local_node_id));
             }
         }
-        if ((activity_ == nullptr) && can_bitrate &&     //
-            uavcan_version && (*uavcan_version == 1) &&  //
+        if ((activity_ == nullptr) && can_bitrate &&         //
+            protocol_version && (*protocol_version == 1) &&  //
             local_node_id && (*local_node_id <= MaxNodeID))
         {
             if (const auto bus_mode =
@@ -2244,7 +2245,7 @@ public:
                                                                           static_cast<std::uint8_t>(*local_node_id));
             }
         }
-        if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 0))
+        if ((activity_ == nullptr) && can_bitrate && protocol_version && (*protocol_version == 0))
         {
             if (const auto bus_mode = driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<0>({})))
             {
@@ -2255,7 +2256,7 @@ public:
                                                                                               *can_bitrate);
             }
         }
-        if ((activity_ == nullptr) && can_bitrate && uavcan_version && (*uavcan_version == 1))
+        if ((activity_ == nullptr) && can_bitrate && protocol_version && (*protocol_version == 1))
         {
             if (const auto bus_mode = driver.configure(*can_bitrate, false, detail::makeAcceptanceFilter<1>({})))
             {

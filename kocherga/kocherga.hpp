@@ -31,7 +31,7 @@ using TransferID = std::uint64_t;
 using NodeID     = std::uint16_t;
 using PortID     = std::uint16_t;
 
-/// UAVCAN subjects used by Kocherga.
+/// Cyphal subjects used by Kocherga.
 enum class SubjectID : PortID
 {
     NodeHeartbeat              = 7509,
@@ -40,7 +40,7 @@ enum class SubjectID : PortID
     DiagnosticRecord           = 8184,
 };
 
-/// UAVCAN services used by Kocherga.
+/// Cyphal services used by Kocherga.
 enum class ServiceID : PortID
 {
     FileRead           = 408,
@@ -48,8 +48,8 @@ enum class ServiceID : PortID
     NodeExecuteCommand = 435,
 };
 
-/// Version of the UAVCAN specification implemented by this library, major and minor.
-static constexpr SemanticVersion UAVCANSpecificationVersion{{1, 0}};
+/// Version of the Cyphal specification implemented by this library, major and minor.
+static constexpr SemanticVersion CyphalSpecificationVersion{{1, 0}};
 
 /// The service response timeout used by the bootloader.
 /// This value applies when the bootloader invokes uavcan.file.Read during the update.
@@ -770,8 +770,8 @@ private:
         const auto  app_info = controller_.getAppInfo();
         auto* const base_ptr = out_response;
         auto*       ptr      = base_ptr;
-        *ptr++               = UAVCANSpecificationVersion.at(0);
-        *ptr++               = UAVCANSpecificationVersion.at(1);
+        *ptr++               = CyphalSpecificationVersion.at(0);
+        *ptr++               = CyphalSpecificationVersion.at(1);
         *ptr++               = system_info_.hardware_version.at(0);
         *ptr++               = system_info_.hardware_version.at(1);
         if (app_info)
