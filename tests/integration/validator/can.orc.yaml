@@ -12,7 +12,7 @@ $=:
   -
   - ?=: sudo ip link add dev vcan0 type vcan && sudo ip link set vcan0 mtu 72 && sudo ip link set up vcan0
   -
-  - $=: yakut --verbose file-server --plug-and-play alloc.db --update-software $SOFTWARE_PACKAGE_DIR
+  - $=: yakut --verbose file-server --plug-and-play alloc.db $SOFTWARE_PACKAGE_DIR --update-software
     uavcan.node.id: 32
   - $=: yakut --json sub --with-metadata uavcan.node.Heartbeat    > heartbeats.json
   - $=: yakut --json sub --with-metadata uavcan.diagnostic.Record > diagnostics.json
