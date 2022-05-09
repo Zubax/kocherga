@@ -1619,7 +1619,6 @@ private:
         KOCHERGA_ASSERT((0 <= randomized) && (randomized <= delta));
         const auto delay = std::max(std::chrono::microseconds(1), range.first) + std::chrono::microseconds(randomized);
         KOCHERGA_ASSERT(range.first <= delay);
-        KOCHERGA_ASSERT(range.second >= delay);
         deadline_ = now + delay;
     }
 
