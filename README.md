@@ -49,20 +49,20 @@ boot. Only if a valid `AppInfo` structure is found the application will be launc
 structure closer to the beginning of the image in order to speed up its verification. The structure is defined as
 follows:
 
-Offset | Type     | Description
--------|----------|-----------------------------------------------------------------------------------------------------
--16    |`uint64`  | Constant value 0x5E4415146FC0C4C7 used for locating the descriptor and detecting the byte order.
--8     |`uint8[8]`| Set to `APDesc00`; used for compatibility with legacy deployments.
-0      |`uint64`  | CRC-64-WE of the entire application image when this field itself is set to zero.
-8      |`uint32`  | Size of the application image, in bytes. Note that the image must be padded to eight bytes.
-12     |`void32`  | Reserved. Used to contain the 32-bit version control system revision ID; see replacement below.
-16     |`uint8[2]`| Major and minor semantic version numbers.
-18     |`uint8`   | Flags: 1 - this is a release build; 2 - this is a dirty build (uncommitted changes present).
-19     |`void8`   | Reserved; set to 0.
-20     |`uint32`  | UNIX UTC build timestamp; i.e., the number of seconds since 1970-01-01T00:00:00Z.
-24     |`uint64`  | Version control system (VCS) revision ID (e.g., the git commit hash).
-32     |`void64`  | Reserved.
-40     |`void64`  | Reserved.
+| Offset | Type       | Description                                                                                      |
+|--------|------------|--------------------------------------------------------------------------------------------------|
+| -16    | `uint64`   | Constant value 0x5E4415146FC0C4C7 used for locating the descriptor and detecting the byte order. |
+| -8     | `uint8[8]` | Set to `APDesc00`; used for compatibility with legacy deployments.                               |
+| 0      | `uint64`   | CRC-64-WE of the entire application image when this field itself is set to zero.                 |
+| 8      | `uint32`   | Size of the application image, in bytes. Note that the image must be padded to eight bytes.      |
+| 12     | `void32`   | Reserved. Used to contain the 32-bit version control system revision ID; see replacement below.  |
+| 16     | `uint8[2]` | Major and minor semantic version numbers.                                                        |
+| 18     | `uint8`    | Flags: 1 - this is a release build; 2 - this is a dirty build (uncommitted changes present).     |
+| 19     | `void8`    | Reserved; set to 0.                                                                              |
+| 20     | `uint32`   | UNIX UTC build timestamp; i.e., the number of seconds since 1970-01-01T00:00:00Z.                |
+| 24     | `uint64`   | Version control system (VCS) revision ID (e.g., the git commit hash).                            |
+| 32     | `void64`   | Reserved.                                                                                        |
+| 40     | `void64`   | Reserved.                                                                                        |
 
 When computing the application image CRC, the process will eventually encounter the location where the CRC itself is
 stored. In order to avoid recursive dependency, the CRC storage location must be replaced with zero bytes when
@@ -94,12 +94,12 @@ The following diagram documents the state machine of the bootloader:
 
 The bootloader states are mapped onto Cyphal node states as follows:
 
-Bootloader state     | Node mode       | Node health| Vendor-specific status code
----------------------|-----------------|------------|-------------------------------
-NoAppToBoot          |`SOFTWARE_UPDATE`| `WARNING`  | 0
-BootDelay            |`SOFTWARE_UPDATE`| `NOMINAL`  | 0
-BootCancelled        |`SOFTWARE_UPDATE`| `ADVISORY` | 0
-AppUpdateInProgress  |`SOFTWARE_UPDATE`| `NOMINAL`  | number of read requests, always >0
+| Bootloader state    | Node mode         | Node health | Vendor-specific status code        |
+|---------------------|-------------------|-------------|------------------------------------|
+| NoAppToBoot         | `SOFTWARE_UPDATE` | `WARNING`   | 0                                  |
+| BootDelay           | `SOFTWARE_UPDATE` | `NOMINAL`   | 0                                  |
+| BootCancelled       | `SOFTWARE_UPDATE` | `ADVISORY`  | 0                                  |
+| AppUpdateInProgress | `SOFTWARE_UPDATE` | `NOMINAL`   | number of read requests, always >0 |
 
 ### API usage
 

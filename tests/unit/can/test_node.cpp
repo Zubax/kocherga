@@ -213,17 +213,17 @@ TEST_CASE("can::detail::VersionDetectionActivity")
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(2'000'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(3'000'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(4'000'000)));
-        driver.pushRx(CANDriverMock::Frame{123456, {}});  // This is not an acceptable UAVCAN frame (either version).
+        driver.pushRx(CANDriverMock::Frame{123456, {}});  // This is not an acceptable Cyphal frame (either version).
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(5'000'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(6'000'000)));
         driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0}});  // Not a start frame, no version info in it.
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(7'000'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(8'000'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(9'000'000)));
-        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // UAVCAN/CAN v0
-        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1010'0000}});  // UAVCAN/CAN v1
-        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // UAVCAN/CAN v0
-        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1010'0000}});  // UAVCAN/CAN v1
+        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // DroneCAN
+        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1010'0000}});  // Cyphal/CAN
+        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // DroneCAN
+        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1010'0000}});  // Cyphal/CAN
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(10'000'000)));     // Detection timeout not yet expired
         IActivity* const v1_pnp_act = act->poll(reactor, std::chrono::microseconds(12'000'000));
         REQUIRE(v1_pnp_act);
@@ -239,7 +239,7 @@ TEST_CASE("can::detail::VersionDetectionActivity")
         act = std::make_shared<VersionDetectionActivity>(alloc, driver, kocherga::SystemInfo::UniqueID{}, br);
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000)));
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(1'000'000)));
-        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // UAVCAN/CAN v0
+        driver.pushRx(CANDriverMock::Frame{123456, {0, 1, 2, 3, 0b1000'0000}});  // DroneCAN
         REQUIRE(!act->poll(reactor, std::chrono::microseconds(2'000'000)));
         IActivity* const v0_pnp_act = act->poll(reactor, std::chrono::microseconds(4'000'000));
         REQUIRE(v0_pnp_act);
@@ -316,7 +316,7 @@ TEST_CASE("can::detail::V0NodeIDAllocationActivity")
         REQUIRE(fr->extended_can_id == compute_pnp_request_can_id(payload));
         REQUIRE(fr->payload == payload);
         // Send 1st stage allocation response matching this UID, prompting the 2nd stage request.
-        driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1110'0000U}});  // UAVCAN v1 ignore
+        driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1110'0000U}});  // Cyphal ignore
         driver.pushRx({0x14'0001'7FUL, {0x00, 0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0b1100'0000U}});  // Valid accepted
         REQUIRE(0 == act.getStage());
         REQUIRE(!act.poll(reactor, deadline_b + 1000us));
@@ -413,7 +413,7 @@ TEST_CASE("can::detail::V1NodeIDAllocationActivity")
     const Bitrate                        br{1'000'000, 4'000'000};
     const kocherga::SystemInfo::UniqueID uid{
         {0x35, 0xFF, 0xD5, 0x05, 0x50, 0x59, 0x31, 0x34, 0x61, 0x41, 0x23, 0x43, 0x00, 0x00, 0x00, 0x00}};
-    // The pseudo-UID is computed as CRC64WE of the UID using PyUAVCAN.
+    // The pseudo-UID is computed as CRC64WE of the UID using PyCyphal.
     const std::array<std::uint8_t, 6> pseudo_uid_bytes{50, 191, 169, 46, 145, 226};
 
     std::optional<V1NodeIDAllocationActivity> act;

@@ -241,7 +241,7 @@ struct Transfer
     const std::uint8_t* payload     = nullptr;
 };
 
-/// UAVCAN/serial stream parser. Extracts UAVCAN/serial frames from raw stream of bytes in constant time.
+/// Cyphal/serial stream parser. Extracts Cyphal/serial frames from raw stream of bytes in constant time.
 /// Frames that contain more than MaxPayloadSize bytes of payload are rejected as invalid.
 template <std::size_t MaxPayloadSize>
 class StreamParser
@@ -465,7 +465,7 @@ public:
     auto operator=(ISerialPort&&) -> ISerialPort& = delete;
 };
 
-/// Kocherga node implementing the UAVCAN/serial transport.
+/// Kocherga node implementing the Cyphal/serial transport.
 class SerialNode : public kocherga::INode
 {
 public:

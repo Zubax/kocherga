@@ -210,7 +210,7 @@ TEST_CASE("can::parseFrame")
         // Similar but invalid:
         // No tail byte
         REQUIRE(!parse(0b001'00'0'11'0110011001100'0'0100111U, {}));
-        // Bad toggle (UAVCAN v0)
+        // Bad toggle (DroneCAN)
         REQUIRE(!parse(0b001'00'0'11'0110011001100'0'0100111U, {0, 1, 2, 3, 4, 5, 6, 0b100'00000U | 23U}));
         // Bad reserved r07
         REQUIRE(!parse(0b001'00'0'11'0110011001100'1'0100111U, {0, 1, 2, 3, 4, 5, 6, 0b101'00000U | 23U}));
@@ -335,7 +335,7 @@ TEST_CASE("can::parseFrameV0")
         // Similar but invalid:
         // No tail byte
         REQUIRE(!parse(0b00100'0110110011001100'0'0100111U, {}));
-        // Bad toggle (UAVCAN v1)
+        // Bad toggle (Cyphal)
         REQUIRE(!parse(0b00100'0110110011001100'0'0100111U, {0, 1, 2, 3, 4, 5, 6, 0b101'00000U | 23U}));
         // Anon transfer is not single frame
         REQUIRE(!parse(0b00101'0110110011001100'0'0000000U, {0, 1, 2, 3, 4, 5, 6, 0b100'00000U | 23U}));
@@ -454,8 +454,8 @@ TEST_CASE("can::BasicTransferReasm")
         }
         return false;
     };
-    // Compute CRC using PyUAVCAN:
-    //  >>> crc = pyuavcan.transport.commons.crc.CRC16CCITT
+    // Compute CRC using PyCyphal:
+    //  >>> crc = pycyphal.transport.commons.crc.CRC16CCITT
     //  >>> crc.new([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]).value_as_bytes
     // Messages.
     {
@@ -654,8 +654,8 @@ TEST_CASE("can::transmit")
         REQUIRE(!transmit([](auto, auto) { return false; }, 64, 0, 0, dummy.data()));
     }
     // Multi-frame
-    // Compute CRC using PyUAVCAN:
-    //  >>> crc = pyuavcan.transport.commons.crc.CRC16CCITT
+    // Compute CRC using PyCyphal:
+    //  >>> crc = pycyphal.transport.commons.crc.CRC16CCITT
     //  >>> list(crc.new([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]).value_as_bytes)
     {
         // Classic, no padding
@@ -840,7 +840,7 @@ TEST_CASE("CAN transfer roundtrip")
             in.data()));
     }
 
-    // Ensure we received the same number of transfers. Can't compare the payloads directly because UAVCAN/CAN may add
+    // Ensure we received the same number of transfers. Can't compare the payloads directly because Cyphal/CAN may add
     // spurious zeroes at the end due to the low CAN FD DLC granularity.
     REQUIRE(reassembled_transfers.size() == original_transfers.size());
     for (auto i = 0U; i < reassembled_transfers.size(); i++)
