@@ -12,8 +12,8 @@
 #include <optional>
 #include <type_traits>
 
-#define KOCHERGA_VERSION_MAJOR 0  // NOLINT NOSONAR
-#define KOCHERGA_VERSION_MINOR 2  // NOLINT NOSONAR
+#define KOCHERGA_VERSION_MAJOR 1  // NOLINT NOSONAR
+#define KOCHERGA_VERSION_MINOR 0  // NOLINT NOSONAR
 
 #ifndef KOCHERGA_ASSERT
 #    include <cassert>
