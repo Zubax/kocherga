@@ -30,10 +30,10 @@ public:
 
     ~TCPSerialPort() override { (void) ::close(fd_); }
 
-    TCPSerialPort(const TCPSerialPort&) = delete;
-    TCPSerialPort(TCPSerialPort&&)      = delete;
+    TCPSerialPort(const TCPSerialPort&)                    = delete;
+    TCPSerialPort(TCPSerialPort&&)                         = delete;
     auto operator=(const TCPSerialPort&) -> TCPSerialPort& = delete;
-    auto operator=(TCPSerialPort&&) -> TCPSerialPort& = delete;
+    auto operator=(TCPSerialPort&&) -> TCPSerialPort&      = delete;
 
     static auto connect(const char* const remote_host, const std::uint16_t remote_port)
         -> std::shared_ptr<TCPSerialPort>

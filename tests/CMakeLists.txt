@@ -36,7 +36,9 @@ if (NOT clang_format)
 else ()
     file(GLOB_RECURSE FORMAT_FILES
             ${LIBRARY_DIR}/*.hpp
-            ${CMAKE_SOURCE_DIR}/unit/*.[ch]pp)
+            ${CMAKE_SOURCE_DIR}/unit/*.[ch]pp
+            ${CMAKE_SOURCE_DIR}/integration/*.[ch]pp
+            ${CMAKE_SOURCE_DIR}/util/*.[ch]pp)
     message(STATUS "Using clang-format: ${clang_format}; files: ${FORMAT_FILES}")
     add_custom_target(format COMMAND ${clang_format} -i -fallback-style=none -style=file --verbose ${FORMAT_FILES})
 endif ()
