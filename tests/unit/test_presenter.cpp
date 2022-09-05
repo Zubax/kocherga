@@ -87,9 +87,11 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
         coa.data(),
     };
 
-    MockController              controller;
-    std::array<Node, 2>         nodes;
-    kocherga::detail::Presenter pres(sys_info, controller);
+    MockController                      controller;
+    std::array<Node, 2>                 nodes;
+    kocherga::detail::Presenter::Params params{};
+    params.request_retry_limit = 1;
+    kocherga::detail::Presenter pres(sys_info, controller, params);
     REQUIRE(pres.addNode(&nodes.at(0)));
     REQUIRE(pres.addNode(&nodes.at(1)));
     REQUIRE(!pres.addNode(&nodes.at(1)));  // Double registration has no effect.

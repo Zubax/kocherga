@@ -274,8 +274,12 @@ auto main(const int argc, char* const argv[]) -> int
 
         util::FileROMBackend rom(rom_file, rom_size);
 
-        const auto           system_info = getSystemInfo();
-        kocherga::Bootloader boot(rom, system_info, max_app_size, linger, boot_delay);
+        const auto                   system_info = getSystemInfo();
+        kocherga::Bootloader::Params params;
+        params.max_app_size = max_app_size;
+        params.linger       = linger;
+        params.boot_delay   = boot_delay;
+        kocherga::Bootloader boot(rom, system_info, params);
 
         // Configure the serial port node.
         auto serial_port = initSerialPort();

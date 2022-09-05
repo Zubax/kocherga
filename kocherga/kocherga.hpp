@@ -12,7 +12,7 @@
 #include <optional>
 #include <type_traits>
 
-#define KOCHERGA_VERSION_MAJOR 1  // NOLINT NOSONAR
+#define KOCHERGA_VERSION_MAJOR 2  // NOLINT NOSONAR
 #define KOCHERGA_VERSION_MINOR 0  // NOLINT NOSONAR
 
 #ifndef KOCHERGA_ASSERT
@@ -544,8 +544,13 @@ public:
 class Presenter final : public IReactor
 {
 public:
-    Presenter(const SystemInfo& system_info, IController& controller) :
-        system_info_(system_info), controller_(controller)
+    struct Params final
+    {
+        std::uint8_t request_retry_limit;
+    };
+
+    Presenter(const SystemInfo& system_info, IController& controller, const Params& param) :
+        par_(param), system_info_(system_info), controller_(controller)
     {}
 
     [[nodiscard]] auto addNode(INode* const node) -> bool
@@ -613,6 +618,7 @@ public:
 
         if (file_loc_spec_)
         {
+            (void) par_;  // TODO FIXME retries
             FileLocationSpecifier& fls = *file_loc_spec_;
             if (fls.response_deadline && (uptime > *fls.response_deadline))
             {
@@ -882,13 +888,14 @@ private:
         ++tid_heartbeat_;
     }
 
-    struct FileLocationSpecifier
+    struct FileLocationSpecifier final
     {
         std::uint8_t                                       local_node_index{};
         NodeID                                             server_node_id{};
         std::size_t                                        path_length{};
         std::array<std::uint8_t, dsdl::File::PathCapacity> path{};
         std::optional<std::chrono::microseconds>           response_deadline{};
+        std::uint8_t                                       attempt_count = 0;
     };
 
     void beginUpdate(const std::uint8_t        local_node_index,
@@ -913,6 +920,7 @@ private:
 
     static constexpr std::uint8_t MaxNodes = 8;
 
+    const Params                 par_;
     const SystemInfo             system_info_;
     std::array<INode*, MaxNodes> nodes_{};
     std::uint8_t                 num_nodes_ = 0;
@@ -1019,18 +1027,26 @@ public:
     /// the new format. This option should be set only if the bootloader is introduced to a product that was using
     /// the old app descriptor format in the past; refer to the PX4 Brickproof Bootloader for details. If you are not
     /// sure, leave the default value.
-    Bootloader(IROMBackend&               rom_backend,
-               const SystemInfo&          system_info,
-               const std::size_t          max_app_size,
-               const bool                 linger,
-               const std::chrono::seconds boot_delay                   = std::chrono::seconds(0),
-               const bool                 allow_legacy_app_descriptors = false) :
-        max_app_size_(max_app_size),
-        boot_delay_(boot_delay),
+    struct Params final
+    {
+        std::size_t          max_app_size                 = std::numeric_limits<std::size_t>::max();
+        bool                 linger                       = false;
+        std::chrono::seconds boot_delay                   = std::chrono::seconds::zero();
+        bool                 allow_legacy_app_descriptors = false;
+        std::uint8_t         request_retry_limit          = 5;
+    };
+
+    Bootloader(IROMBackend& rom_backend, const SystemInfo& system_info, const Params& param) :
+        max_app_size_(param.max_app_size),
+        boot_delay_(param.boot_delay),
         backend_(rom_backend),
-        presentation_(system_info, *this),
-        linger_(linger),
-        allow_legacy_app_descriptors_(allow_legacy_app_descriptors)
+        presentation_{
+            system_info,
+            *this,
+            detail::Presenter::Params{param.request_retry_limit},
+        },
+        linger_(param.linger),
+        allow_legacy_app_descriptors_(param.allow_legacy_app_descriptors)
     {}
 
     /// Nodes shall be registered using this method after the instance is constructed.

@@ -64,9 +64,12 @@ TEST_CASE("Bootloader-fast-boot")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
-    util::FileROMBackend      rom(img);
-    std::array<mock::Node, 3> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false);
+    util::FileROMBackend         rom(img);
+    std::array<mock::Node, 3>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
     REQUIRE(bl.addNode(&nodes.at(2)));
@@ -92,9 +95,13 @@ TEST_CASE("Bootloader-boot-delay")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
-    util::FileROMBackend rom(img);
-    mock::Node           node;
-    kocherga::Bootloader bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    util::FileROMBackend         rom(img);
+    mock::Node                   node;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    params.boot_delay   = 1s;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&node));
 
     REQUIRE(!bl.poll(500ms));
@@ -123,9 +130,12 @@ TEST_CASE("Bootloader-linger-reboot")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
-    util::FileROMBackend      rom(img);
-    std::array<mock::Node, 2> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), true);
+    util::FileROMBackend         rom(img);
+    std::array<mock::Node, 2>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = true;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
 
@@ -157,9 +167,12 @@ TEST_CASE("Bootloader-update-valid")
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
-    util::FileROMBackend      rom("rom.img.tmp");
-    std::array<mock::Node, 2> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), true);
+    util::FileROMBackend         rom("rom.img.tmp");
+    std::array<mock::Node, 2>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = true;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
 
@@ -251,9 +264,13 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
-    util::FileROMBackend      rom("rom.img.tmp");
-    std::array<mock::Node, 1> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 2s);
+    util::FileROMBackend         rom("rom.img.tmp");
+    std::array<mock::Node, 1>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    params.boot_delay   = 2s;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
 
     REQUIRE(!bl.poll(1'100ms));
@@ -422,9 +439,13 @@ TEST_CASE("Bootloader-trigger")
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
-    util::FileROMBackend      rom("rom.img.tmp");
-    std::array<mock::Node, 3> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    util::FileROMBackend         rom("rom.img.tmp");
+    std::array<mock::Node, 3>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    params.boot_delay   = 1s;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
     REQUIRE(bl.addNode(&nodes.at(2)));
