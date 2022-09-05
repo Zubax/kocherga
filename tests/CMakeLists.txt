@@ -21,7 +21,7 @@ set(LIBRARY_DIR "${CMAKE_SOURCE_DIR}/../kocherga")
 
 # Use -DNO_STATIC_ANALYSIS=1 to suppress static analysis if the tools are not available.
 if (NOT NO_STATIC_ANALYSIS)
-    find_program(clang_tidy NAMES clang-tidy-12 clang-tidy)
+    find_program(clang_tidy NAMES clang-tidy)
     if (NOT clang_tidy)
         message(FATAL_ERROR "Could not locate clang-tidy")
     endif ()
@@ -30,7 +30,7 @@ if (NOT NO_STATIC_ANALYSIS)
 endif ()
 
 # clang-format
-find_program(clang_format NAMES clang-format-12 clang-format)
+find_program(clang_format NAMES clang-format)
 if (NOT clang_format)
     message(STATUS "Could not locate clang-format")
 else ()

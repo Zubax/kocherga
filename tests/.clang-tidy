@@ -1,4 +1,4 @@
----
+InheritParentConfig: true
 Checks: >-
   boost-*,
   bugprone-*,
@@ -14,6 +14,7 @@ Checks: >-
   portability-*,
   readability-*,
   -google-readability-todo,
+  -readability-identifier-length,
   -readability-avoid-const-params-in-decls,
   -readability-magic-numbers,
   -readability-function-cognitive-complexity,
@@ -33,8 +34,3 @@ Checks: >-
   -*-easily-swappable-parameters,
   -*-owning-memory,
   -*-malloc,
-WarningsAsErrors: '*'
-HeaderFilterRegex: '.*'
-AnalyzeTemporaryDtors: false
-FormatStyle: file
-...
