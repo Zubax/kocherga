@@ -36,10 +36,10 @@ TEST_CASE("can::BlockAllocator")
         explicit Foo(const std::int64_t f) : field(f) { counter++; }
         ~Foo() { counter--; }
 
-        [[maybe_unused]] Foo(const Foo&) = delete;
-        [[maybe_unused]] Foo(Foo&&)      = delete;
+        [[maybe_unused]] Foo(const Foo&)   = delete;
+        [[maybe_unused]] Foo(Foo&&)        = delete;
         auto operator=(const Foo&) -> Foo& = delete;
-        auto operator=(Foo&&) -> Foo& = delete;
+        auto operator=(Foo&&) -> Foo&      = delete;
     };
 
     REQUIRE(counter == 0);

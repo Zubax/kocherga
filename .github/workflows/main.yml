@@ -101,12 +101,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: DoozyX/clang-format-lint-action@v0.13
+      - uses: DoozyX/clang-format-lint-action@v0.14
         with:
           source: ./kocherga ./tests
           exclude: ./tests/3rd_party
           extensions: cpp,hpp
-          clangFormatVersion: 13
+          clangFormatVersion: 14
       - run: |
           pip install black
           black --check ./tools/

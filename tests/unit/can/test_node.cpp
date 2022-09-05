@@ -834,11 +834,11 @@ TEST_CASE("can::CANNode v0")
 
         [[nodiscard]] virtual auto makeCANID() const -> std::uint32_t = 0;
 
-        virtual ~Transfer()                        = default;
-        [[maybe_unused]] Transfer(const Transfer&) = delete;
-        [[maybe_unused]] Transfer(Transfer&&)      = delete;
+        virtual ~Transfer()                          = default;
+        [[maybe_unused]] Transfer(const Transfer&)   = delete;
+        [[maybe_unused]] Transfer(Transfer&&)        = delete;
         auto operator=(const Transfer&) -> Transfer& = delete;
-        auto operator=(Transfer&&) -> Transfer& = delete;
+        auto operator=(Transfer&&) -> Transfer&      = delete;
     };
 
     struct MessageTransfer : public Transfer
