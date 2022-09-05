@@ -538,15 +538,9 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(nodes.at(1).popOutput(Node::Output::HeartbeatMessage));
     REQUIRE(nodes.at(2).popOutput(Node::Output::HeartbeatMessage));
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
-    REQUIRE(kocherga::Final::BootApp == *bl.poll(12'200ms));
-    REQUIRE(nodes.at(0).popOutput(Node::Output::HeartbeatMessage));
-    REQUIRE(nodes.at(1).popOutput(Node::Output::HeartbeatMessage));
-    REQUIRE(nodes.at(2).popOutput(Node::Output::HeartbeatMessage));
     // Completed here.
-    REQUIRE(kocherga::Final::BootApp == *bl.poll(12'300ms));  // All subsequent calls yield the same Final.
-    REQUIRE(nodes.at(0).popOutput(Node::Output::HeartbeatMessage));
-    REQUIRE(nodes.at(1).popOutput(Node::Output::HeartbeatMessage));
-    REQUIRE(nodes.at(2).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(kocherga::Final::BootApp == bl.poll(15'000ms).value());
+    REQUIRE(kocherga::Final::BootApp == bl.poll(15'100ms).value());  // All subsequent calls yield the same Final.
 
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();
