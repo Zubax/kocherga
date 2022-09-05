@@ -272,10 +272,7 @@ inline auto getImagePath(const std::string& name) -> std::filesystem::path
 template <typename T>
 inline auto getRandomInteger() -> std::enable_if_t<std::is_unsigned_v<T>, T>
 {
-    static std::random_device                           rd;
-    static std::mt19937                                 gen(rd());
-    static std::uniform_int_distribution<std::uint16_t> dis(0, std::numeric_limits<T>::max());
-    return static_cast<T>(dis(gen));
+    return static_cast<T>((static_cast<std::uint64_t>(std::rand()) * std::numeric_limits<T>::max()) / RAND_MAX);
 }
 
 }  // namespace util

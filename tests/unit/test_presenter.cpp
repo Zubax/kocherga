@@ -87,9 +87,11 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
         coa.data(),
     };
 
-    MockController              controller;
-    std::array<Node, 2>         nodes;
-    kocherga::detail::Presenter pres(sys_info, controller);
+    MockController                      controller;
+    std::array<Node, 2>                 nodes;
+    kocherga::detail::Presenter::Params params{};
+    params.request_retry_limit = 1;
+    kocherga::detail::Presenter pres(sys_info, controller, params);
     REQUIRE(pres.addNode(&nodes.at(0)));
     REQUIRE(pres.addNode(&nodes.at(1)));
     REQUIRE(!pres.addNode(&nodes.at(1)));  // Double registration has no effect.
@@ -358,11 +360,12 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
     }
     REQUIRE(!*controller.popFileReadResult());  // Empty option.
 
-    // Successful request, but the response times out.
+    // Successful request, but the response times out after the configured number of retries.
+    REQUIRE(1 == params.request_retry_limit);  // Ensure the configuration matches the expectations.
     nodes.at(1).setFileReadResult(true);
     REQUIRE(pres.requestFileRead(123'456));
     REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
-    REQUIRE((*nodes.at(1).popOutput(Node::Output::FileReadRequest)) ==
+    REQUIRE(nodes.at(1).popOutput(Node::Output::FileReadRequest).value() ==
             Transfer(4,
                      {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
                       114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
@@ -381,8 +384,23 @@ TEST_CASE("Presenter")  // NOLINT NOSONAR complexity threshold
         REQUIRE(n.popOutput(Node::Output::HeartbeatMessage));
         REQUIRE(n.getLastPollTime() == ts);
     }
-    pres.poll(ts);
-    REQUIRE(!*controller.popFileReadResult());  // Empty option.
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE(nodes.at(1).popOutput(Node::Output::FileReadRequest).value() ==
+            Transfer(5,  // transfer-ID incremented
+                     {64,  226, 1,  0,  0,   20, 47, 102, 111, 111, 47, 98,  97,
+                      114, 47,  98, 97, 122, 46, 97, 112, 112, 46,  98, 105, 110},
+                     3210));
+    REQUIRE(!controller.popFileReadResult());
     REQUIRE(!nodes.at(0).wasRequestCanceled());
-    REQUIRE(nodes.at(1).wasRequestCanceled());
+    REQUIRE(!nodes.at(1).wasRequestCanceled());  // Not yet!
+    ts = std::chrono::microseconds{15'000'000};
+    pres.poll(ts);
+    for (auto& n : nodes)
+    {
+        REQUIRE(n.popOutput(Node::Output::HeartbeatMessage));
+        REQUIRE(n.getLastPollTime() == ts);
+    }
+    REQUIRE(!controller.popFileReadResult().value());  // Empty option.
+    REQUIRE(!nodes.at(0).wasRequestCanceled());
+    REQUIRE(nodes.at(1).wasRequestCanceled());  // Given up.
 }

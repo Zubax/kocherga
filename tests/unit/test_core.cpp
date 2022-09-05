@@ -64,9 +64,12 @@ TEST_CASE("Bootloader-fast-boot")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
-    util::FileROMBackend      rom(img);
-    std::array<mock::Node, 3> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false);
+    util::FileROMBackend         rom(img);
+    std::array<mock::Node, 3>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
     REQUIRE(bl.addNode(&nodes.at(2)));
@@ -92,9 +95,13 @@ TEST_CASE("Bootloader-boot-delay")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
-    util::FileROMBackend rom(img);
-    mock::Node           node;
-    kocherga::Bootloader bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    util::FileROMBackend         rom(img);
+    mock::Node                   node;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    params.boot_delay   = 1s;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&node));
 
     REQUIRE(!bl.poll(500ms));
@@ -123,9 +130,12 @@ TEST_CASE("Bootloader-linger-reboot")
 
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-simple-3.1.badc0ffee0ddf00d.452a4267971a3928.app.release.bin");
-    util::FileROMBackend      rom(img);
-    std::array<mock::Node, 2> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), true);
+    util::FileROMBackend         rom(img);
+    std::array<mock::Node, 2>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = true;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
 
@@ -157,9 +167,12 @@ TEST_CASE("Bootloader-update-valid")
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
-    util::FileROMBackend      rom("rom.img.tmp");
-    std::array<mock::Node, 2> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), true);
+    util::FileROMBackend         rom("rom.img.tmp");
+    std::array<mock::Node, 2>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = true;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
 
@@ -251,9 +264,14 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
-    util::FileROMBackend      rom("rom.img.tmp");
-    std::array<mock::Node, 1> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 2s);
+    util::FileROMBackend         rom("rom.img.tmp");
+    std::array<mock::Node, 1>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size        = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger              = false;
+    params.boot_delay          = 2s;
+    params.request_retry_limit = 0;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
 
     REQUIRE(!bl.poll(1'100ms));
@@ -331,7 +349,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
 
     // SECOND READ REQUEST
     REQUIRE(!bl.poll(3'300ms));
-    received  = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
+    received  = nodes.at(0).popOutput(Node::Output::FileReadRequest).value();
     reference = Transfer(2,
                          {0, 1, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 98, 105, 110},
                          1111);
@@ -399,7 +417,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     (void) nodes.at(0).popOutput(Node::Output::LogRecordMessage);
     REQUIRE(nodes.at(0).popOutput(Node::Output::FileReadRequest));
     nodes.at(0).pushInput(Node::Input::FileReadResponse,
-                          Transfer(3,
+                          Transfer(4,
                                    {0x00, 0x00, 0x09, 0x00, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa},
                                    3210));
     REQUIRE(!bl.poll(10'800ms));
@@ -422,9 +440,13 @@ TEST_CASE("Bootloader-trigger")
     const auto sys = getSysInfo();
     const auto img = util::getImagePath("good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin");
     REQUIRE(std::filesystem::copy_file(img, "rom.img.tmp", std::filesystem::copy_options::overwrite_existing));
-    util::FileROMBackend      rom("rom.img.tmp");
-    std::array<mock::Node, 3> nodes;
-    kocherga::Bootloader      bl(rom, sys, static_cast<std::size_t>(std::filesystem::file_size(img)), false, 1s);
+    util::FileROMBackend         rom("rom.img.tmp");
+    std::array<mock::Node, 3>    nodes;
+    kocherga::Bootloader::Params params;
+    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger       = false;
+    params.boot_delay   = 1s;
+    kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
     REQUIRE(bl.addNode(&nodes.at(1)));
     REQUIRE(bl.addNode(&nodes.at(2)));
@@ -450,7 +472,7 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(!bl.poll(1'100ms));
     REQUIRE(checkHeartbeat(nodes, 0, 1, Heartbeat::Health::Nominal, 1));
 
-    // FIRST READ REQUEST
+    // FIRST READ REQUEST, FIRST ATTEMPT
     REQUIRE(!bl.poll(1'200ms));
     REQUIRE(nodes.at(0).popOutput(Node::Output::LogRecordMessage));
     REQUIRE(nodes.at(1).popOutput(Node::Output::LogRecordMessage));
@@ -459,8 +481,8 @@ TEST_CASE("Bootloader-trigger")
     REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
     // list(b''.join(pycyphal.dsdl.serialize(uavcan.file.Read_1_1.Request(0,
     //      uavcan.file.Path_2_0('good-le-3rd-entry-5.6.3333333333333333.8b61938ee5f90b1f.app.dirty.bin')))))
-    const auto received = *nodes.at(2).popOutput(Node::Output::FileReadRequest);
-    const auto reference =
+    auto received = nodes.at(2).popOutput(Node::Output::FileReadRequest).value();
+    auto reference =
         Transfer(1,
                  {0,   0,   0,   0,   0,  69, 103, 111, 111, 100, 45,  108, 101, 45,  51,  114, 100, 45,  101,
                   110, 116, 114, 121, 45, 53, 46,  54,  46,  51,  51,  51,  51,  51,  51,  51,  51,  51,  51,
@@ -470,10 +492,38 @@ TEST_CASE("Bootloader-trigger")
     std::cout << received.toString() << reference.toString() << std::endl;
     REQUIRE(received == reference);
 
-    // READ RESPONSE
+    // FIRST READ REQUEST, SECOND ATTEMPT
+    REQUIRE(!bl.poll(6'000ms));
+    REQUIRE(nodes.at(0).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(nodes.at(1).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(nodes.at(2).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!nodes.at(2).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
+    received              = nodes.at(2).popOutput(Node::Output::FileReadRequest).value();
+    reference.transfer_id = 2;  // transfer-ID incremented, the rest is the same
+    REQUIRE(received == reference);
+
+    // FIRST READ REQUEST, THIRD ATTEMPT
+    REQUIRE(!bl.poll(12'000ms));
+    REQUIRE(nodes.at(0).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(nodes.at(1).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(nodes.at(2).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!nodes.at(2).popOutput(Node::Output::LogRecordMessage));
+    REQUIRE(!nodes.at(0).popOutput(Node::Output::FileReadRequest));
+    REQUIRE(!nodes.at(1).popOutput(Node::Output::FileReadRequest));
+    received              = nodes.at(2).popOutput(Node::Output::FileReadRequest).value();
+    reference.transfer_id = 3;  // transfer-ID incremented, the rest is the same
+    REQUIRE(received == reference);
+
+    // READ RESPONSE TO THE THIRD ATTEMPT
     // The serialized representation was constructed manually from the binary file
     nodes.at(2).pushInput(Node::Input::FileReadResponse,
-                          Transfer(0,
+                          Transfer(3,
                                    {0,   0,   128, 0,   72,  101, 108, 108, 111, 32,  119, 111, 114, 108, 100, 63,  32,
                                     32,  32,  32,  199, 196, 192, 111, 20,  21,  68,  94,  65,  80,  68,  101, 115, 99,
                                     48,  48,  124, 194, 145, 71,  22,  198, 82,  134, 64,  2,   0,   0,   0,   0,   0,
@@ -483,12 +533,14 @@ TEST_CASE("Bootloader-trigger")
                                     126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126,
                                     126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126, 126},
                                    2222));
-    (void) bl.poll(1'300ms);  // Results will appear on the SECOND poll.
+    (void) bl.poll(12'100ms);  // Results will appear on the SECOND poll.
+    REQUIRE(nodes.at(0).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(nodes.at(1).popOutput(Node::Output::HeartbeatMessage));
+    REQUIRE(nodes.at(2).popOutput(Node::Output::HeartbeatMessage));
     REQUIRE(bl.getState() == kocherga::State::BootDelay);
-    REQUIRE(kocherga::Final::BootApp == *bl.poll(2'400ms));
     // Completed here.
-    REQUIRE(kocherga::Final::BootApp == *bl.poll(2'500ms));  // All subsequent calls yield the same Final.
-    REQUIRE(kocherga::Final::BootApp == *bl.poll(2'600ms));  // Yep.
+    REQUIRE(kocherga::Final::BootApp == bl.poll(15'000ms).value());
+    REQUIRE(kocherga::Final::BootApp == bl.poll(15'100ms).value());  // All subsequent calls yield the same Final.
 
     // NEW APPLICATION IS NOW AVAILABLE
     ai = *bl.getAppInfo();

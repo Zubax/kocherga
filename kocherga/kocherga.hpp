@@ -12,7 +12,7 @@
 #include <optional>
 #include <type_traits>
 
-#define KOCHERGA_VERSION_MAJOR 1  // NOLINT NOSONAR
+#define KOCHERGA_VERSION_MAJOR 2  // NOLINT NOSONAR
 #define KOCHERGA_VERSION_MINOR 0  // NOLINT NOSONAR
 
 #ifndef KOCHERGA_ASSERT
@@ -543,9 +543,30 @@ public:
 /// Unifies multiple INode and performs DSDL serialization. Manages the network at the presentation layer.
 class Presenter final : public IReactor
 {
+    struct FileLocationSpecifier final
+    {
+        std::uint8_t                                       local_node_index{};
+        NodeID                                             server_node_id{};
+        std::size_t                                        path_length{};
+        std::array<std::uint8_t, dsdl::File::PathCapacity> path{};
+
+        struct Pending final
+        {
+            std::uint64_t             offset;
+            std::chrono::microseconds response_deadline;
+            std::uint8_t              remaining_attempts;
+        };
+        std::optional<Pending> pending;
+    };
+
 public:
-    Presenter(const SystemInfo& system_info, IController& controller) :
-        system_info_(system_info), controller_(controller)
+    struct Params final
+    {
+        std::uint8_t request_retry_limit;
+    };
+
+    Presenter(const SystemInfo& system_info, IController& controller, const Params& param) :
+        par_(param), system_info_(system_info), controller_(controller)
     {}
 
     [[nodiscard]] auto addNode(INode* const node) -> bool
@@ -614,12 +635,20 @@ public:
         if (file_loc_spec_)
         {
             FileLocationSpecifier& fls = *file_loc_spec_;
-            if (fls.response_deadline && (uptime > *fls.response_deadline))
+            if (fls.pending && (uptime > fls.pending->response_deadline))
             {
-                INode* const nd = nodes_.at(fls.local_node_index);
-                nd->cancelRequest();
-                fls.response_deadline.reset();
-                controller_.handleFileReadResult({});
+                if (fls.pending->remaining_attempts > 0)
+                {
+                    fls.pending->remaining_attempts--;
+                    fls.pending->response_deadline = uptime + ServiceResponseTimeout;
+                    (void) sendFileReadRequest(fls);  // Ignore the result, we will retry later if possible.
+                }
+                else
+                {
+                    nodes_.at(fls.local_node_index)->cancelRequest();
+                    fls.pending.reset();
+                    controller_.handleFileReadResult({});
+                }
             }
         }
 
@@ -633,39 +662,21 @@ public:
     void setNodeHealth(const dsdl::Heartbeat::Health value) { node_health_ = value; }
     void setNodeVSSC(const std::uint8_t value) { node_vssc_ = value; }
 
-    /// The timeout will be managed by the presenter automatically.
+    /// The timeout and retries will be managed by the presenter automatically.
+    /// No timeout error will be reported until all retries are exhausted.
     [[nodiscard]] auto requestFileRead(const std::uint64_t offset) -> bool
     {
         if (file_loc_spec_)
         {
-            std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{};
-
-            auto of = offset;
-            buf[0]  = static_cast<std::uint8_t>(of);
-            of >>= BitsPerByte;
-            buf[1] = static_cast<std::uint8_t>(of);
-            of >>= BitsPerByte;
-            buf[2] = static_cast<std::uint8_t>(of);
-            of >>= BitsPerByte;
-            buf[3] = static_cast<std::uint8_t>(of);
-            of >>= BitsPerByte;
-            buf[4] = static_cast<std::uint8_t>(of);
-
-            static constexpr auto  length_minus_path = 6U;
-            FileLocationSpecifier& fls               = *file_loc_spec_;
-            buf.at(length_minus_path - 1U)           = static_cast<std::uint8_t>(fls.path_length);
-            (void) std::memmove(&buf.at(length_minus_path), fls.path.data(), fls.path_length);
-            INode* const node = nodes_.at(fls.local_node_index);
-
-            read_transfer_id_++;
-            const bool out = node->sendRequest(ServiceID::FileRead,
-                                               fls.server_node_id,
-                                               read_transfer_id_,
-                                               fls.path_length + length_minus_path,
-                                               buf.data());
-            if (out)
+            FileLocationSpecifier::Pending pend{};
+            pend.offset             = offset;
+            pend.response_deadline  = last_poll_at_ + ServiceResponseTimeout;
+            pend.remaining_attempts = par_.request_retry_limit;
+            file_loc_spec_->pending.emplace(pend);
+            const bool out = sendFileReadRequest(*file_loc_spec_);
+            if (!out)
             {
-                fls.response_deadline = last_poll_at_ + ServiceResponseTimeout;
+                file_loc_spec_->pending.reset();
             }
             return out;
         }
@@ -836,12 +847,12 @@ private:
         if (file_loc_spec_ && (response_length >= dsdl::File::ReadResponseSizeMin))
         {
             FileLocationSpecifier& fls = *file_loc_spec_;
-            if (fls.response_deadline && (fls.local_node_index == current_node_index_))
+            if (fls.pending && (fls.local_node_index == current_node_index_))
             {
-                fls.response_deadline.reset();
+                fls.pending.reset();
                 static const std::array<std::uint8_t, 2> zero_error{};
                 std::optional<dsdl::File::ReadResponse>  argument;
-                if (std::equal(std::begin(zero_error), std::end(zero_error), response))  // Error = OK
+                if (std::equal(zero_error.begin(), zero_error.end(), response))  // Error = OK
                 {
                     argument = dsdl::File::ReadResponse{
                         static_cast<std::uint16_t>(
@@ -882,14 +893,33 @@ private:
         ++tid_heartbeat_;
     }
 
-    struct FileLocationSpecifier
+    [[nodiscard]] auto sendFileReadRequest(FileLocationSpecifier& fls) -> bool
     {
-        std::uint8_t                                       local_node_index{};
-        NodeID                                             server_node_id{};
-        std::size_t                                        path_length{};
-        std::array<std::uint8_t, dsdl::File::PathCapacity> path{};
-        std::optional<std::chrono::microseconds>           response_deadline{};
-    };
+        std::array<std::uint8_t, dsdl::File::ReadRequestCapacity> buf{};
+
+        auto of = fls.pending.value().offset;
+        buf[0]  = static_cast<std::uint8_t>(of);
+        of >>= BitsPerByte;
+        buf[1] = static_cast<std::uint8_t>(of);
+        of >>= BitsPerByte;
+        buf[2] = static_cast<std::uint8_t>(of);
+        of >>= BitsPerByte;
+        buf[3] = static_cast<std::uint8_t>(of);
+        of >>= BitsPerByte;
+        buf[4] = static_cast<std::uint8_t>(of);
+
+        static constexpr auto length_minus_path = 6U;
+        buf.at(length_minus_path - 1U)          = static_cast<std::uint8_t>(fls.path_length);
+        (void) std::memmove(&buf.at(length_minus_path), fls.path.data(), fls.path_length);
+        INode* const node = nodes_.at(fls.local_node_index);
+
+        read_transfer_id_++;
+        return node->sendRequest(ServiceID::FileRead,
+                                 fls.server_node_id,
+                                 read_transfer_id_,
+                                 fls.path_length + length_minus_path,
+                                 buf.data());
+    }
 
     void beginUpdate(const std::uint8_t        local_node_index,
                      const NodeID              file_server_node_id,
@@ -902,7 +932,7 @@ private:
         fls.path_length      = std::min(app_image_file_path_length, std::size(fls.path));
         (void) std::memmove(fls.path.data(), app_image_file_path, fls.path_length);
 
-        if (file_loc_spec_ && file_loc_spec_->response_deadline)
+        if (file_loc_spec_ && file_loc_spec_->pending)
         {
             nodes_.at(file_loc_spec_->local_node_index)->cancelRequest();
         }
@@ -913,6 +943,7 @@ private:
 
     static constexpr std::uint8_t MaxNodes = 8;
 
+    const Params                 par_;
     const SystemInfo             system_info_;
     std::array<INode*, MaxNodes> nodes_{};
     std::uint8_t                 num_nodes_ = 0;
@@ -998,39 +1029,53 @@ enum class Final
 class Bootloader : public detail::IController
 {
 public:
-    /// The max application image size parameter is very important for performance reasons.
-    /// Without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
-    /// valid app descriptor (by virtue of having the same magic, which is only 64 bit long),
-    /// and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
-    /// Having an upper size limit for the application image allows the bootloader to weed out too large
-    /// values early, greatly improving the worst case boot time.
-    ///
+    struct Params final
+    {
+        /// The max application image size parameter is very important for performance reasons.
+        /// Without it, the bootloader may encounter an unrelated data structure in the ROM that looks like a
+        /// valid app descriptor (by virtue of having the same magic, which is only 64 bit long),
+        /// and it may spend a considerable amount of time trying to check the CRC that is certainly invalid.
+        /// Having an upper size limit for the application image allows the bootloader to weed out too large
+        /// values early, improving the worst case boot time.
+        std::size_t max_app_size = std::numeric_limits<std::size_t>::max();
+
+        /// If the linger flag is set, the bootloader will not boot the application after the initial verification.
+        /// If the application is valid, then the initial state will be BootCanceled instead of BootDelay.
+        /// If the application is invalid, the flag will have no effect.
+        /// It is designed to support the common use case where the application commands the bootloader to start and
+        /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the
+        /// update. The flag affects only the initial verification and has no effect on all subsequent checks; for
+        /// example, after the application is updated and validated, it will be booted after BootDelay regardless of
+        /// this flag.
+        bool linger = false;
+
+        /// Wait this much time before booting the application. Keep zero if not sure.
+        std::chrono::seconds boot_delay = std::chrono::seconds::zero();
+
+        /// If the allow_legacy_app_descriptors option is set, the bootloader will also accept legacy descriptors
+        /// alongside the new format. This option should be set only if the bootloader is introduced to a product that
+        /// was using the old app descriptor format in the past; refer to the PX4 Brickproof Bootloader for details. If
+        /// you are not sure, leave the default value.
+        bool allow_legacy_app_descriptors = false;
+
+        /// The total maximum number of network service requests is this value plus one.
+        /// The counter is reset after every successful request.
+        std::uint8_t request_retry_limit = 5;
+    };
+
     /// SystemInfo is used for responding to uavcan.node.GetInfo requests.
-    ///
-    /// If the linger flag is set, the bootloader will not boot the application after the initial verification.
-    /// If the application is valid, then the initial state will be BootCanceled instead of BootDelay.
-    /// If the application is invalid, the flag will have no effect.
-    /// It is designed to support the common use case where the application commands the bootloader to start and
-    /// sit idle until instructed otherwise, or if the application itself commands the bootloader to begin the update.
-    /// The flag affects only the initial verification and has no effect on all subsequent checks; for example,
-    /// after the application is updated and validated, it will be booted after BootDelay regardless of this flag.
-    ///
-    /// If the allow_legacy_app_descriptors option is set, the bootloader will also accept legacy descriptors alongside
-    /// the new format. This option should be set only if the bootloader is introduced to a product that was using
-    /// the old app descriptor format in the past; refer to the PX4 Brickproof Bootloader for details. If you are not
-    /// sure, leave the default value.
-    Bootloader(IROMBackend&               rom_backend,
-               const SystemInfo&          system_info,
-               const std::size_t          max_app_size,
-               const bool                 linger,
-               const std::chrono::seconds boot_delay                   = std::chrono::seconds(0),
-               const bool                 allow_legacy_app_descriptors = false) :
-        max_app_size_(max_app_size),
-        boot_delay_(boot_delay),
+    /// The lifetime of params is unrestricted as the contents are copied.
+    Bootloader(IROMBackend& rom_backend, const SystemInfo& system_info, const Params& param) :
+        max_app_size_(param.max_app_size),
+        boot_delay_(param.boot_delay),
         backend_(rom_backend),
-        presentation_(system_info, *this),
-        linger_(linger),
-        allow_legacy_app_descriptors_(allow_legacy_app_descriptors)
+        presentation_{
+            system_info,
+            *this,
+            detail::Presenter::Params{param.request_retry_limit},
+        },
+        linger_(param.linger),
+        allow_legacy_app_descriptors_(param.allow_legacy_app_descriptors)
     {}
 
     /// Nodes shall be registered using this method after the instance is constructed.
