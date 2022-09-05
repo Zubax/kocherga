@@ -25,9 +25,9 @@ A standard-compliant implementation of the software update server is provided in
   Kochergá's own codebase features extensive test coverage.
 
 - **Multiple supported transports:**
-  - **Cyphal/CAN** + **DroneCAN** -- the protocol version is auto-detected at runtime.
-  - **Cyphal/serial**
-  - More may appear in the future -- new transports are easy to add.
+    - **Cyphal/CAN** + **DroneCAN** -- the protocol version is auto-detected at runtime.
+    - **Cyphal/serial**
+    - More may appear in the future -- new transports are easy to add.
 
 ## Usage
 
@@ -311,9 +311,6 @@ static_assert(std::is_trivial_v<ArgumentsFromApplication>);
 #include <kocherga_serial.hpp>  // Pick the transports you need.
 #include <kocherga_can.hpp>     // In this example we are using Cyphal/serial + Cyphal/CAN.
 
-/// Maximum possible size of the application image for your platform.
-static constexpr std::size_t MaxAppSize = 1024 * 1024;
-
 int main()
 {
     // Check if the application has passed any arguments to the bootloader via shared RAM.
@@ -325,7 +322,8 @@ int main()
     // Initialize the bootloader core.
     MyROMBackend rom_backend;
     kocherga::SystemInfo system_info = GET_SYSTEM_INFO();
-    kocherga::Bootloader boot(rom_backend, system_info, MaxAppSize, bool(args));
+    kocherga::Bootloader::Params params{.linger = args.has_value()};  // Read the docs on the available params.
+    kocherga::Bootloader boot(rom_backend, system_info, params);
     // It's a good idea to check if the app is valid and safe to boot before adding the nodes.
     // This way you can skip the potentially slow or disturbing interface initialization on the happy path.
     // You can do it by calling poll() here once.
@@ -449,6 +447,11 @@ It is recommended to copy-paste relevant pieces from Kochergá instead; specific
 - `kocherga::CRC64`
 
 ## Revisions
+
+### v2.0
+
+- Provide dedicated parameter struct to minimize usage errors.
+- Retry timed out requests up to a configurable number of times (https://github.com/Zubax/kocherga/issues/17).
 
 ### v1.0
 
