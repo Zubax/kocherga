@@ -267,9 +267,10 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     util::FileROMBackend         rom("rom.img.tmp");
     std::array<mock::Node, 1>    nodes;
     kocherga::Bootloader::Params params;
-    params.max_app_size = static_cast<std::size_t>(std::filesystem::file_size(img));
-    params.linger       = false;
-    params.boot_delay   = 2s;
+    params.max_app_size        = static_cast<std::size_t>(std::filesystem::file_size(img));
+    params.linger              = false;
+    params.boot_delay          = 2s;
+    params.request_retry_limit = 0;
     kocherga::Bootloader bl(rom, sys, params);
     REQUIRE(bl.addNode(&nodes.at(0)));
 
@@ -348,7 +349,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
 
     // SECOND READ REQUEST
     REQUIRE(!bl.poll(3'300ms));
-    received  = *nodes.at(0).popOutput(Node::Output::FileReadRequest);
+    received  = nodes.at(0).popOutput(Node::Output::FileReadRequest).value();
     reference = Transfer(2,
                          {0, 1, 0, 0, 0, 17, 98, 97, 100, 45, 108, 101, 45, 99, 114, 99, 45, 120, 51, 46, 98, 105, 110},
                          1111);
@@ -416,7 +417,7 @@ TEST_CASE("Bootloader-update-invalid")  // NOLINT NOSONAR complexity threshold
     (void) nodes.at(0).popOutput(Node::Output::LogRecordMessage);
     REQUIRE(nodes.at(0).popOutput(Node::Output::FileReadRequest));
     nodes.at(0).pushInput(Node::Input::FileReadResponse,
-                          Transfer(3,
+                          Transfer(4,
                                    {0x00, 0x00, 0x09, 0x00, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa},
                                    3210));
     REQUIRE(!bl.poll(10'800ms));
