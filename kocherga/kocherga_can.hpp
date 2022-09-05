@@ -95,12 +95,12 @@ public:
     [[nodiscard]] virtual auto pop(PayloadBuffer& payload_buffer)
         -> std::optional<std::pair<std::uint32_t, std::uint8_t>> = 0;
 
-    virtual ~ICANDriver()         = default;
-    ICANDriver()                  = default;
-    ICANDriver(const ICANDriver&) = delete;
-    ICANDriver(ICANDriver&&)      = delete;
+    virtual ~ICANDriver()                            = default;
+    ICANDriver()                                     = default;
+    ICANDriver(const ICANDriver&)                    = delete;
+    ICANDriver(ICANDriver&&)                         = delete;
     auto operator=(const ICANDriver&) -> ICANDriver& = delete;
-    auto operator=(ICANDriver&&) -> ICANDriver& = delete;
+    auto operator=(ICANDriver&&) -> ICANDriver&      = delete;
 
     /// The length is rounded UP to the next valid DLC.
     constexpr static std::array<std::uint8_t, 65> LengthToDLC{{
@@ -141,10 +141,10 @@ public:
 
     ~TxQueue() { clear(); }
 
-    TxQueue(const TxQueue&) = delete;
-    TxQueue(TxQueue&&)      = delete;
+    TxQueue(const TxQueue&)                    = delete;
+    TxQueue(TxQueue&&)                         = delete;
     auto operator=(const TxQueue&) -> TxQueue& = delete;
-    auto operator=(TxQueue&&) -> TxQueue& = delete;
+    auto operator=(TxQueue&&) -> TxQueue&      = delete;
 
     /// The timestamp of the frame is the time when it is enqueued (created).
     /// It is kept in the queue to allow the caller to determine how long each frame was waiting for.
@@ -969,12 +969,12 @@ public:
         }
     }
 
-    virtual ~IAllocator()         = default;
-    IAllocator()                  = default;
-    IAllocator(const IAllocator&) = delete;
-    IAllocator(IAllocator&&)      = delete;
+    virtual ~IAllocator()                            = default;
+    IAllocator()                                     = default;
+    IAllocator(const IAllocator&)                    = delete;
+    IAllocator(IAllocator&&)                         = delete;
     auto operator=(const IAllocator&) -> IAllocator& = delete;
-    auto operator=(IAllocator&&) -> IAllocator& = delete;
+    auto operator=(IAllocator&&) -> IAllocator&      = delete;
 };
 
 template <std::size_t BlockSize, std::uint8_t BlockCount>
@@ -1062,12 +1062,12 @@ public:
         return false;
     }
 
-    virtual ~IActivity()        = default;
-    IActivity()                 = default;
-    IActivity(const IActivity&) = delete;
-    IActivity(IActivity&&)      = delete;
+    virtual ~IActivity()                           = default;
+    IActivity()                                    = default;
+    IActivity(const IActivity&)                    = delete;
+    IActivity(IActivity&&)                         = delete;
     auto operator=(const IActivity&) -> IActivity& = delete;
-    auto operator=(IActivity&&) -> IActivity& = delete;
+    auto operator=(IActivity&&) -> IActivity&      = delete;
 };
 
 /// The v0 main activity is a simplified translation layer between Cyphal/CAN and DroneCAN.

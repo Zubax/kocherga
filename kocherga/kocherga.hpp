@@ -133,12 +133,12 @@ public:
     /// Hence, the bootloader core knows what response it is by checking which request was sent last.
     virtual void processResponse(const std::size_t response_length, const std::uint8_t* const response) = 0;
 
-    virtual ~IReactor()       = default;
-    IReactor()                = default;
-    IReactor(const IReactor&) = delete;
-    IReactor(IReactor&&)      = delete;
+    virtual ~IReactor()                          = default;
+    IReactor()                                   = default;
+    IReactor(const IReactor&)                    = delete;
+    IReactor(IReactor&&)                         = delete;
     auto operator=(const IReactor&) -> IReactor& = delete;
-    auto operator=(IReactor&&) -> IReactor& = delete;
+    auto operator=(IReactor&&) -> IReactor&      = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -177,12 +177,12 @@ public:
                                               const std::size_t         payload_length,
                                               const std::uint8_t* const payload) -> bool = 0;
 
-    virtual ~INode()    = default;
-    INode()             = default;
-    INode(const INode&) = delete;
-    INode(INode&&)      = delete;
+    virtual ~INode()                       = default;
+    INode()                                = default;
+    INode(const INode&)                    = delete;
+    INode(INode&&)                         = delete;
     auto operator=(const INode&) -> INode& = delete;
-    auto operator=(INode&&) -> INode& = delete;
+    auto operator=(INode&&) -> INode&      = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -223,18 +223,18 @@ public:
     [[nodiscard]] virtual auto read(const std::size_t offset, std::byte* const out_data, const std::size_t size) const
         -> std::size_t = 0;
 
-    virtual ~IROMBackend()          = default;
-    IROMBackend()                   = default;
-    IROMBackend(const IROMBackend&) = delete;
-    IROMBackend(IROMBackend&&)      = delete;
+    virtual ~IROMBackend()                             = default;
+    IROMBackend()                                      = default;
+    IROMBackend(const IROMBackend&)                    = delete;
+    IROMBackend(IROMBackend&&)                         = delete;
     auto operator=(const IROMBackend&) -> IROMBackend& = delete;
-    auto operator=(IROMBackend&&) -> IROMBackend& = delete;
+    auto operator=(IROMBackend&&) -> IROMBackend&      = delete;
 };
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// This function is used in drivers to generate
-auto getRandomByte() -> uint8_t;
+/// The application shall provide an implementation of this. See README for examples.
+auto getRandomByte() -> std::uint8_t;
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -532,11 +532,11 @@ public:
 
     [[nodiscard]] virtual auto getAppInfo() const -> std::optional<AppInfo> = 0;
 
-    virtual ~IController()           = default;
-    IController()                    = default;
-    IController(const IController&)  = delete;
-    IController(const IController&&) = delete;
-    auto operator=(const IController&) -> IController& = delete;
+    virtual ~IController()                              = default;
+    IController()                                       = default;
+    IController(const IController&)                     = delete;
+    IController(const IController&&)                    = delete;
+    auto operator=(const IController&) -> IController&  = delete;
     auto operator=(const IController&&) -> IController& = delete;
 };
 

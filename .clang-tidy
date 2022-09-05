@@ -1,4 +1,4 @@
----
+InheritParentConfig: false
 Checks: >-
   boost-*,
   bugprone-*,
@@ -22,6 +22,7 @@ Checks: >-
   -cppcoreguidelines-non-private-member-variables-in-classes,
   -cert-msc30-c,
   -cert-msc50-cpp,
+  -readability-identifier-length,
   -*-easily-swappable-parameters,
   -*-owning-memory,
   -*-malloc,
@@ -29,4 +30,3 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 AnalyzeTemporaryDtors: false
 FormatStyle: file
-...
