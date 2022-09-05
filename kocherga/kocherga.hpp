@@ -233,8 +233,8 @@ public:
 
 // --------------------------------------------------------------------------------------------------------------------
 
-/// This function is used in drivers to generate
-auto getRandomByte() -> uint8_t;
+/// The application shall provide an implementation of this. See README for examples.
+auto getRandomByte() -> std::uint8_t;
 
 // --------------------------------------------------------------------------------------------------------------------
 
