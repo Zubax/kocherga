@@ -122,7 +122,9 @@ You can use this implementation based on `std::rand()`:
 
 auto kocherga::getRandomByte() -> std::uint8_t
 {
-    return static_cast<std::uint8_t>(std::rand() * std::numeric_limits<std::uint8_t>::max() / RAND_MAX);
+    const auto product =
+        static_cast<std::uint64_t>(std::rand()) * static_cast<std::uint64_t>(std::numeric_limits<std::uint8_t>::max());
+    return static_cast<std::uint8_t>(product / RAND_MAX);
 }
 
 int main()
