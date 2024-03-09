@@ -19,6 +19,43 @@ constexpr std::uint8_t FrameDelimiter = 0x00;  ///< Zeros cannot occur inside fr
 static constexpr std::uint8_t                FrameFormatVersion = 0;
 static constexpr std::array<std::uint8_t, 4> FrameIndexEOTReference{0, 0, 0, 0x80};
 
+/// Size-optimized implementation of CRC16-CCITT
+class CRC16
+{
+public:
+    static constexpr std::size_t Size = 2;
+
+    void update(const std::uint8_t b) noexcept
+    {
+        value_ ^= static_cast<std::uint16_t>(b) << BitsPerByte;
+        for (auto i = 0U; i < BitsPerByte; i++)
+        {
+            value_ = (value_ >> 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U); // NOLINT
+        }
+    }
+
+    [[nodiscard]] auto get() const noexcept { return value_ ^ Xor; }
+
+    [[nodiscard]] auto getBytes() const noexcept -> std::array<std::uint8_t, Size>
+    {
+        const auto x = get();
+        return {
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 0U)),
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 1U)),
+        };
+    }
+
+    [[nodiscard]] auto isResidueCorrect() const noexcept { return value_ == Residue; }
+
+private:
+    static constexpr std::uint16_t Xor     = 0xFFFFU;
+    static constexpr std::uint16_t Poly    = 0x1021U;
+    static constexpr std::uint16_t Top     = 0x8000U;
+    static constexpr std::uint16_t Residue = 0x0000U;
+
+    std::uint16_t value_ = Xor;
+};
+
 /// Size-optimized implementation of CRC32-C (Castagnoli).
 class CRC32C
 {
@@ -256,7 +293,7 @@ public:
         const auto              dec = decoder_.feed(stream_byte);
         if (std::holds_alternative<COBSDecoder::Delimiter>(dec))
         {
-            if (inside_ && (offset_ >= TotalOverheadSize) && crc_.isResidueCorrect() && isMetaValid())
+            if (inside_ && (offset_ >= TotalOverheadSize) && transferCrc_.isResidueCorrect() && isMetaValid())
             {
                 out = Transfer{
                     meta_,
@@ -269,13 +306,14 @@ public:
         }
         else if (const std::uint8_t* const decoded_byte = std::get_if<std::uint8_t>(&dec))
         {
-            crc_.update(*decoded_byte);
             if (offset_ < HeaderSize)
             {
+                headerCrc_.update(*decoded_byte);
                 acceptHeader(*decoded_byte);
             }
             else
             {
+                transferCrc_.update(*decoded_byte);
                 const auto buf_offset = offset_ - HeaderSize;
                 if (buf_offset < buf_.size())
                 {
@@ -299,10 +337,11 @@ public:
     void reset() noexcept
     {
         decoder_.reset();
-        offset_ = 0;
-        inside_ = false;
-        crc_    = {};
-        meta_   = {};
+        offset_      = 0;
+        inside_      = false;
+        headerCrc_   = {};
+        transferCrc_ = {};
+        meta_        = {};
     }
 
 private:
@@ -327,7 +366,7 @@ private:
         }
         if (offset_ == (HeaderSize - 1U))
         {
-            if (!crc_.isResidueCorrect())
+            if (!headerCrc_.isResidueCorrect())
             {
                 reset();  // Header CRC error.
             }
@@ -336,7 +375,6 @@ private:
             // also, the amount of dynamic memory that needs to be allocated for the payload would also be determined
             // at this moment. The main purpose of the header CRC is to permit such early-stage frame processing.
             // This specialized implementation requires none of that.
-            crc_ = {};
         }
     }
 
@@ -366,7 +404,7 @@ private:
         return meta_.destination == Transfer::Metadata::AnonymousNodeID;
     }
 
-    static constexpr std::size_t HeaderSize        = 32;
+    static constexpr std::size_t HeaderSize        = 24;
     static constexpr std::size_t TotalOverheadSize = HeaderSize + CRC32C::Size;
     // Header field offsets.
     static constexpr std::size_t                         OffsetVersion  = 0;
@@ -374,13 +412,14 @@ private:
     static constexpr std::pair<std::size_t, std::size_t> OffsetSource{2, 3};
     static constexpr std::pair<std::size_t, std::size_t> OffsetDestination{4, 5};
     static constexpr std::pair<std::size_t, std::size_t> OffsetDataSpec{6, 7};
-    static constexpr std::pair<std::size_t, std::size_t> OffsetTransferID{16, 23};
-    static constexpr std::pair<std::size_t, std::size_t> OffsetFrameIndexEOT{24, 27};
+    static constexpr std::pair<std::size_t, std::size_t> OffsetTransferID{8, 15};
+    static constexpr std::pair<std::size_t, std::size_t> OffsetFrameIndexEOT{16, 19};
 
     COBSDecoder                                             decoder_;
     std::size_t                                             offset_ = 0;
     bool                                                    inside_ = false;
-    CRC32C                                                  crc_;
+    CRC16                                                   headerCrc_;
+    CRC32C                                                  transferCrc_;
     Transfer::Metadata                                      meta_;
     std::array<std::uint8_t, MaxPayloadSize + CRC32C::Size> buf_{};
 };
@@ -392,20 +431,17 @@ template <typename Callback>
 [[nodiscard]] inline auto transmit(const Callback& send_byte, const Transfer& tr) -> bool
 {
     COBSEncoder<const Callback&> encoder(send_byte);
-    CRC32C                       crc;
-    const auto                   out = [&crc, &encoder](const std::uint8_t b) {
-        crc.update(b);
+    CRC16                        headerCrc;
+    const auto                   out = [&headerCrc, &encoder](const std::uint8_t b) {
+        headerCrc.update(b);
         return encoder.push(b);
     };
     const auto out2 = [&out](const std::uint16_t bb) {
         return out(static_cast<std::uint8_t>(bb)) && out(static_cast<std::uint8_t>(bb >> BitsPerByte));
     };
+
     bool ok = out(FrameFormatVersion) && out(tr.meta.priority) &&  //
               out2(tr.meta.source) && out2(tr.meta.destination) && out2(tr.meta.data_spec);
-    for (auto i = 0U; i < sizeof(std::uint64_t); i++)
-    {
-        ok = ok && out(0);
-    }
     auto tmp_transfer_id = tr.meta.transfer_id;
     for (auto i = 0U; i < sizeof(std::uint64_t); i++)
     {
@@ -416,16 +452,18 @@ template <typename Callback>
     {
         ok = ok && out(x);
     }
-    for (const auto x : crc.getBytes())
+    for (const auto x : headerCrc.getBytes())
     {
         ok = ok && out(x);
     }
-    crc = {};  // Now it's the payload CRC.
+
+    CRC32C                       transferCrc;
     {
         const auto* ptr = tr.payload;
         for (std::size_t i = 0U; i < tr.payload_len; i++)
         {
-            ok = ok && out(*ptr);
+            transferCrc.update(*ptr);
+            ok = ok && encoder.push(*ptr);
             ++ptr;
             if (!ok)
             {
@@ -433,9 +471,9 @@ template <typename Callback>
             }
         }
     }
-    for (const auto x : crc.getBytes())
+    for (const auto x : transferCrc.getBytes())
     {
-        ok = ok && out(x);
+        ok = ok && encoder.push(x);
     }
     return ok && encoder.end();
 }
