@@ -6,7 +6,30 @@
 #include "catch.hpp"
 #include <numeric>
 
-TEST_CASE("serial::CRC")
+TEST_CASE("serial::CRC3216-CCITT")
+{
+    kocherga::serial::detail::CRC16 crc;
+    crc.update(static_cast<std::uint8_t>('1'));
+    crc.update(static_cast<std::uint8_t>('2'));
+    crc.update(static_cast<std::uint8_t>('3'));
+    crc.update(static_cast<std::uint8_t>('4'));
+    crc.update(static_cast<std::uint8_t>('5'));
+    crc.update(static_cast<std::uint8_t>('6'));
+    crc.update(static_cast<std::uint8_t>('7'));
+    crc.update(static_cast<std::uint8_t>('8'));
+    crc.update(static_cast<std::uint8_t>('9'));
+
+    REQUIRE(0x29B1U == crc.get());
+    REQUIRE(crc.getBytes().at(0) == 0xB1U);
+    REQUIRE(crc.getBytes().at(1) == 0x29U);
+
+    REQUIRE(!crc.isResidueCorrect());
+    crc.update(0xB1U);
+    crc.update(0x29U);
+    REQUIRE(crc.isResidueCorrect());
+}
+
+TEST_CASE("serial::CRC32C")
 {
     kocherga::serial::detail::CRC32C crc;
     crc.update(static_cast<std::uint8_t>('1'));
