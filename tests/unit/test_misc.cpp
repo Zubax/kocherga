@@ -9,7 +9,7 @@
 #include <iostream>
 #include <numeric>
 
-TEST_CASE("CRC")
+TEST_CASE("CRC64")
 {
     kocherga::CRC64 crc;
     const char*     val = "12345";
@@ -32,6 +32,30 @@ TEST_CASE("CRC")
     crc.update(crc.getBytes().data(), 8);
     REQUIRE(crc.isResidueCorrect());
     REQUIRE(0xFCAC'BEBD'5931'A992ULL == (~crc.get()));
+}
+
+TEST_CASE("CRC16-CCITT")
+{
+    kocherga::detail::CRC16CCITT crc;
+    crc.update(static_cast<std::uint8_t>('1'));
+    crc.update(static_cast<std::uint8_t>('2'));
+    crc.update(static_cast<std::uint8_t>('3'));
+    crc.update(static_cast<std::uint8_t>('4'));
+    crc.update(static_cast<std::uint8_t>('5'));
+    crc.update(static_cast<std::uint8_t>('6'));
+    crc.update(static_cast<std::uint8_t>('7'));
+    crc.update(static_cast<std::uint8_t>('8'));
+    crc.update(static_cast<std::uint8_t>('9'));
+
+    REQUIRE(0x29B1U == crc.get());
+    REQUIRE(crc.getBytes().at(0) == 0x29U);
+    REQUIRE(crc.getBytes().at(1) == 0xB1U);
+
+    REQUIRE(!crc.isResidueCorrect());
+    crc.update(0x29U);
+    crc.update(0xB1U);
+    REQUIRE(crc.isResidueCorrect());
+    REQUIRE(0x0000U == crc.get());
 }
 
 TEST_CASE("VolatileStorage")

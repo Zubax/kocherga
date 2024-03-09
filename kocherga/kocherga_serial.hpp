@@ -5,6 +5,7 @@
 #pragma once
 
 #include "kocherga.hpp"
+#include <cstdio>
 #include <variant>
 
 namespace kocherga::serial
@@ -12,50 +13,15 @@ namespace kocherga::serial
 namespace detail
 {
 using kocherga::detail::BitsPerByte;  // NOSONAR
+using kocherga::detail::CRC16CCITT;   // NOSONAR
+using kocherga::detail::CRC32C;       // NOSONAR
 
 constexpr std::uint8_t FrameDelimiter = 0x00;  ///< Zeros cannot occur inside frames thanks to COBS encoding.
 
 /// Reference values to check the header against.
-static constexpr std::uint8_t                FrameFormatVersion = 0;
+static constexpr std::uint8_t                FrameFormatVersion = 1;
 static constexpr std::array<std::uint8_t, 4> FrameIndexEOTReference{0, 0, 0, 0x80};
-
-/// Size-optimized implementation of CRC32-C (Castagnoli).
-class CRC32C
-{
-public:
-    static constexpr std::size_t Size = 4;
-
-    void update(const std::uint8_t b) noexcept
-    {
-        value_ ^= static_cast<std::uint32_t>(b);
-        for (auto i = 0U; i < BitsPerByte; i++)
-        {
-            value_ = ((value_ & 1U) != 0) ? ((value_ >> 1U) ^ ReflectedPoly) : (value_ >> 1U);  // NOLINT
-        }
-    }
-
-    [[nodiscard]] auto get() const noexcept { return value_ ^ Xor; }
-
-    [[nodiscard]] auto getBytes() const noexcept -> std::array<std::uint8_t, Size>
-    {
-        const auto x = get();
-        return {
-            static_cast<std::uint8_t>(x >> (BitsPerByte * 0U)),
-            static_cast<std::uint8_t>(x >> (BitsPerByte * 1U)),
-            static_cast<std::uint8_t>(x >> (BitsPerByte * 2U)),
-            static_cast<std::uint8_t>(x >> (BitsPerByte * 3U)),
-        };
-    }
-
-    [[nodiscard]] auto isResidueCorrect() const noexcept { return value_ == Residue; }
-
-private:
-    static constexpr std::uint32_t Xor           = 0xFFFF'FFFFUL;
-    static constexpr std::uint32_t ReflectedPoly = 0x82F6'3B78UL;
-    static constexpr std::uint32_t Residue       = 0xB798'B438UL;
-
-    std::uint32_t value_ = Xor;
-};
+static constexpr std::array<std::uint8_t, 2> UserData{0, 0};
 
 /// New instance shall be created per encoded frame.
 /// ByteWriter is of type (std::uint8_t) -> bool, returns true on success.
@@ -205,12 +171,12 @@ struct Transfer
 {
     struct Metadata
     {
-        static constexpr std::uint8_t DefaultPriority      = 6U;  // Second to lowest.
-        static constexpr NodeID       AnonymousNodeID      = 0xFFFFU;
-        static constexpr PortID       DataSpecServiceFlag  = 0x8000U;
-        static constexpr PortID       DataSpecResponseFlag = 0x4000U;
+        static constexpr std::uint8_t DefaultPriority     = 6U;  // Second to lowest.
+        static constexpr NodeID       AnonymousNodeID     = 0xFFFFU;
+        static constexpr PortID       DataSpecServiceFlag = 0x8000U;
+        static constexpr PortID       DataSpecRequestFlag = 0x4000U;
         static constexpr auto         DataSpecServiceIDMask =
-            static_cast<PortID>(~static_cast<PortID>(DataSpecServiceFlag | DataSpecResponseFlag));
+            static_cast<PortID>(~static_cast<PortID>(DataSpecServiceFlag | DataSpecRequestFlag));
 
         std::uint8_t  priority    = DefaultPriority;
         NodeID        source      = AnonymousNodeID;
@@ -220,7 +186,7 @@ struct Transfer
 
         [[nodiscard]] auto isRequest() const noexcept -> std::optional<PortID>
         {
-            if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecResponseFlag) == 0))
+            if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecRequestFlag) != 0))
             {
                 return data_spec & DataSpecServiceIDMask;
             }
@@ -229,7 +195,7 @@ struct Transfer
 
         [[nodiscard]] auto isResponse() const noexcept -> std::optional<PortID>
         {
-            if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecResponseFlag) != 0))
+            if (((data_spec & DataSpecServiceFlag) != 0) && ((data_spec & DataSpecRequestFlag) == 0))
             {
                 return data_spec & DataSpecServiceIDMask;
             }
@@ -256,7 +222,7 @@ public:
         const auto              dec = decoder_.feed(stream_byte);
         if (std::holds_alternative<COBSDecoder::Delimiter>(dec))
         {
-            if (inside_ && (offset_ >= TotalOverheadSize) && crc_.isResidueCorrect() && isMetaValid())
+            if (inside_ && (offset_ >= TotalOverheadSize) && transfer_crc_.isResidueCorrect() && isMetaValid())
             {
                 out = Transfer{
                     meta_,
@@ -269,13 +235,14 @@ public:
         }
         else if (const std::uint8_t* const decoded_byte = std::get_if<std::uint8_t>(&dec))
         {
-            crc_.update(*decoded_byte);
             if (offset_ < HeaderSize)
             {
+                header_crc_.update(*decoded_byte);
                 acceptHeader(*decoded_byte);
             }
             else
             {
+                transfer_crc_.update(*decoded_byte);
                 const auto buf_offset = offset_ - HeaderSize;
                 if (buf_offset < buf_.size())
                 {
@@ -299,10 +266,11 @@ public:
     void reset() noexcept
     {
         decoder_.reset();
-        offset_ = 0;
-        inside_ = false;
-        crc_    = {};
-        meta_   = {};
+        offset_       = 0;
+        inside_       = false;
+        header_crc_   = {};
+        transfer_crc_ = {};
+        meta_         = {};
     }
 
 private:
@@ -327,7 +295,7 @@ private:
         }
         if (offset_ == (HeaderSize - 1U))
         {
-            if (!crc_.isResidueCorrect())
+            if (!header_crc_.isResidueCorrect())
             {
                 reset();  // Header CRC error.
             }
@@ -336,7 +304,6 @@ private:
             // also, the amount of dynamic memory that needs to be allocated for the payload would also be determined
             // at this moment. The main purpose of the header CRC is to permit such early-stage frame processing.
             // This specialized implementation requires none of that.
-            crc_ = {};
         }
     }
 
@@ -366,7 +333,7 @@ private:
         return meta_.destination == Transfer::Metadata::AnonymousNodeID;
     }
 
-    static constexpr std::size_t HeaderSize        = 32;
+    static constexpr std::size_t HeaderSize        = 24;
     static constexpr std::size_t TotalOverheadSize = HeaderSize + CRC32C::Size;
     // Header field offsets.
     static constexpr std::size_t                         OffsetVersion  = 0;
@@ -374,13 +341,14 @@ private:
     static constexpr std::pair<std::size_t, std::size_t> OffsetSource{2, 3};
     static constexpr std::pair<std::size_t, std::size_t> OffsetDestination{4, 5};
     static constexpr std::pair<std::size_t, std::size_t> OffsetDataSpec{6, 7};
-    static constexpr std::pair<std::size_t, std::size_t> OffsetTransferID{16, 23};
-    static constexpr std::pair<std::size_t, std::size_t> OffsetFrameIndexEOT{24, 27};
+    static constexpr std::pair<std::size_t, std::size_t> OffsetTransferID{8, 15};
+    static constexpr std::pair<std::size_t, std::size_t> OffsetFrameIndexEOT{16, 19};
 
     COBSDecoder                                             decoder_;
     std::size_t                                             offset_ = 0;
     bool                                                    inside_ = false;
-    CRC32C                                                  crc_;
+    CRC16CCITT                                              header_crc_;
+    CRC32C                                                  transfer_crc_;
     Transfer::Metadata                                      meta_;
     std::array<std::uint8_t, MaxPayloadSize + CRC32C::Size> buf_{};
 };
@@ -392,40 +360,43 @@ template <typename Callback>
 [[nodiscard]] inline auto transmit(const Callback& send_byte, const Transfer& tr) -> bool
 {
     COBSEncoder<const Callback&> encoder(send_byte);
-    CRC32C                       crc;
-    const auto                   out = [&crc, &encoder](const std::uint8_t b) {
-        crc.update(b);
+    CRC16CCITT                   header_crc;
+    const auto                   header_out = [&header_crc, &encoder](const std::uint8_t b) {
+        header_crc.update(b);
         return encoder.push(b);
     };
-    const auto out2 = [&out](const std::uint16_t bb) {
-        return out(static_cast<std::uint8_t>(bb)) && out(static_cast<std::uint8_t>(bb >> BitsPerByte));
+    const auto header_out2 = [&header_out](const std::uint16_t bb) {
+        return header_out(static_cast<std::uint8_t>(bb)) && header_out(static_cast<std::uint8_t>(bb >> BitsPerByte));
     };
-    bool ok = out(FrameFormatVersion) && out(tr.meta.priority) &&  //
-              out2(tr.meta.source) && out2(tr.meta.destination) && out2(tr.meta.data_spec);
-    for (auto i = 0U; i < sizeof(std::uint64_t); i++)
-    {
-        ok = ok && out(0);
-    }
+
+    bool ok = header_out(FrameFormatVersion) && header_out(tr.meta.priority) &&  //
+              header_out2(tr.meta.source) && header_out2(tr.meta.destination) && header_out2(tr.meta.data_spec);
     auto tmp_transfer_id = tr.meta.transfer_id;
     for (auto i = 0U; i < sizeof(std::uint64_t); i++)
     {
-        ok = ok && out(static_cast<std::uint8_t>(tmp_transfer_id));
+        ok = ok && header_out(static_cast<std::uint8_t>(tmp_transfer_id));
         tmp_transfer_id >>= BitsPerByte;
     }
     for (const auto x : FrameIndexEOTReference)
     {
-        ok = ok && out(x);
+        ok = ok && header_out(x);
     }
-    for (const auto x : crc.getBytes())
+    for (const auto x : UserData)
     {
-        ok = ok && out(x);
+        ok = ok && header_out(x);
     }
-    crc = {};  // Now it's the payload CRC.
+    for (const auto x : header_crc.getBytes())
+    {
+        ok = ok && header_out(x);
+    }
+
+    CRC32C transfer_crc;
     {
         const auto* ptr = tr.payload;
         for (std::size_t i = 0U; i < tr.payload_len; i++)
         {
-            ok = ok && out(*ptr);
+            transfer_crc.update(*ptr);
+            ok = ok && encoder.push(*ptr);
             ++ptr;
             if (!ok)
             {
@@ -433,9 +404,9 @@ template <typename Callback>
             }
         }
     }
-    for (const auto x : crc.getBytes())
+    for (const auto x : transfer_crc.getBytes())
     {
-        ok = ok && out(x);
+        ok = ok && encoder.push(x);
     }
     return ok && encoder.end();
 }
@@ -572,8 +543,7 @@ private:
                         meta.source      = *local_node_id_;
                         meta.destination = tr.meta.source;
                         meta.data_spec   = static_cast<PortID>(*req_id) |
-                                         static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
-                                                             detail::Transfer::Metadata::DataSpecResponseFlag);
+                                         static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag);
                         meta.transfer_id = tr.meta.transfer_id;
                         for (auto i = 0U; i < service_multiplication_factor_; i++)
                         {
@@ -615,7 +585,9 @@ private:
             detail::Transfer::Metadata meta{};
             meta.source      = *local_node_id_;
             meta.destination = server_node_id;
-            meta.data_spec   = static_cast<PortID>(service_id) | detail::Transfer::Metadata::DataSpecServiceFlag;
+            meta.data_spec =
+                static_cast<PortID>(service_id) | static_cast<PortID>(detail::Transfer::Metadata::DataSpecServiceFlag |
+                                                                      detail::Transfer::Metadata::DataSpecRequestFlag);
             meta.transfer_id = transfer_id;
             bool transmit_ok = false;  // Optimistic aggregation: one successful transmission is considered a success.
             for (auto i = 0U; i < service_multiplication_factor_; i++)

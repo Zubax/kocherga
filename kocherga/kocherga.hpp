@@ -238,6 +238,110 @@ auto getRandomByte() -> std::uint8_t;
 
 // --------------------------------------------------------------------------------------------------------------------
 
+namespace detail
+{
+
+static constexpr uint8_t BitsPerByte = 8U;
+
+/// Size-optimized implementation of CRC16-CCITT
+class CRC16CCITT
+{
+public:
+    static constexpr std::size_t Size = 2;
+
+    void update(const std::uint8_t b) noexcept
+    {
+        value_ ^= static_cast<std::uint16_t>(b << BitsPerByte);
+        // Manually unrolled because the difference in performance is drastic. Can't use table because size limitations.
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+        value_ =
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
+    }
+
+    [[nodiscard]] auto get() const noexcept { return value_; }
+
+    [[nodiscard]] auto getBytes() const noexcept -> std::array<std::uint8_t, Size>
+    {
+        const auto x = get();
+        return {
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 1U)),
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 0U)),
+        };
+    }
+
+    void update(const std::size_t size, const std::uint8_t* const ptr) noexcept
+    {
+        const auto* p = ptr;
+        for (std::size_t s = 0; s < size; s++)
+        {
+            update(*p);
+            p++;
+        }
+    }
+
+    [[nodiscard]] auto isResidueCorrect() const noexcept { return value_ == Residue; }
+
+private:
+    static constexpr std::uint16_t Initial = 0xFFFFU;
+    static constexpr std::uint16_t Poly    = 0x1021U;
+    static constexpr std::uint16_t Top     = 0x8000U;
+    static constexpr std::uint16_t Residue = 0x0000U;
+
+    std::uint16_t value_ = Initial;
+};
+
+/// Size-optimized implementation of CRC32-C (Castagnoli).
+class CRC32C
+{
+public:
+    static constexpr std::size_t Size = 4;
+
+    void update(const std::uint8_t b) noexcept
+    {
+        value_ ^= static_cast<std::uint32_t>(b);
+        for (auto i = 0U; i < BitsPerByte; i++)
+        {
+            value_ = ((value_ & 1U) != 0) ? ((value_ >> 1U) ^ ReflectedPoly) : (value_ >> 1U);  // NOLINT
+        }
+    }
+
+    [[nodiscard]] auto get() const noexcept { return value_ ^ Xor; }
+
+    [[nodiscard]] auto getBytes() const noexcept -> std::array<std::uint8_t, Size>
+    {
+        const auto x = get();
+        return {
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 0U)),
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 1U)),
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 2U)),
+            static_cast<std::uint8_t>(x >> (BitsPerByte * 3U)),
+        };
+    }
+
+    [[nodiscard]] auto isResidueCorrect() const noexcept { return value_ == Residue; }
+
+private:
+    static constexpr std::uint32_t Xor           = 0xFFFF'FFFFUL;
+    static constexpr std::uint32_t ReflectedPoly = 0x82F6'3B78UL;
+    static constexpr std::uint32_t Residue       = 0xB798'B438UL;
+
+    std::uint32_t value_ = Xor;
+};
+}  // namespace detail
+
 /// This is used to verify integrity of the application and other data.
 /// Note that the firmware CRC verification is a computationally expensive process that needs to be completed
 /// in a limited time interval, which should be minimized. This class has been carefully manually optimized to
@@ -307,8 +411,6 @@ private:
 /// Internal use only.
 namespace detail
 {
-static constexpr auto BitsPerByte = 8U;
-
 static constexpr std::chrono::microseconds DefaultTransferIDTimeout{2'000'000};  ///< Default taken from Specification.
 
 /// Detects the application in the ROM, verifies its integrity, and retrieves the information about it.

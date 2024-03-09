@@ -6,7 +6,7 @@
 #include "catch.hpp"
 #include <numeric>
 
-TEST_CASE("serial::CRC")
+TEST_CASE("serial::CRC32C")
 {
     kocherga::serial::detail::CRC32C crc;
     crc.update(static_cast<std::uint8_t>('1'));
