@@ -120,6 +120,7 @@ jobs:
       SONAR_SCANNER_VERSION: 4.6.1.2450
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    if: env.SONAR_TOKEN != ''
     steps:
     - uses: actions/checkout@v2
       with:

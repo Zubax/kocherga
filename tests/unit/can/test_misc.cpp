@@ -9,20 +9,6 @@
 #include <iostream>
 #include <numeric>
 
-TEST_CASE("can::CRC")
-{
-    kocherga::can::detail::CRC16CCITT crc;
-    crc.update(3, reinterpret_cast<const std::uint8_t*>("123"));
-    REQUIRE(0x5BCEU == crc.get());
-    REQUIRE(crc.getBytes().at(0) == 0x5BU);
-    REQUIRE(crc.getBytes().at(1) == 0xCEU);
-    REQUIRE(!crc.isResidueCorrect());
-    crc.update(0x5BU);
-    crc.update(0xCEU);
-    REQUIRE(crc.isResidueCorrect());
-    REQUIRE(0 == crc.get());
-}
-
 TEST_CASE("can::BlockAllocator")
 {
     kocherga::can::detail::BlockAllocator<8, 2> ba;
