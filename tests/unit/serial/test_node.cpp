@@ -135,7 +135,8 @@ TEST_CASE("kocherga_serial::SerialNode service")
         REQUIRE(request->meta.source == 2222);
         REQUIRE(request->meta.destination == 1111);
         REQUIRE(request->meta.data_spec == (static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                            kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag));
+                                            kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
+                                            kocherga::serial::detail::Transfer::Metadata::DataSpecRequestFlag));
         REQUIRE(request->meta.transfer_id == 0xCAFE'CAFE);
         REQUIRE(request->payload_len == 3);
         REQUIRE(0 == std::memcmp(request->payload, "\x03\x03\x03", 3));
@@ -147,8 +148,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
             response.meta.source      = 1110;
             response.meta.destination = 2222;
             response.meta.data_spec   = static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag;
+                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
             response.meta.transfer_id = 0xCAFE'CAFE;
             port.pushRx(response);
             static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(1'000));
@@ -157,8 +157,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
             response.meta.source      = 1111;
             response.meta.destination = 2221;
             response.meta.data_spec   = static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag;
+                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
             response.meta.transfer_id = 0xCAFE'CAFE;
             port.pushRx(response);
             static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(1'000));
@@ -167,8 +166,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
             response.meta.source      = 1111;
             response.meta.destination = 2222;
             response.meta.data_spec   = static_cast<std::uint32_t>(kocherga::ServiceID::NodeGetInfo) |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag;
+                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
             response.meta.transfer_id = 0xCAFE'CAFE;
             port.pushRx(response);
             static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(1'000));
@@ -177,8 +175,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
             response.meta.source      = 1111;
             response.meta.destination = 2222;
             response.meta.data_spec   = static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                      kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag;
+                                      kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
             response.meta.transfer_id = 0xCAFE'CAFA;
             port.pushRx(response);
             static_cast<kocherga::INode&>(node).poll(reactor, std::chrono::microseconds(1'000));
@@ -189,8 +186,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
         response.meta.source      = 1111;
         response.meta.destination = 2222;
         response.meta.data_spec   = static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                  kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                  kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag;
+                                  kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
         response.meta.transfer_id = 0xCAFE'CAFE;
         response.payload_len      = 6;
         response.payload          = reinterpret_cast<const std::uint8_t*>("\x05\x04\x03\x02\x01\x00");
@@ -209,8 +205,10 @@ TEST_CASE("kocherga_serial::SerialNode service")
         kocherga::serial::detail::Transfer request;
         request.meta.source      = 1111;
         request.meta.destination = 2222;
-        request.meta.data_spec   = static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                 kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
+        request.meta.data_spec =
+            static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
+            static_cast<std::uint16_t>(kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
+                                       kocherga::serial::detail::Transfer::Metadata::DataSpecRequestFlag);
         request.meta.transfer_id = 0xCAFE'BABE;
         request.payload_len      = 6;
         request.payload          = reinterpret_cast<const std::uint8_t*>("\x05\x04\x03\x02\x01\x00");
@@ -233,8 +231,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
         REQUIRE(response->meta.source == 2222);
         REQUIRE(response->meta.destination == 1111);
         REQUIRE(response->meta.data_spec == (static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                             kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag));
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag));
         REQUIRE(response->meta.transfer_id == 0xCAFE'BABE);
         REQUIRE(response->payload_len == 5);
         REQUIRE(0 == std::memcmp(response->payload, "\x01\x02\x03\x04\x05", 5));
@@ -246,8 +243,10 @@ TEST_CASE("kocherga_serial::SerialNode service")
         kocherga::serial::detail::Transfer request;
         request.meta.source      = 3210;
         request.meta.destination = 2222;
-        request.meta.data_spec   = static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                 kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
+        request.meta.data_spec =
+            static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
+            static_cast<std::uint16_t>(kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
+                                       kocherga::serial::detail::Transfer::Metadata::DataSpecRequestFlag);
         request.meta.transfer_id = 0xBABA'CACA;
         request.payload_len      = 6;
         request.payload          = reinterpret_cast<const std::uint8_t*>("\x05\x04\x03\x02\x01\x00");
@@ -270,8 +269,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
         REQUIRE(response->meta.source == 2222);
         REQUIRE(response->meta.destination == 3210);
         REQUIRE(response->meta.data_spec == (static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                             kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag));
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag));
         REQUIRE(response->meta.transfer_id == 0xBABA'CACA);
         REQUIRE(response->payload_len == 5);
         REQUIRE(0 == std::memcmp(response->payload, "\x01\x02\x03\x04\x05", 5));
@@ -286,8 +284,7 @@ TEST_CASE("kocherga_serial::SerialNode service")
         REQUIRE(response->meta.source == 2222);
         REQUIRE(response->meta.destination == 3210);
         REQUIRE(response->meta.data_spec == (static_cast<std::uint32_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
-                                             kocherga::serial::detail::Transfer::Metadata::DataSpecResponseFlag));
+                                             kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag));
         REQUIRE(response->meta.transfer_id == 0xBABA'CACA);
         REQUIRE(response->payload_len == 5);
         REQUIRE(0 == std::memcmp(response->payload, "\x01\x02\x03\x04\x05", 5));
@@ -299,8 +296,10 @@ TEST_CASE("kocherga_serial::SerialNode service")
         kocherga::serial::detail::Transfer request;
         request.meta.source      = 3333;
         request.meta.destination = 2222;
-        request.meta.data_spec   = static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
-                                 kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag;
+        request.meta.data_spec =
+            static_cast<std::uint16_t>(kocherga::ServiceID::NodeExecuteCommand) |
+            static_cast<std::uint16_t>(kocherga::serial::detail::Transfer::Metadata::DataSpecServiceFlag |
+                                       kocherga::serial::detail::Transfer::Metadata::DataSpecRequestFlag);
         request.meta.transfer_id = 0xBABA'BABA;
         request.payload_len      = 6;
         request.payload          = reinterpret_cast<const std::uint8_t*>("\x05\x04\x03\x02\x01\x00");

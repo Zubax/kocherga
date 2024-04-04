@@ -234,58 +234,13 @@ private:
 namespace detail
 {
 using kocherga::detail::BitsPerByte;  // NOSONAR
+using kocherga::detail::CRC16CCITT;   // NOSONAR
 
 static constexpr std::uint8_t TailByteStartOfTransfer = 0b1000'0000;
 static constexpr std::uint8_t TailByteEndOfTransfer   = 0b0100'0000;
 static constexpr std::uint8_t TailByteToggleBit       = 0b0010'0000;
 
 static constexpr std::uint8_t MaxTransferID = 31;
-
-class CRC16CCITT
-{
-public:
-    static constexpr std::size_t Size = 2;
-
-    void update(const std::uint8_t b) noexcept
-    {
-        value_ ^= static_cast<std::uint16_t>(static_cast<std::uint16_t>(b) << 8U);
-        // Manually unrolled because the difference in performance is drastic. Can't use table because size limitations.
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-        value_ = static_cast<uint16_t>(static_cast<uint16_t>(value_ << 1U) ^ (((value_ & Top) != 0U) ? Poly : 0U));
-    }
-
-    void update(const std::size_t size, const std::uint8_t* const ptr) noexcept
-    {
-        const auto* p = ptr;
-        for (std::size_t s = 0; s < size; s++)
-        {
-            update(*p);
-            p++;
-        }
-    }
-
-    [[nodiscard]] auto get() const noexcept { return value_; }
-
-    [[nodiscard]] auto getBytes() const noexcept -> std::array<std::uint8_t, Size>
-    {
-        const auto x = get();
-        return {static_cast<std::uint8_t>(x >> BitsPerByte), static_cast<std::uint8_t>(x)};
-    }
-
-    [[nodiscard]] auto isResidueCorrect() const noexcept { return value_ == 0; }
-
-private:
-    static constexpr std::uint16_t Top  = 0x8000U;
-    static constexpr std::uint16_t Poly = 0x1021U;
-
-    std::uint16_t value_ = std::numeric_limits<std::uint16_t>::max();
-};
 
 inline auto makePseudoUniqueID(const SystemInfo::UniqueID& uid) -> std::uint64_t
 {

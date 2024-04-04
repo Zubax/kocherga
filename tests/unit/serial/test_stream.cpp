@@ -97,7 +97,7 @@ TEST_CASE("serial::transmit")
     using Buf = std::vector<std::uint8_t>;
 
     // The reference dump has been obtained as follows:
-    // import pycyphal.serial
+    // import pycyphal.transport.serial
     // tr = pycyphal.transport.serial.SerialTransport('loop://', local_node_id=1234, baudrate=115200)
     // pm = pycyphal.transport.PayloadMetadata(1024)
     // ds = pycyphal.transport.MessageDataSpecifier(2345)
@@ -111,16 +111,16 @@ TEST_CASE("serial::transmit")
     {
         const Buf reference = {
             0x00,                                            // starting delimiter
-            0x01,                                            // COBS starting stuff byte, next byte zero
-            0x08,                                            // version 0, next zero 8 bytes later
+            0x0b,                                            // COBS starting stuff byte, next zero 11 bytes later
+            0x01,                                            // version 1
             0x05,                                            // priority low
             0xd2, 0x04,                                      // src node-ID  1234
             0xff, 0xff,                                      // dst node-ID  broadcast
             0x29, 0x09,                                      // subject-ID   2345
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x03,  // reserved zeros
             0x57, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,  // transfer-ID  1111
-            0x01, 0x01, 0x06, 0x80,                          // frame index EOT 0x80000000 (single-frame transfer)
-            0x02, 0xf4, 0x6f, 0x2a,                          // header CRC  0x2a6ff402
+            0x01, 0x01, 0x02, 0x80,                          // frame index EOT 0x80000000 (single-frame transfer)
+            0x01, 0x03,                                      // user data 0x0000, next zero 3 bytes later
+            0x4f, 0x83,                                      // header CRC  0x4f83
             0x01, 0x01, 0x01, 0x01,                          // payload CRC 0x00000000
             0x00                                             // final delimiter
         };
@@ -148,16 +148,16 @@ TEST_CASE("serial::transmit")
     {
         const Buf reference = {
             0x00,                                            // starting delimiter
-            0x01,                                            // COBS starting stuff byte, next byte zero
-            0x08,                                            // version 0, next zero 8 bytes later
+            0x0b,                                            // COBS starting stuff byte, next zero 11 bytes later
+            0x01,                                            // version 1
             0x05,                                            // priority low
             0xd2, 0x04,                                      // src node-ID  1234
             0xff, 0xff,                                      // dst node-ID  broadcast
             0x29, 0x09,                                      // subject-ID   2345
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x03,  // reserved zeros
             0x57, 0x04, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,  // transfer-ID  1111
-            0x01, 0x01, 0x06, 0x80,                          // frame index EOT 0x80000000 (single-frame transfer)
-            0x02, 0xf4, 0x6f, 0x2a,                          // header CRC  0x2a6ff402
+            0x01, 0x01, 0x02, 0x80,                          // frame index EOT 0x80000000 (single-frame transfer)
+            0x01, 0x03,                                      // user data 0x0000, next zero 3 bytes later
+            0x4f, 0x83,                                      // header CRC  0x4f83
             0x07, 0x01, 0x02,                                // payload [0, 1, 2]
             0xfa, 0x4b, 0xfd, 0x92,                          // payload CRC
             0x00,                                            // final delimiter
@@ -382,16 +382,16 @@ TEST_CASE("serial::StreamParser basic")
     // ', '.join(f'0x{x:02x}' for x in cobs.cobs.encode(bytes(hdr) + crc(hdr) + bytes(payload) + crc(bytes(payload))))
     {
         const Buf chunk{
-            0x01,                                            // COBS starting overhead byte
-            0x03,                                            // Version           0
+            0x04,                                            // COBS starting overhead byte
+            0x01,                                            // Version           1
             0x05,                                            // Priority          5
-            0x7b, 0x15,                                      // Source NID        123
-            0xff, 0xff,                                      // Destination NID   456
+            0x7b, 0x0d,                                      // Source NID        123
+            0xff, 0xff,                                      // Destination NID   broadcast
             0xe1, 0x10,                                      // Data specifier    4321
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
-            0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
-            0xad, 0x13, 0xce, 0xc6,                          // Header CRC computed with the help of PyCyphal
+            0x01, 0x01, 0x02, 0x80,                          // Frame index, EOT  0 with EOT flag set
+            0x01, 0x0c,                                      // user data         0x0000
+            0x3e, 0x9c,                                      // Header CRC computed with the help of PyCyphal
             0x01, 0x02, 0x03, 0x04, 0x05,                    // Payload 1 2 3 4 5
             0xab, 0x8f, 0x51, 0x53,                          // Payload CRC
         };
@@ -413,16 +413,16 @@ TEST_CASE("serial::StreamParser basic")
     // VALID RESPONSE
     {
         const Buf chunk = {
-            0x01,
-            0x18,                                            // Version           0
-            0x02,                                            // Priority          1
+            0x11,
+            0x01,                                            // Version           1
+            0x02,                                            // Priority          2
             0x8e, 0x01,                                      // Source NID        398
             0x11, 0x01,                                      // Destination NID   273
-            0x9e, 0xc0,                                      // Data specifier    response 158
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
+            0x9e, 0x80,                                      // Data specifier    response 158
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
-            0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
-            0x50, 0x42, 0x9b, 0x1f,                          // Header CRC
+            0x01, 0x01, 0x02, 0x80,                          // Frame index, EOT  0 with EOT flag set
+            0x01, 0x0c,                                      // user data         0x0000
+            0xbd, 0x2c,                                      // Header CRC
             0x01, 0x02, 0x03, 0x04, 0x05,                    // Payload           1 2 3 4 5
             0xab, 0x8f, 0x51, 0x53                           // Payload CRC
         };
@@ -437,7 +437,7 @@ TEST_CASE("serial::StreamParser basic")
         REQUIRE(tr->meta.priority == 2);
         REQUIRE(tr->meta.source == 398);
         REQUIRE(tr->meta.destination == 273);
-        REQUIRE(tr->meta.data_spec == 0xC09E);
+        REQUIRE(tr->meta.data_spec == 0x809E);
         REQUIRE(tr->meta.transfer_id == 12'345'678'901'234'567'890ULL);
         REQUIRE(!tr->meta.isRequest());
         REQUIRE(tr->meta.isResponse() == 158);
@@ -446,16 +446,16 @@ TEST_CASE("serial::StreamParser basic")
     // BAD HEADER CRC
     {
         const Buf chunk = {
-            0x01,
-            0x18,                                            // Version           0
-            0x02,                                            // Priority          1
+            0x11,
+            0x01,                                            // Version           1
+            0x02,                                            // Priority          2
             0x8e, 0x01,                                      // Source NID        398
             0x11, 0x01,                                      // Destination NID   273
             0x9e, 0xc0,                                      // Data specifier    response 158
-            0x0d, 0xf0, 0xdd, 0xe0, 0xfe, 0x0f, 0xdc, 0xba,  //
             0xd2, 0x0a, 0x1f, 0xeb, 0x8c, 0xa9, 0x54, 0xab,  // Transfer ID       12345678901234567890
-            0x01, 0x01, 0x0f, 0x80,                          // Frame index, EOT  0 with EOT flag set
-            0x50, 0x42, 0x9b, 0x0f,                          // Header CRC        MSB FLIP ERROR
+            0x01, 0x01, 0x02, 0x80,                          // Frame index, EOT  0 with EOT flag set
+            0x01, 0x0c,                                      // user data         0x0000
+            0x79, 0x1e,                                      // Header CRC        MSB FLIP ERROR
             0x01, 0x02, 0x03, 0x04, 0x05,                    // Payload           1 2 3 4 5
             0xab, 0x8f, 0x51, 0x53                           // Payload CRC
         };
@@ -501,8 +501,8 @@ TEST_CASE("serial::StreamParser error")
             out = sp.update(x);
             return true;
         });
-        const auto                            inject = [&enc](const auto& data) {
-            kocherga::serial::detail::CRC32C crc_computer;
+        const auto                            inject = [&enc](const auto& data, const auto crc_type) {
+            typename decltype(crc_type)::type crc_computer;
             for (const std::uint8_t x : data)
             {
                 crc_computer.update(x);
@@ -513,8 +513,8 @@ TEST_CASE("serial::StreamParser error")
                 REQUIRE(enc.push(x));
             }
         };
-        inject(header);
-        inject(payload);
+        inject(header, std::common_type<kocherga::detail::CRC16CCITT>{});
+        inject(payload, std::common_type<kocherga::detail::CRC32C>{});
         REQUIRE(enc.end());
         return out;
     };
@@ -522,21 +522,23 @@ TEST_CASE("serial::StreamParser error")
     // Self-test with max length payload
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0x8a, 0x0c,                                      // Destination NID
-            0x4d, 0x81,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0xc1,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00                                       // User data
         };
         const auto tr = feed(header, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
         REQUIRE(tr);
         REQUIRE(tr->meta.priority == 7);
         REQUIRE(tr->meta.source == 1234);
         REQUIRE(tr->meta.destination == 3210);
-        REQUIRE(tr->meta.data_spec == (Transfer::Metadata::DataSpecServiceFlag | 333U));
+        REQUIRE(tr->meta.data_spec == (static_cast<std::uint16_t>(Transfer::Metadata::DataSpecServiceFlag |
+                                                                  Transfer::Metadata::DataSpecRequestFlag) |
+                                       333U));
         REQUIRE(tr->meta.transfer_id == 0x1234'5678'9012'3456ULL);
         REQUIRE(tr->payload_len == 10);
         REQUIRE(0 == std::memcmp(tr->payload, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09", 10));
@@ -547,22 +549,21 @@ TEST_CASE("serial::StreamParser error")
     // Self-test with zero length payload
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0x8a, 0x0c,                                      // Destination NID
-            0x4d, 0xc1,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0x81,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00                                       // User data
         };
         const auto tr = feed(header, {});
         REQUIRE(tr);
         REQUIRE(tr->meta.priority == 7);
         REQUIRE(tr->meta.source == 1234);
         REQUIRE(tr->meta.destination == 3210);
-        REQUIRE(tr->meta.data_spec ==
-                (333U | Transfer::Metadata::DataSpecServiceFlag | Transfer::Metadata::DataSpecResponseFlag));
+        REQUIRE(tr->meta.data_spec == (333U | Transfer::Metadata::DataSpecServiceFlag));
         REQUIRE(tr->meta.transfer_id == 0x1234'5678'9012'3456ULL);
         REQUIRE(tr->payload_len == 0);
         REQUIRE(!tr->meta.isRequest());
@@ -572,14 +573,14 @@ TEST_CASE("serial::StreamParser error")
     // Payload one byte too long
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0x8a, 0x0c,                                      // Destination NID
-            0x4d, 0x81,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0xc1,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00                                       // User data
         };
         const auto tr = feed(header, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
         REQUIRE(!tr);
@@ -588,14 +589,14 @@ TEST_CASE("serial::StreamParser error")
     // Bad version
     {
         const Buf header{
-            0x01,                                            // Version
+            0x00,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0x8a, 0x0c,                                      // Destination NID
-            0x4d, 0x81,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0xc1,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00                                       // User data
         };
         const auto tr = feed(header, {});
         REQUIRE(!tr);
@@ -604,14 +605,14 @@ TEST_CASE("serial::StreamParser error")
     // Cyphal/serial transfers cannot be multi-frame
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0x8a, 0x0c,                                      // Destination NID
-            0x4d, 0x81,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0xc1,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x00,                          // Frame index, EOT (cleared)
+            0x00, 0x00,                                      // User data
         };
         const auto tr = feed(header, {});
         REQUIRE(!tr);
@@ -620,14 +621,14 @@ TEST_CASE("serial::StreamParser error")
     // Service transfers cannot be broadcast
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0xff, 0xff,                                      // Destination NID
-            0x4d, 0xc1,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0x81,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00,                                      // User data
         };
         const auto tr = feed(header, {});
         REQUIRE(!tr);
@@ -636,14 +637,14 @@ TEST_CASE("serial::StreamParser error")
     // Service transfers cannot be anonymous
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xff, 0xff,                                      // Source NID
             0x01, 0x01,                                      // Destination NID
-            0x4d, 0xc1,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
+            0x4d, 0x81,                                      // Data specifier
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00,                                      // User data
         };
         const auto tr = feed(header, {});
         REQUIRE(!tr);
@@ -652,14 +653,14 @@ TEST_CASE("serial::StreamParser error")
     // Message transfers cannot be unicast
     {
         const Buf header{
-            0x00,                                            // Version
+            0x01,                                            // Version
             0x07,                                            // Priority
             0xd2, 0x04,                                      // Source NID
             0x8a, 0x0c,                                      // Destination NID
             0x4d, 0x01,                                      // Data specifier
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
             0x56, 0x34, 0x12, 0x90, 0x78, 0x56, 0x34, 0x12,  // Transfer ID
             0x00, 0x00, 0x00, 0x80,                          // Frame index, EOT
+            0x00, 0x00,                                      // User data
         };
         const auto tr = feed(header, {});
         REQUIRE(!tr);
