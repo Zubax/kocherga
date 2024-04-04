@@ -120,7 +120,6 @@ jobs:
       SONAR_SCANNER_VERSION: 5.0.1.3006
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-    if: env.SONAR_TOKEN != ''
     steps:
     - uses: actions/checkout@v2
       with:
@@ -179,6 +178,7 @@ jobs:
 
     # https://community.sonarsource.com/t/analyzing-a-header-only-c-library/51468
     - name: Run sonar-scanner
+      if: env.SONAR_TOKEN != ''
       run: >
         sonar-scanner
         --define sonar.host.url="https://sonarcloud.io"
