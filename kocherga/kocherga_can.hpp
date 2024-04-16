@@ -1250,7 +1250,7 @@ private:
                                         const std::size_t         response_size,
                                         const std::uint8_t* const response_data)
     {
-        if (response_size >= 4)
+        if (response_size >= 2)
         {
             std::array<std::uint8_t, 270> buf{};
             buf.back()     = 0xAA;
